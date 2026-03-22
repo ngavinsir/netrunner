@@ -12,6 +12,7 @@
     [game.core.flags :refer [can-access? can-access-loud can-steal? can-trash? card-flag-fn? card-flag?]]
     [game.core.moving :refer [move trash]]
     [game.core.payment :refer [add-cost-label-to-ability build-cost-string can-pay? merge-costs ->c]]
+    [game.core.rng :as rng]
     [game.core.revealing :refer [reveal]]
     [game.core.say :refer [play-sfx system-msg]]
     [game.core.servers :refer [get-server-type name-zone zone->name]]
@@ -807,8 +808,11 @@
 
 (defn- access-cards-from-hq
   [state]
-  (let [f (get-in @state [:runner :hq-access-fn])]
-    (f (get-in @state [:corp :hand]))))
+  (let [f (get-in @state [:runner :hq-access-fn])
+        hand (get-in @state [:corp :hand])]
+    (if (identical? f shuffle)
+      (rng/shuffle-coll! state hand)
+      (f hand))))
 
 (defn access-helper-hq
   [state {:keys [chosen random-access-limit] :as access-amount}
@@ -1137,7 +1141,7 @@
                    nil nil))))
 
         facedown-cards-fn
-        (req (let [accessed (first (shuffle (facedown-cards state already-accessed-fn)))
+        (req (let [accessed (first (rng/shuffle-coll! state (facedown-cards state already-accessed-fn)))
                    already-accessed (conj already-accessed (:cid accessed))
                    access-amount {:total-mod (access-bonus-count state side :total)
                                   :chosen (inc chosen)}]
@@ -1342,7 +1346,8 @@
   (if (= :archives (get-server-type (first server)))
     (let [discard (get-in @state [:corp :discard])
           known   (->> discard (filter :seen) (mapv #(dissoc % :new)))
-          unknown (->> discard (filter (complement :seen)) shuffle (mapv #(assoc % :seen true :new true)))]
+          unknown (->> (rng/shuffle-coll! state (filter (complement :seen) discard))
+                       (mapv #(assoc % :seen true :new true)))]
       (swap! state assoc-in [:corp :discard] (concat known unknown))
       (if (pos? (count unknown))
         (trigger-event-simult state side eid :archives-flipped nil {:count (count unknown)})

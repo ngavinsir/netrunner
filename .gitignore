@@ -18,6 +18,8 @@ pom.xml
 .idea
 .eastwood
 .cache
+.zig-cache/
+zig-out/
 *.archive
 *.swp
 

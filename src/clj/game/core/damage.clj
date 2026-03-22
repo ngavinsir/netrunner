@@ -7,6 +7,7 @@
     [game.core.prevention :refer [resolve-damage-prevention]]
     [game.core.prompt-state :refer [add-to-prompt-queue remove-from-prompt-queue]]
     [game.core.prompts :refer [clear-wait-prompt show-prompt show-wait-prompt]]
+    [game.core.rng :as rng]
     [game.core.say :refer [system-msg n-last-logs]]
     [game.core.winning :refer [flatline]]
     [game.macros :refer [wait-for]]
@@ -71,7 +72,7 @@
                     chosen-cards (seq (get-chosen-damage state))
                     chosen-cids (into #{} (map :cid chosen-cards))
                     leftovers (remove #(contains? chosen-cids (:cid %)) hand)
-                    cards-trashed (->> (shuffle leftovers)
+                    cards-trashed (->> (rng/shuffle-coll! state leftovers)
                                        (take (- n (count chosen-cards)))
                                        (concat chosen-cards))]
                 (when (= dmg-type :brain)

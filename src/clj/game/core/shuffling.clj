@@ -6,33 +6,19 @@
    [game.core.engine :refer [trigger-event]]
    [game.core.flags :refer [zone-locked?]]
    [game.core.moving :refer [move move-zone]]
+   [game.core.rng :as rng]
    [game.core.say :refer [system-msg play-sfx]]
    [game.core.servers :refer [name-zone]]
    [game.macros :refer [continue-ability msg req]]
-   [game.utils :refer [enumerate-str enumerate-cards quantify]])
-  (:import [java.security SecureRandom]))
+   [game.utils :refer [enumerate-str enumerate-cards quantify]]))
 
-
-(defonce rng
-  ;; Note: around 220 bytes of entropy are needed to be able to produce all random
-  ;; combinations of a singleton 49 card list.
-  ;; 1024 bytes allows us to do 170 card lists, and is not much more expensive.
-  ;; see: https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle#Pseudorandom_generators
-  (let [rand (SecureRandom.)
-        seed-bytes (byte-array 128)]
-    (.nextBytes (SecureRandom.) seed-bytes)
-    (.setSeed rand seed-bytes)
-    rand))
-
-(defn- shuffle-coll
-  ;; Ref: https://github.com/clojure/clojure/blob/ce55092f2b2f5481d25cff6205470c1335760ef6/src/clj/clojure/core.clj#L7342
-  ;; we're just substituting in a good rng source (1024 bits of entropy) rather than the default used by java (40 bits of entropy)
-  ;; this should theoretically be invisible, since any random slice of the possible sets of deck orderings is also random,
-  ;; but it is "more correct" to do - anyone playing more than 170 cards can live with it - nbk, 2025
-  [^java.util.Collection c]
-  (let [al (java.util.ArrayList. c)]
-    (java.util.Collections/shuffle al rng)
-    (clojure.lang.RT/vector (.toArray al))))
+(defn- shuffle-zone!
+  [state side kw]
+  (if-let [seed (:rng-seed @state)]
+    (let [[seed' shuffled] (rng/shuffle-coll-seeded seed (get-in @state [side kw]))]
+      (swap! state assoc :rng-seed seed')
+      (swap! state assoc-in [side kw] shuffled))
+    (swap! state update-in [side kw] (fn [coll] (rng/shuffle-coll! state coll)))))
 
 (defn shuffle!
   "Shuffles the vector in @state [side kw]."
@@ -53,7 +39,7 @@
      (when-not no-sfx
        (play-sfx state side "shuffle"))
      (swap! state update-in [:stats side :shuffle-count] (fnil + 0) 1)
-     (swap! state update-in [side kw] shuffle-coll))))
+     (shuffle-zone! state side kw))))
 
 (defn shuffle-cards-into-deck!
   "Shuffles a given set of cards into the deck. Will print out what's happened. Will always shuffle."
@@ -125,7 +111,7 @@
 (defn shuffle-deck
   "Shuffle R&D/Stack."
   [state side {:keys [close]}]
-  (swap! state update-in [side :deck] shuffle)
+  (shuffle-zone! state side :deck)
   (play-sfx state side "shuffle")
   (if close
     (do

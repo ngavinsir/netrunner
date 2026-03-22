@@ -3,6 +3,7 @@
    [cljc.java-time.instant :as inst]
    [game.core.card :refer [corp? runner?]]
    [game.core.card-defs :refer [card-def]]
+   [game.core.rng :as rng]
    [game.core.checkpoint :refer [fake-checkpoint]]
    [game.core.diffs :refer [public-states]]
    [game.core.drawing :refer [draw]]
@@ -30,6 +31,15 @@
   [deck]
   (shuffle (mapcat #(map build-card (repeat (:qty %) (assoc (:card %) :art (:art %))))
                    (shuffle (vec (:cards deck))))))
+
+(defn create-deck-seeded
+  "Creates a deterministically shuffled draw deck from the given seed.
+  Returns [next-seed deck]."
+  [seed deck]
+  (let [[seed deck-lines] (rng/shuffle-coll-seeded seed (vec (:cards deck)))
+        cards (mapcat #(map build-card (repeat (:qty %) (assoc (:card %) :art (:art %))))
+                      deck-lines)]
+    (rng/shuffle-coll-seeded seed cards)))
 
 ;;; Functions for the creation of games and the progression of turns.
 (defn mulligan
@@ -79,11 +89,15 @@
 
 (defn- init-game-state
   "Initialises the game state"
-  [{:keys [players gameid timer spectatorhands api-access save-replay room] :as game}]
+  [{:keys [players gameid timer spectatorhands api-access save-replay room seed] :as game}]
   (let [corp (some #(when (corp? %) %) players)
         runner (some #(when (runner? %) %) players)
-        corp-deck (create-deck (:deck corp))
-        runner-deck (create-deck (:deck runner))
+        [rng-seed corp-deck] (if seed
+                               (create-deck-seeded seed (:deck corp))
+                               [nil (create-deck (:deck corp))])
+        [rng-seed runner-deck] (if seed
+                                 (create-deck-seeded rng-seed (:deck runner))
+                                 [nil (create-deck (:deck runner))])
         corp-deck-id (get-in corp [:deck :_id])
         runner-deck-id (get-in runner [:deck :_id])
         corp-options (get-in corp [:options])
@@ -99,18 +113,21 @@
         corp-quote (quotes/make-quote corp-identity runner-identity)
         runner-quote (quotes/make-quote runner-identity corp-identity)
         fmt (:format game)]
-    (atom
-      (new-state
-        gameid
-        room
-        fmt
-        (inst/now)
-        {:timer timer
-         :spectatorhands spectatorhands
-         :api-access api-access
-         :save-replay save-replay}
-        (new-corp (:user corp) corp-identity corp-options (map #(assoc % :zone [:deck]) corp-deck) corp-deck-id corp-quote)
-        (new-runner (:user runner) runner-identity runner-options (map #(assoc % :zone [:deck]) runner-deck) runner-deck-id runner-quote)))))
+    (let [state (atom
+                  (new-state
+                    gameid
+                    room
+                    fmt
+                    (inst/now)
+                    {:timer timer
+                     :spectatorhands spectatorhands
+                     :api-access api-access
+                     :save-replay save-replay}
+                    (new-corp (:user corp) corp-identity corp-options (map #(assoc % :zone [:deck]) corp-deck) corp-deck-id corp-quote)
+                    (new-runner (:user runner) runner-identity runner-options (map #(assoc % :zone [:deck]) runner-deck) runner-deck-id runner-quote)))]
+      (when seed
+        (swap! state assoc :seed seed :rng-seed rng-seed))
+      state)))
 
 (defn- create-basic-action-cards
   [state]

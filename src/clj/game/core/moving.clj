@@ -16,6 +16,7 @@
     [game.core.memory :refer [init-mu-cost]]
     [game.core.prevention :refer [resolve-trash-prevention]]
     [game.core.prompts :refer [clear-wait-prompt show-prompt show-wait-prompt]]
+    [game.core.rng :as rng]
     [game.core.say :refer [enforce-msg system-msg]]
     [game.core.servers :refer [is-remote? same-server? target-server type->rig-zone]]
     [game.core.update :refer [update!]]
@@ -404,7 +405,7 @@
                                   (:run @state))
                          (swap! state assoc-in [:run :shuffled-during-access :rd] true))
                        (swap! state update-in [:stats :corp :shuffle-count] (fnil + 0) 1)
-                       (swap! state update-in [:corp :deck] shuffle)
+                       (swap! state assoc-in [:corp :deck] (rng/shuffle-coll! state (get-in @state [:corp :deck])))
                        (trigger-event state side :corp-shuffle-deck))
                      ;; TODO - used exclusively for hellion beta test
                      (when (and (:access @state)
@@ -460,7 +461,7 @@
   "Force the discard of n cards from the hand by trashing them"
   ([state from-side eid to-side n] (discard-from-hand state from-side eid to-side n nil))
   ([state from-side eid to-side n args]
-   (let [cards (take n (shuffle (get-in @state [to-side :hand])))]
+   (let [cards (take n (rng/shuffle-coll! state (get-in @state [to-side :hand])))]
      (trash-cards state from-side eid cards (assoc args :unpreventable true)))))
 
 (defn swap-legal?

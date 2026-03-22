@@ -1,0 +1,6 @@
+[tools]
+java = "21"
+clojure = "1.12"
+leiningen = "2.11.2"
+node = "20"
+zig = "0.15.2"
