@@ -26,7 +26,9 @@ pub const ChoiceKind = enum {
 
 pub const ActionKind = enum {
     prompt_choice,
+    @"continue",
     start_turn,
+    end_turn,
     play_from_hand,
     flashback,
     use_ability,
@@ -34,6 +36,74 @@ pub const ActionKind = enum {
     use_runner_ability,
     use_subroutine,
     run,
+};
+
+pub const BasicAction = enum(u8) {
+    gain_credit,
+    draw_card,
+    advance_installed,
+    purge_viruses,
+    run_any_server,
+};
+
+pub const CorpPlayKind = enum(u8) {
+    none,
+    gain_credits,
+    no_op,
+};
+
+pub const RunTargetKind = enum(u8) {
+    any_runnable,
+    hq_and_rnd_only,
+};
+
+pub const RunSuccessEffectKind = enum(u8) {
+    none,
+    draw_cards,
+};
+
+pub const RunnerPlayKind = enum(u8) {
+    none,
+    gain_credits,
+    choose_run_target,
+};
+
+pub const AccessKind = enum(u8) {
+    none,
+    steal_agenda,
+};
+
+pub const InstallKind = enum(u8) {
+    none,
+    corp_remote_only,
+    corp_server_choice,
+};
+
+pub const CorpPlaySpec = struct {
+    kind: CorpPlayKind = .none,
+    gain_credits: Count = 0,
+    draw_cards: TinyCount = 0,
+};
+
+pub const RunnerPlaySpec = struct {
+    kind: RunnerPlayKind = .none,
+    gain_credits: Count = 0,
+    run_credits: Count = 0,
+    draw_cards: TinyCount = 0,
+    lose_clicks: TinyCount = 0,
+    run_target_kind: RunTargetKind = .any_runnable,
+    run_rez_cost_bonus: Count = 0,
+    successful_run_effect: RunSuccessEffectKind = .none,
+    successful_run_draw_cards: TinyCount = 0,
+    successful_run_access_bonus: TinyCount = 0,
+};
+
+pub const AccessSpec = struct {
+    kind: AccessKind = .none,
+};
+
+pub const InstallSpec = struct {
+    kind: InstallKind = .none,
 };
 
 pub const CardReference = struct {
@@ -53,6 +123,7 @@ pub const PromptChoice = struct {
 pub const PromptState = struct {
     prompt_type: []const u8,
     choices: []const PromptChoice,
+    source_card: ?CardInstance = null,
 };
 
 pub const CardInstance = struct {
@@ -61,6 +132,44 @@ pub const CardInstance = struct {
     code: ?CardCode = null,
     side: Side,
     card_type: ?[]const u8 = null,
+    cost: ?Count = null,
+    agenda_points: ?TinyCount = null,
+    corp_play: CorpPlaySpec = .{},
+    runner_play: RunnerPlaySpec = .{},
+    access: AccessSpec = .{},
+    install: InstallSpec = .{},
+};
+
+pub const ServerState = struct {
+    ices: []const CardInstance = &.{},
+    content: []const CardInstance = &.{},
+};
+
+pub const ServerSlot = struct {
+    name: []const u8,
+    state: ServerState,
+};
+
+pub const PendingInstall = struct {
+    card: CardInstance,
+    card_index: TinyCount,
+};
+
+pub const RunState = struct {
+    server: []const []const u8,
+    position: TinyCount,
+    phase: []const u8,
+    corp_auto_no_action: bool = false,
+    no_action: ?Side = null,
+    temporary_run_credits: Count = 0,
+    accesses_remaining: TinyCount = 0,
+    accessed_count: TinyCount = 0,
+    accessed_card_indexes: [4]?TinyCount = .{ null, null, null, null },
+    access_card_index: ?TinyCount = null,
+    rez_cost_bonus: Count = 0,
+    successful_run_effect: RunSuccessEffectKind = .none,
+    successful_run_draw_cards: TinyCount = 0,
+    access_bonus: TinyCount = 0,
 };
 
 pub const HandSize = struct {
@@ -109,6 +218,7 @@ pub const PlayerState = struct {
     deck: []const CardInstance,
     hand: []const CardInstance,
     discard: []const CardInstance,
+    servers: []const ServerSlot = &.{},
 };
 
 pub const LegalAction = struct {
@@ -117,7 +227,9 @@ pub const LegalAction = struct {
     prompt_type: ?[]const u8 = null,
     choice: ?PromptChoice = null,
     server: ?[]const u8 = null,
-    ability_index: ?TinyCount = null,
+    card_index: ?TinyCount = null,
+    card_title: ?[]const u8 = null,
+    basic_action: ?BasicAction = null,
     label: ?[]const u8 = null,
 };
 
@@ -128,11 +240,13 @@ pub const GameState = struct {
     active_player: Side,
     turn: TurnNumber,
     end_turn: bool,
+    run: ?RunState = null,
+    pending_install: ?PendingInstall = null,
     corp: PlayerState,
     runner: PlayerState,
 };
 
-pub const SetupSnapshot = struct {
+pub const GameSnapshot = struct {
     state: GameState,
     decision_side: Side,
     legal_actions: []const LegalAction,

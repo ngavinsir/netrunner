@@ -845,7 +845,7 @@ Important:
 - [x] Decide which fields belong in parity comparisons and which should be ignored.
 - [x] Build a Clojure fixture exporter for initial states, legal actions, and transitions.
 - [x] Create a Zig test runner that consumes those fixtures.
-- [ ] Port setup + turn framework before card-specific abilities.
+- [x] Port setup + turn framework before card-specific abilities.
 - [ ] Port the beginner card definitions and their required engine mechanics.
 - [ ] Run parity tests on the beginner matchup until stable.
 - [ ] Expand from beginner to intermediate after parity is green.
@@ -857,13 +857,25 @@ Important:
 - Clojure engine can run seeded games deterministically.
 - Fixture exporter exists.
   Current first cut: `src/clj/game/parity/export.clj` writes `test/resources/parity/system-gateway-beginner-init.json` with canonical oracle state, per-side observations, decision side, and deterministically ordered legal actions for the seeded beginner matchup.
+- Generic replay oracle exists.
+  Current first cut: `lein run -m game.parity.oracle <request.json>` accepts `{:seed <int> :actions [<canonical-action> ...]}` and prints the canonical bundle after replaying that action sequence, so Zig can request arbitrary oracle documents without adding new baked scenarios to the exporter.
+  Current Zig integration: `zig/src/parity/oracle.zig` has `replayActions(...)`, which writes a request JSON, invokes that Lein entrypoint, and parses the returned canonical bundle for live parity checks.
 
 ### M1: Core Skeleton In Zig
 
 - Zig state model exists.
 - Zig action model exists.
 - Basic game lifecycle exists.
-  Current first cut: `build.zig`, `zig/src/parity/fixture.zig`, `zig/src/engine/state.zig`, `zig/src/engine/setup.zig`, `zig/src/engine/rng.zig`, `zig/src/engine/matchups.zig`, `zig/src/engine/generator.zig`, `zig/src/engine/flow.zig`, and `zig/src/engine/parity.zig` load the exported beginner fixture into typed Zig state, generate the seeded initial setup from generic matchup data, and match the oracle through Corp mulligan, Runner mulligan, and the first Corp `start-turn` transition under `zig build test`.
+  Current first cut: `build.zig`, `zig/src/engine/state.zig`, `zig/src/engine/catalog.zig`, `zig/src/engine/game.zig`, `zig/src/parity/oracle.zig`, and `zig/src/engine/parity.zig` load the exported beginner fixture into typed Zig state, generate the seeded initial setup from generic matchup data, expose action-index stepping for future OpenSpiel integration, and match the oracle through Corp mulligan, Runner mulligan, Corp `start-turn`, Corp basic actions, the first Corp `play-from-hand` transitions, install prompt resolution, explicit `end-turn` progression, Runner `start-turn`, remote-aware Runner legal-action generation, Runner basic-action execution for credit and draw, direct Runner run initiation, and the first Runner `play-from-hand` event (`Sure Gamble`) under `zig build test`.
+
+Current scope limit:
+
+- The Zig port currently covers immediate Corp opening-hand actions only:
+  - `Hedge Fund`
+  - `Seamless Launch`
+  - install prompts plus prompt resolution for beginner Corp agendas, assets, and ICE
+- The setup and early turn framework now cover both players' mulligans, Corp `start-turn`, Corp early `end-turn`, the handoff to Runner `start-turn`, Runner opening legal-action generation including direct runs on newly created remotes, Runner basic-action execution for credit and draw, direct Runner run initiation, `Sure Gamble`, `Tread Lightly` through its server-choice prompt and run start, `Jailbreak` through its central-server prompt and run start, deterministic `continue` priority through run initiation, `approach-ice`, and movement completion, plus the first success/access path for an installed agenda (`Send a Message`) through `Steal` and the Corp `Done` cleanup handoff back to normal Runner actions.
+- The next engine slice is broader access/scoring coverage beyond the first agenda-steal path, along with more Runner `play-from-hand` coverage after `Sure Gamble`, `Tread Lightly`, and `Jailbreak`.
 
 ### M2: Beginner Matchup Parity
 

@@ -1,6 +1,7 @@
 (ns game.parity.export
   (:require
    [cheshire.core :as json]
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [game.core.diffs :as diffs]
    [game.main :as main]
@@ -56,6 +57,13 @@
 (defn- ensure-card-defs-loaded!
   []
   (when-not @card-defs-loaded?
+    (when (empty? @all-cards)
+      (->> (io/file "data/cards.edn")
+           slurp
+           edn/read-string
+           (map (juxt :title identity))
+           (into {})
+           (reset! all-cards)))
     (doseq [ns-sym card-namespaces]
       (require ns-sym))
     (reset! card-defs-loaded? true)))
@@ -65,16 +73,27 @@
   {:side side
    :title title})
 
+(defn- resolve-card-def
+  [side card]
+  (let [title (cond
+                (string? card) card
+                (map? card) (:title card)
+                :else (str card))
+        fallback (cond
+                   (string? card) (minimal-card side card)
+                   (map? card) (merge {:side side} card)
+                   :else (minimal-card side title))
+        loaded (get @all-cards title)]
+    (merge loaded fallback)))
+
 (defn- prepare-precon-deck
   [side {:keys [identity cards]}]
-  {:identity (assoc identity :type "Identity")
+  {:identity (merge (get @all-cards (:title identity))
+                    (assoc identity :type "Identity"))
    :cards (mapv (fn [{:keys [qty card art]}]
                   {:qty qty
                    :art art
-                   :card (cond
-                           (string? card) (minimal-card side card)
-                           (map? card) (merge {:side side} card)
-                           :else (minimal-card side (str card)))})
+                   :card (resolve-card-def side card)})
                 cards)})
 
 (defn- register-beginner-cards!
@@ -232,7 +251,6 @@
        :choices (some->> (:choices prompt)
                          (mapv canonical-choice)
                          not-empty)
-       :selectable (:selectable prompt)
        :show-discard (:show-discard prompt)
        :show-opponent-discard (:show-opponent-discard prompt)
        :offer-bad-pub? (:offer-bad-pub? prompt)
@@ -245,7 +263,7 @@
        :link (:link prompt)
        :corp-credits (:corp-credits prompt)
        :runner-credits (:runner-credits prompt)}
-      [:prompt-type :source-card :choices :selectable :show-discard :show-opponent-discard
+      [:prompt-type :source-card :choices :show-discard :show-opponent-discard
        :offer-bad-pub? :player :base :bonus :strength :unbeatable :beat-trace
        :link :corp-credits :runner-credits])))
 
@@ -362,8 +380,14 @@
 (defn- decision-side
   [corp-observation runner-observation]
   (let [corp-prompt (get-in corp-observation [:corp :prompt-state])
-        runner-prompt (get-in runner-observation [:runner :prompt-state])]
+        runner-prompt (get-in runner-observation [:runner :prompt-state])
+        run (:run corp-observation)]
     (cond
+      (and run
+           (= :run (:prompt-type corp-prompt))
+           (= :run (:prompt-type runner-prompt)))
+      (if (= :corp (:no-action run)) :runner :corp)
+
       (and corp-prompt (not= :waiting (:prompt-type corp-prompt))) :corp
       (and runner-prompt (not= :waiting (:prompt-type runner-prompt))) :runner
       (and (:end-turn corp-observation)
@@ -377,14 +401,22 @@
 (defn- prompt-actions
   [side prompt]
   (when (and prompt
-             (not= :waiting (:prompt-type prompt))
-             (seq (:choices prompt)))
-    (mapv (fn [choice]
-            {:kind :prompt-choice
-             :side side
-             :prompt-type (:prompt-type prompt)
-             :choice choice})
-          (:choices prompt))))
+             (not= :waiting (:prompt-type prompt)))
+    (cond
+      (= :run (:prompt-type prompt))
+      [{:kind :continue
+        :side side
+        :prompt-type (:prompt-type prompt)}]
+
+      (seq (:choices prompt))
+      (mapv (fn [choice]
+              {:kind :prompt-choice
+               :side side
+               :prompt-type (:prompt-type prompt)
+               :choice choice})
+            (:choices prompt))
+
+      :else nil)))
 
 (defn- abilities->actions
   [kind side loc abilities]
@@ -470,6 +502,20 @@
     [{:kind :start-turn
       :side side}]))
 
+(defn- end-turn-actions
+  [side observation]
+  (let [player (get observation side)
+        phase-locked (or (:corp-phase-12 observation)
+                         (:runner-phase-12 observation)
+                         (:corp-post-discard observation)
+                         (:runner-post-discard observation))]
+    (when (and (= side (:active-player observation))
+               (zero? (:click player))
+               (not (:end-turn observation))
+               (not phase-locked))
+      [{:kind :end-turn
+        :side side}])))
+
 (defn- action-sort-key
   [action]
   [(name (:kind action))
@@ -490,6 +536,7 @@
         actions (if (and prompt (not= :waiting (:prompt-type prompt)))
                   (prompt-actions side prompt)
                   (or (start-turn-actions side observation)
+                      (end-turn-actions side observation)
                       (root-actions side observation)))]
     {:decision-side side
      :actions (vec (sort-by action-sort-key actions))}))
@@ -497,6 +544,19 @@
 (defn- resolve-card
   [state loc]
   (get-in @state (mapv segment->path-key loc)))
+
+(defn- resolve-action-card
+  [state side {:keys [card-locator card-index]}]
+  (cond
+    card-locator (resolve-card state card-locator)
+    (some? card-index) (get-in @state [side :hand card-index])
+    :else nil))
+
+(defn- resolve-ability-card
+  [state side {:keys [card-locator]}]
+  (or (some->> card-locator
+               (resolve-card state))
+      (get-in @state [side :basic-action-card])))
 
 (defn- resolve-prompt-choice
   [state side {:keys [choice-type value card] :as choice}]
@@ -525,34 +585,53 @@
       (main/handle-action state side "choice" {:choice (resolve-prompt-choice state side (:choice action))})
 
       :play-from-hand
-      (main/handle-action state side "play" {:card (resolve-card state (:card-locator action))})
+      (main/handle-action state side "play" {:card (resolve-action-card state side action)})
 
       :flashback
       (main/handle-action state side "flashback" {:card (resolve-card state (:card-locator action))})
 
       :use-ability
-      (main/handle-action state side "ability" {:card (resolve-card state (:card-locator action))
+      (main/handle-action state side "ability" {:card (resolve-ability-card state side action)
                                                 :ability (:ability-index action)})
 
       :use-corp-ability
-      (main/handle-action state side "corp-ability" {:card (resolve-card state (:card-locator action))
+      (main/handle-action state side "corp-ability" {:card (resolve-ability-card state side action)
                                                      :ability (:ability-index action)})
 
       :use-runner-ability
-      (main/handle-action state side "runner-ability" {:card (resolve-card state (:card-locator action))
+      (main/handle-action state side "runner-ability" {:card (resolve-ability-card state side action)
                                                        :ability (:ability-index action)})
 
       :run
       (main/handle-action state side "run" {:server (:server action)})
 
+      :continue
+      (main/handle-action state side "continue" nil)
+
       :start-turn
       (main/handle-action state side "start-turn" nil)
+
+      :end-turn
+      (main/handle-action state side "end-turn" nil)
 
       :use-subroutine
       (main/handle-action state side "subroutine" {:card (resolve-card state (:card-locator action))
                                                    :subroutine (:subroutine-index action)})
 
       (throw (ex-info "Unsupported parity action" {:action action})))))
+
+(defn- normalize-choice
+  [choice]
+  (cond-> choice
+    (string? (:choice-type choice)) (update :choice-type keyword)))
+
+(defn normalize-action
+  [action]
+  (cond-> action
+    (string? (:kind action)) (update :kind keyword)
+    (string? (:side action)) (update :side keyword)
+    (string? (:prompt-type action)) (update :prompt-type keyword)
+    (:choice action) (update :choice normalize-choice)))
 
 (defn canonical-bundle
   [state]
@@ -567,13 +646,33 @@
      :decision-side decision-side
      :legal-actions actions}))
 
-(defn- export-transitions
-  [make-state actions]
+(defn bundle-after-actions
+  ([actions]
+   (bundle-after-actions 1 actions))
+  ([seed actions]
+   (let [state (beginner-state seed)]
+     (doseq [action actions]
+       (apply-action! state (normalize-action action)))
+     (canonical-bundle state))))
+
+(defn- export-transition-tree
+  [make-state actions depth]
   (mapv (fn [action]
-          (let [state (make-state)]
-            (apply-action! state action)
-            {:action action
-             :result (canonical-bundle state)}))
+          (let [state (make-state)
+                _ (apply-action! state action)
+                result (canonical-bundle state)
+                node {:action action
+                      :result result}]
+            (if (pos? depth)
+              (assoc node :transitions
+                     (export-transition-tree
+                       (fn []
+                         (let [child-state (make-state)]
+                           (apply-action! child-state action)
+                           child-state))
+                       (:legal-actions result)
+                       (dec depth)))
+              node)))
         actions))
 
 (defn beginner-init-fixture
@@ -582,26 +681,7 @@
   ([seed]
    (let [initial-state (beginner-state seed)
          initial (canonical-bundle initial-state)
-         transitions (mapv (fn [{:keys [action result] :as first-transition}]
-                             (assoc first-transition
-                                    :transitions
-                                    (mapv (fn [{:keys [action result] :as second-transition}]
-                                            (assoc second-transition
-                                                   :transitions
-                                                   (export-transitions
-                                                     (fn []
-                                                       (let [state (beginner-state seed)]
-                                                         (apply-action! state (:action first-transition))
-                                                         (apply-action! state action)
-                                                         state))
-                                                     (:legal-actions result))))
-                                          (export-transitions
-                                            (fn []
-                                              (let [state (beginner-state seed)]
-                                                (apply-action! state (:action first-transition))
-                                                state))
-                                            (:legal-actions result)))))
-                           (export-transitions #(beginner-state seed) (:legal-actions initial)))]
+         transitions (export-transition-tree #(beginner-state seed) (:legal-actions initial) 4)]
      {:fixture-version 1
       :fixture-kind :initial-state
       :matchup :system-gateway-beginner
