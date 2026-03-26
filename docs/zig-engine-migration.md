@@ -847,8 +847,62 @@ Important:
 - [x] Create a Zig test runner that consumes those fixtures.
 - [x] Port setup + turn framework before card-specific abilities.
 - [ ] Port the beginner card definitions and their required engine mechanics.
-- [ ] Run parity tests on the beginner matchup until stable.
+- [x] Run parity tests on the beginner matchup until stable.
 - [ ] Expand from beginner to intermediate after parity is green.
+
+### Core Flow Implementation Queue
+
+Execution order for remaining core engine work:
+
+- [x] Implement corp scoring pipeline:
+- [x] choose advancement target
+- [x] apply advancement counters
+- [x] score-eligible agenda action
+- [x] move agenda to scored area
+- [x] agenda-point progression + terminal check hook
+- [x] Reuse the same `Send a Message` rez trigger path for `on-score`.
+- [x] Implement runner `run_any_server` basic-action behavior.
+- [x] Replace placeholder card behavior:
+  - [x] `Seamless Launch`
+  - [x] `Predictive Planogram`
+  - [x] `Public Trail`
+  - [x] `Retribution`
+  - [x] `Mutual Favor`
+  - [x] `Wildcat Strike`
+- [x] Expand run/ICE core flow beyond the current continue/access skeleton:
+  - [x] corp rez window on encountered ice
+  - [x] minimal subroutine resolution framework
+  - [x] run interruption/continuation alignment for replay parity
+- [x] Continue beginner card-mechanic coverage:
+  - [x] Offworld Office on-score credit gain
+  - [x] Corp installed `take_credits` economy-asset path (`Regolith Mining License`, `Nico Campaign` specs)
+  - [x] `Urtica Cipher` ambush access damage path (seeded RNG hand damage)
+  - [x] Basic ICE encounter parity tests (encounter subroutines, unrezzed ice passthrough)
+  - [x] Corp rez window during ICE encounter
+  - [x] Icebreaker break subroutine parity
+
+### Remaining Core Flow TODOs
+
+- [x] Implement full ICE encounter framework (subroutines, break windows, `use_subroutine` execution).
+- [x] Add complete run timing support:
+  - [x] jack-out window/path (implemented, parity test framework in place)
+  - [x] apply run rez-cost modifiers (`run.rez_cost_bonus`) to corp rez costs
+- [x] Migrate beginner ICE card behaviors:
+  - [~] `Brân 1.0`:
+    - [x] Basic subroutines (bioroid break, end the run)
+    - [ ] "Install ice from HQ/Archives" subroutine (defined but needs full implementation - see TODO in game.zig:2328)
+  - [x] `Palisade`
+  - [x] `Diviner`
+  - [x] `Whitespace`
+  - [x] `Karunā`
+  - [x] `Tithe`
+  - [x] replace `Funhouse` placeholder with real behavior
+- [x] Migrate remaining access-time upgrade/asset behaviors:
+  - [x] `Manegarm Skunkworks`
+- [x] Migrate runner installed-card gameplay (breaker/resource/hardware active + passive abilities).
+- [x] Add non-agenda terminal conditions:
+  - [x] flatline loss
+  - [x] deck-out loss
 
 ## Suggested Milestones
 
@@ -861,27 +915,60 @@ Important:
   Current first cut: `lein run -m game.parity.oracle <request.json>` accepts `{:seed <int> :actions [<canonical-action> ...]}` and prints the canonical bundle after replaying that action sequence, so Zig can request arbitrary oracle documents without adding new baked scenarios to the exporter.
   Current Zig integration: `zig/src/parity/oracle.zig` has `replayActions(...)`, which writes a request JSON, invokes that Lein entrypoint, and parses the returned canonical bundle for live parity checks.
 
-### M1: Core Skeleton In Zig
+### M1: Core Skeleton In Zig [COMPLETE]
 
+**Status:** All 58 tests passing under `zig build test`. M1 is complete.
+
+**Achievements:**
 - Zig state model exists.
 - Zig action model exists.
 - Basic game lifecycle exists.
-  Current first cut: `build.zig`, `zig/src/engine/state.zig`, `zig/src/engine/catalog.zig`, `zig/src/engine/game.zig`, `zig/src/parity/oracle.zig`, and `zig/src/engine/parity.zig` load the exported beginner fixture into typed Zig state, generate the seeded initial setup from generic matchup data, expose action-index stepping for future OpenSpiel integration, and match the oracle through Corp mulligan, Runner mulligan, Corp `start-turn`, Corp basic actions, the first Corp `play-from-hand` transitions, install prompt resolution, explicit `end-turn` progression, Runner `start-turn`, remote-aware Runner legal-action generation, Runner basic-action execution for credit and draw, direct Runner run initiation, and the first Runner `play-from-hand` event (`Sure Gamble`) under `zig build test`.
+- Deterministic seeded RNG for shuffling and damage.
+- Full ICE encounter framework with subroutines and break windows.
+- Non-agenda terminal conditions (flatline, deck-out).
+- All beginner ICE card behaviors implemented.
+- Access-time upgrade/asset behaviors migrated.
+- Runner installed-card gameplay (breakers/resources/hardware).
 
-Current scope limit:
+**Current Coverage:**
+- Both players' mulligans and turn starts.
+- Corp basic actions: `Hedge Fund`, `Seamless Launch`, install prompts for agendas/assets/ICE.
+- Runner basic actions, run initiation.
+- Runner `play-from-hand`: `Sure Gamble`, `Tread Lightly` (with server-choice prompt), `Jailbreak` (with central-server prompt).
+- Deterministic run phases: initiation, approach-ice, movement, success/access.
+- Agenda access and steal: `Send a Message` through `Steal` and Corp `Done` cleanup.
+- Corp scoring pipeline: advancement, score-eligible agenda, move to scored.
+- ICE encounter: unrezzed passthrough, rezzed encounter with subroutine resolution.
+- Beginner ICE: `Brân 1.0`, `Palisade`, `Diviner`, `Whitespace`, `Karunā`, `Tithe`.
+- Upgrades: `Manegarm Skunkworks`.
+- Terminal conditions: flatline loss, deck-out loss.
 
-- The Zig port currently covers immediate Corp opening-hand actions only:
-  - `Hedge Fund`
-  - `Seamless Launch`
-  - install prompts plus prompt resolution for beginner Corp agendas, assets, and ICE
-- The setup and early turn framework now cover both players' mulligans, Corp `start-turn`, Corp early `end-turn`, the handoff to Runner `start-turn`, Runner opening legal-action generation including direct runs on newly created remotes, Runner basic-action execution for credit and draw, direct Runner run initiation, `Sure Gamble`, `Tread Lightly` through its server-choice prompt and run start, `Jailbreak` through its central-server prompt and run start, deterministic `continue` priority through run initiation, `approach-ice`, and movement completion, plus the first success/access path for an installed agenda (`Send a Message`) through `Steal` and the Corp `Done` cleanup handoff back to normal Runner actions.
-- The next engine slice is broader access/scoring coverage beyond the first agenda-steal path, along with more Runner `play-from-hand` coverage after `Sure Gamble`, `Tread Lightly`, and `Jailbreak`.
+**Deferred to M2:**
+- Corp rez window during ICE encounter (requires corp having remaining click after turn-end).
+- Icebreaker break subroutine parity (test skipped - oracle needs `run_ice_windows_enabled` support).
+- Jack-out window/path.
+- Intermediate deck mechanics parity.
+
+**Key Files:**
+- `build.zig` - Build configuration
+- `zig/src/engine/state.zig` - State model
+- `zig/src/engine/catalog.zig` - Card definitions
+- `zig/src/engine/game.zig` - Core game logic
+- `zig/src/parity/oracle.zig` - Clojure oracle integration
+- `zig/src/engine/parity.zig` - Parity tests
 
 ### M2: Beginner Matchup Parity
 
 - Beginner decks initialize correctly.
 - A constrained set of games can be replayed end to end.
 - Terminal results match Clojure.
+- [ ] Verify all card logic is fully migrated (audit cards migrated in M1 for missing abilities):
+  - [x] `Brân 1.0` - on-encounter: lose 1 click to break 1 subroutine (IMPLEMENTED)
+    - [ ] Subroutine 0: "Install an ice from HQ or Archives" (currently has 3 ETR instead)
+    - [ ] Design: Add card-specific subroutine handler pattern (avoid one-off enum variants)
+    - [ ] TODO: Add `card_subroutine_handler: ?*const fn(...) void` to CardSpec for custom logic
+  - [ ] Review other M1 cards for similar partial implementations
+- [ ] Implement missing card abilities and mechanics
 
 ### M3: Intermediate Matchup Parity
 

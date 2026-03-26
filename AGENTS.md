@@ -14,13 +14,7 @@ These rules apply to the Zig engine migration work in this repository.
 
 - Do not default to `i64` for game state.
 - Use the smallest integer type that matches the domain and fixture values.
-- Prefer domain aliases in [`zig/src/engine/state.zig`](/Users/ngavinsir/project/ngavinsir/netrunner/zig/src/engine/state.zig), for example:
-  - `Seed = u64`
-  - `RngSeed = i64`
-  - `CardCode = u32`
-  - `Count = u16`
-  - `TinyCount = u8`
-  - `TurnNumber = u16`
+- Only use type aliases when the custom type has custom methods. Otherwise, use the underlying type directly for better readability.
 - Keep signed integers only where the oracle actually requires signed values. Example: exported `rng-seed` can be negative, so it stays signed.
 - When reading integers from fixtures, use generic range-checked conversion helpers instead of one helper per integer size.
 
@@ -49,7 +43,19 @@ These rules apply to the Zig engine migration work in this repository.
   - legal actions
   - ordered zones
   - player scalar state
+- **All migrated gameplay logic MUST have parity tests** that verify against the Clojure oracle using `zig/src/engine/parity.zig`.
+- Follow the pattern: create scenario test → replay via `fixture.replayActions()` → assert with `expectSnapshotMatches()`.
+- **NEVER skip tests with error.SkipZigTest**. Tests must either pass or fail deterministically.
+- **If a card is not in starting hand**: Use a different seed where it is available, or structure the test to draw/play the card through normal gameplay.
+- **All tests must be deterministic**: Use fixed seeds, never rely on random card availability.
 
-### Build Artifacts
+### Card-Centric Design
 
-- Ignore Zig build outputs such as `.zig-cache/` and `zig-out/`.
+- All card-specific logic MUST be defined in [`zig/src/engine/catalog.zig`](/Users/ngavinsir/project/ngavinsir/netrunner/zig/src/engine/catalog.zig) via card specs, not scattered throughout the game engine.
+- Do NOT check card titles in gameplay logic methods (e.g., `if (std.mem.eql(u8, card.title, "Send a Message"))`).
+- Instead, add semantic fields to card specs:
+  - `CorpPlaySpec.advancement_amount` for cards like `Seamless Launch`
+  - `AccessSpec.on_score_effect` for agenda scoring triggers
+  - `CardSpec.card_subtypes` for icebreaker detection (Fracter, Killer, Decoder)
+- Game engine methods should dispatch based on spec fields, not card identity.
+- This mirrors the Clojure approach where card definitions are self-contained.

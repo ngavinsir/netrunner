@@ -79,28 +79,28 @@ pub const ActionExpectation = struct {
     side: state.Side,
     choice_text: ?[]const u8 = null,
     server: ?[]const u8 = null,
-    card_index: ?state.TinyCount = null,
+    card_index: ?u8 = null,
     card_title: ?[]const u8 = null,
-    ability_index: ?state.TinyCount = null,
+    ability_index: ?u8 = null,
     label: ?[]const u8 = null,
 };
 
 pub const TransitionExpectation = struct {
     decision_side: state.Side,
     active_player: state.Side,
-    turn: state.TurnNumber,
+    turn: u16,
     end_turn: bool,
     run: ?state.RunState,
-    corp_credit: state.Count,
-    runner_credit: state.Count,
-    runner_run_credit: state.Count,
-    corp_click: state.TinyCount,
-    runner_click: state.TinyCount,
-    corp_agenda_point: state.TinyCount,
-    runner_agenda_point: state.TinyCount,
+    corp_credit: u16,
+    runner_credit: u16,
+    runner_run_credit: u16,
+    corp_click: u8,
+    runner_click: u8,
+    corp_agenda_point: u8,
+    runner_agenda_point: u8,
     corp_keep: state.KeepState,
     runner_keep: state.KeepState,
-    rng_seed: state.RngSeed,
+    rng_seed: i64,
     corp_prompt_type: ?[]const u8,
     runner_prompt_type: ?[]const u8,
     legal_actions: []const ActionExpectation,
@@ -210,8 +210,17 @@ pub fn loadSummary(
 
 pub fn replayActions(
     backing_allocator: std.mem.Allocator,
-    seed: state.Seed,
+    seed: u64,
     actions: []const state.LegalAction,
+) !ReplaySnapshot {
+    return replayActionsWithOptions(backing_allocator, seed, actions, false);
+}
+
+pub fn replayActionsWithOptions(
+    backing_allocator: std.mem.Allocator,
+    seed: u64,
+    actions: []const state.LegalAction,
+    run_ice_windows_enabled: bool,
 ) !ReplaySnapshot {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
@@ -220,11 +229,11 @@ pub fn replayActions(
     const repo_root = try repoRootPath(allocator);
     const parsed = blk: {
         const socket_path = try ensurePersistentOracleServer(repo_root);
-        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions) catch {
+        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions, run_ice_windows_enabled) catch {
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
-            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions);
+            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, run_ice_windows_enabled);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
 
@@ -232,7 +241,7 @@ pub fn replayActions(
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
-            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions);
+            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, run_ice_windows_enabled);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
     };
@@ -278,15 +287,16 @@ fn resetPersistentOracleServerLocked() void {
 fn runReplayOracleSocket(
     allocator: std.mem.Allocator,
     socket_path: []const u8,
-    seed: state.Seed,
+    seed: u64,
     actions: []const state.LegalAction,
+    run_ice_windows_enabled: bool,
 ) ![]const u8 {
     var stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
     var write_buffer: [4096]u8 = undefined;
     var read_buffer: [4096]u8 = undefined;
 
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions);
+    const request_payload = try buildReplayRequestJson(allocator, seed, actions, run_ice_windows_enabled);
     defer allocator.free(request_payload);
     var writer = stream.writer(&write_buffer);
     try writer.interface.writeAll(request_payload);
@@ -306,13 +316,14 @@ fn runReplayOracleSocket(
 fn runReplayOracleOnce(
     allocator: std.mem.Allocator,
     repo_root: []const u8,
-    seed: state.Seed,
+    seed: u64,
     actions: []const state.LegalAction,
+    run_ice_windows_enabled: bool,
 ) ![]const u8 {
     const request_path = try std.fmt.allocPrint(allocator, "/tmp/netrunner-oracle-{d}.json", .{std.time.microTimestamp()});
     defer allocator.free(request_path);
 
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions);
+    const request_payload = try buildReplayRequestJson(allocator, seed, actions, run_ice_windows_enabled);
     defer allocator.free(request_payload);
     try std.fs.cwd().writeFile(.{ .sub_path = request_path, .data = request_payload });
     defer std.fs.cwd().deleteFile(request_path) catch {};
@@ -343,8 +354,9 @@ fn runReplayOracleOnce(
 
 fn buildReplayRequestJson(
     allocator: std.mem.Allocator,
-    seed: state.Seed,
+    seed: u64,
     actions: []const state.LegalAction,
+    run_ice_windows_enabled: bool,
 ) ![]const u8 {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(allocator);
@@ -352,10 +364,14 @@ fn buildReplayRequestJson(
     var writer = output.writer(allocator);
     try writer.writeAll("{\"seed\":");
     try writer.print("{d}", .{seed});
+    try writer.writeAll(",\"run-ice-windows-enabled\":");
+    try writer.print("{}", .{run_ice_windows_enabled});
     try writer.writeAll(",\"actions\":[");
-    for (actions, 0..) |action, idx| {
-        if (idx != 0) try writer.writeByte(',');
+    var wrote_action = false;
+    for (actions) |action| {
+        if (wrote_action) try writer.writeByte(',');
         try writeActionJson(&writer, action);
+        wrote_action = true;
     }
     try writer.writeAll("]}");
     return try output.toOwnedSlice(allocator);
@@ -411,12 +427,29 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
     if (action.server) |server| try writeJsonFieldString(writer, "server", server, true);
     if (action.card_title) |card_title| try writeJsonFieldString(writer, "card-title", card_title, true);
     if (action.card_index) |card_index| try writeJsonFieldInteger(writer, "card-index", card_index, true);
+    if (action.kind == .use_installed_ability and action.side == .runner and action.card_index != null)
+        try writeRunnerRigResourceLocatorJsonField(writer, "card-locator", action.card_index.?, true);
     if (oracleAbilityIndex(action)) |ability_index| try writeJsonFieldInteger(writer, "ability-index", ability_index, true);
     if (action.label) |label| try writeJsonFieldString(writer, "label", label, true);
     try writer.writeByte('}');
 }
 
-fn oracleAbilityIndex(action: state.LegalAction) ?state.TinyCount {
+fn writeRunnerRigResourceLocatorJsonField(
+    writer: anytype,
+    key: []const u8,
+    card_index: u8,
+    leading_comma: bool,
+) !void {
+    if (leading_comma) try writer.writeByte(',');
+    try writeJsonString(writer, key);
+    try writer.writeByte(':');
+    try writer.writeAll("[\"runner\",\"rig\",\"resource\",");
+    try writer.print("{d}", .{card_index});
+    try writer.writeByte(']');
+}
+
+fn oracleAbilityIndex(action: state.LegalAction) ?u8 {
+    if (action.kind == .use_installed_ability) return 0;
     if (action.basic_action) |basic_action| {
         return switch (action.side) {
             .corp => switch (basic_action) {
@@ -429,6 +462,7 @@ fn oracleAbilityIndex(action: state.LegalAction) ?state.TinyCount {
             .runner => switch (basic_action) {
                 .gain_credit => 0,
                 .draw_card => 1,
+                .install_from_grip => 2,
                 .run_any_server => 4,
                 else => null,
             },
@@ -520,10 +554,13 @@ fn actionKindName(kind: state.ActionKind) []const u8 {
         .end_turn => "end-turn",
         .play_from_hand => "play-from-hand",
         .flashback => "flashback",
+        .install_from_hand => "install-from-hand",
         .use_ability => "use-ability",
+        .use_installed_ability => "use-installed-ability",
         .use_corp_ability => "use-corp-ability",
         .use_runner_ability => "use-runner-ability",
         .use_subroutine => "use-subroutine",
+        .jack_out => "jack-out",
         .run => "run",
     };
 }
@@ -612,12 +649,13 @@ fn parseGameState(
 ) !state.GameState {
     return .{
         .format = try dupeString(allocator, try getRequired(.string, object, "format")),
-        .seed = try getIntegerAs(state.Seed, object, "seed"),
+        .seed = try getIntegerAs(u64, object, "seed"),
         .rng_seed = try getOptionalInteger(object, "rng-seed"),
         .active_player = try parseSide(try getRequired(.string, object, "active-player")),
-        .turn = try getIntegerAs(state.TurnNumber, object, "turn"),
+        .turn = try getIntegerAs(u16, object, "turn"),
         .end_turn = try getBool(object, "end-turn"),
         .run = try parseOptionalRunState(allocator, object, "run"),
+        .run_ice_windows_enabled = (try getOptional(.boolean, object, "run-ice-windows-enabled")) orelse false,
         .pending_install = null,
         .corp = try parsePlayerState(allocator, try getRequired(.object, object, "corp")),
         .runner = try parsePlayerState(allocator, try getRequired(.object, object, "runner")),
@@ -631,25 +669,53 @@ fn parsePlayerState(
     return .{
         .identity = try parseCard(allocator, try getRequired(.object, object, "identity")),
         .basic_action_card = try parseCard(allocator, try getRequired(.object, object, "basic-action-card")),
-        .click = try getIntegerAs(state.TinyCount, object, "click"),
-        .click_per_turn = try getIntegerAs(state.TinyCount, object, "click-per-turn"),
-        .credit = try getIntegerAs(state.Count, object, "credit"),
-        .agenda_point = try getIntegerAs(state.TinyCount, object, "agenda-point"),
-        .agenda_point_req = try getIntegerAs(state.TinyCount, object, "agenda-point-req"),
+        .click = try getIntegerAs(u8, object, "click"),
+        .click_per_turn = try getIntegerAs(u8, object, "click-per-turn"),
+        .credit = try getIntegerAs(u16, object, "credit"),
+        .agenda_point = try getIntegerAs(u8, object, "agenda-point"),
+        .agenda_point_req = try getIntegerAs(u8, object, "agenda-point-req"),
         .hand_size = try parseHandSize(try getRequired(.object, object, "hand-size")),
         .bad_publicity = try parseOptionalBadPublicity(object, "bad-publicity"),
-        .run_credit = try getIntegerAsOrDefault(state.Count, object, "run-credit", 0),
-        .link = try getIntegerAsOrDefault(state.TinyCount, object, "link", 0),
+        .run_credit = try getIntegerAsOrDefault(u16, object, "run-credit", 0),
+        .link = try getIntegerAsOrDefault(u8, object, "link", 0),
         .tag = try parseOptionalTagState(object, "tag"),
         .memory = try parseOptionalMemoryState(object, "memory"),
-        .brain_damage = try getIntegerAsOrDefault(state.TinyCount, object, "brain-damage", 0),
+        .brain_damage = try getIntegerAsOrDefault(u8, object, "brain-damage", 0),
         .keep = try parseKeepState(object, "keep"),
         .prompt_state = try parseOptionalPromptState(allocator, object, "prompt-state"),
         .deck = try parseCards(allocator, object, "deck"),
         .hand = try parseCards(allocator, object, "hand"),
         .discard = try parseCards(allocator, object, "discard"),
+        .scored = try parseOptionalCards(allocator, object, "scored"),
+        .rig_hardware = try parseRigHardware(allocator, object),
+        .rig_program = try parseRigPrograms(allocator, object),
+        .rig_resources = try parseRigResources(allocator, object),
         .servers = try parseServers(allocator, object),
     };
+}
+
+fn parseRigHardware(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+) ![]const state.CardInstance {
+    const rig = try getOptional(.object, object, "rig") orelse return try allocator.alloc(state.CardInstance, 0);
+    return try parseOptionalCards(allocator, rig, "hardware");
+}
+
+fn parseRigPrograms(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+) ![]const state.CardInstance {
+    const rig = try getOptional(.object, object, "rig") orelse return try allocator.alloc(state.CardInstance, 0);
+    return try parseOptionalCards(allocator, rig, "program");
+}
+
+fn parseRigResources(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+) ![]const state.CardInstance {
+    const rig = try getOptional(.object, object, "rig") orelse return try allocator.alloc(state.CardInstance, 0);
+    return try parseCards(allocator, rig, "resource");
 }
 
 fn parseOptionalRunState(
@@ -665,7 +731,7 @@ fn parseOptionalRunState(
     }
     return .{
         .server = server,
-        .position = try getIntegerAs(state.TinyCount, run_object, "position"),
+        .position = try getIntegerAs(u8, run_object, "position"),
         .phase = try dupeString(allocator, try getRequired(.string, run_object, "phase")),
         .corp_auto_no_action = if (try getOptional(.boolean, run_object, "corp-auto-no-action")) |value| value else false,
         .no_action = try parseOptionalRunSide(run_object, "no-action"),
@@ -698,13 +764,19 @@ fn parseCard(
     allocator: std.mem.Allocator,
     object: std.json.ObjectMap,
 ) !state.CardInstance {
+    const counter = try getOptional(.object, object, "counter");
     return .{
         .title = try dupeString(allocator, try getRequired(.string, object, "title")),
         .printed_title = try dupeOptionalString(allocator, try getOptional(.string, object, "printed-title")),
         .code = try getOptionalCardCode(object, "code"),
         .side = try parseSide(try getRequired(.string, object, "side")),
         .card_type = try dupeOptionalString(allocator, try getOptional(.string, object, "type")),
-        .cost = try getOptionalIntegerAs(state.Count, object, "cost"),
+        .cost = try getOptionalIntegerAs(u16, object, "cost"),
+        .agenda_points = try getOptionalIntegerAs(u8, object, "agenda-points"),
+        .advancement_requirement = try getOptionalIntegerAs(u8, object, "advancement-requirement"),
+        .rezzed = (try getOptional(.boolean, object, "rezzed")) orelse false,
+        .advancement_counter = if (counter) |counter_map| try getIntegerAsOrDefault(u8, counter_map, "advancement", 0) else 0,
+        .credit_counter = if (counter) |counter_map| try getIntegerAsOrDefault(u16, counter_map, "credit", 0) else 0,
     };
 }
 
@@ -748,7 +820,7 @@ fn parsePromptChoice(
         },
         .number => .{
             .kind = kind,
-            .number = try getOptionalIntegerAs(state.Count, object, "value"),
+            .number = try getOptionalIntegerAs(u16, object, "value"),
         },
         .card => .{
             .kind = kind,
@@ -790,21 +862,42 @@ fn parseLegalAction(
     else
         null;
 
-    const ability_index = try getOptionalIntegerAs(state.TinyCount, object, "ability-index");
+    const ability_index = try getOptionalIntegerAs(u8, object, "ability-index");
+    const side = try parseSide(try getRequired(.string, object, "side"));
+    const installed_resource_index = try parseRunnerRigResourceCardIndex(object);
+    const kind = try parseActionKind(try getRequired(.string, object, "kind"));
     return .{
-        .kind = try parseActionKind(try getRequired(.string, object, "kind")),
-        .side = try parseSide(try getRequired(.string, object, "side")),
+        .kind = if (kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .use_installed_ability else kind,
+        .side = side,
         .prompt_type = try dupeOptionalString(allocator, try getOptional(.string, object, "prompt-type")),
         .choice = choice,
         .server = try dupeOptionalString(allocator, try getOptional(.string, object, "server")),
-        .card_index = try parseOptionalCardIndex(object),
+        .card_index = installed_resource_index orelse try parseOptionalCardIndex(object),
         .card_title = try dupeOptionalString(allocator, try getOptional(.string, object, "card-title")),
-        .basic_action = if (ability_index) |idx| try parseBasicAction(try parseSide(try getRequired(.string, object, "side")), idx) else null,
+        .basic_action = if (kind == .use_ability and installed_resource_index == null)
+            if (ability_index) |idx| try parseBasicAction(side, idx) else null
+        else
+            null,
+        .installed_ability = if (kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .take_credits else null,
         .label = try dupeOptionalString(allocator, try getOptional(.string, object, "label")),
     };
 }
 
-fn parseBasicAction(side: state.Side, ability_index: state.TinyCount) !state.BasicAction {
+fn parseRunnerRigResourceCardIndex(
+    object: std.json.ObjectMap,
+) !?u8 {
+    const locator = try getOptional(.array, object, "card-locator") orelse return null;
+    if (locator.items.len != 4) return null;
+    const a = try extractField(.string, locator.items[0]);
+    const b = try extractField(.string, locator.items[1]);
+    const c = try extractField(.string, locator.items[2]);
+    if (!std.mem.eql(u8, a, "runner")) return null;
+    if (!std.mem.eql(u8, b, "rig")) return null;
+    if (!std.mem.eql(u8, c, "resource")) return null;
+    return try castInteger(u8, try extractField(.integer, locator.items[3]));
+}
+
+fn parseBasicAction(side: state.Side, ability_index: u8) !state.BasicAction {
     return switch (side) {
         .corp => switch (ability_index) {
             0 => .gain_credit,
@@ -816,6 +909,7 @@ fn parseBasicAction(side: state.Side, ability_index: state.TinyCount) !state.Bas
         .runner => switch (ability_index) {
             0 => .gain_credit,
             1 => .draw_card,
+            2 => .install_from_grip,
             4 => .run_any_server,
             else => error.UnsupportedAbility,
         },
@@ -908,7 +1002,7 @@ fn parseBasicActionOracle(
     for (transitions.items) |item| {
         const nested = try expectObject(item);
         const action = try getRequired(.object, nested, "action");
-        const ability_index = try getOptionalIntegerAs(state.TinyCount, action, "ability-index") orelse continue;
+        const ability_index = try getOptionalIntegerAs(u8, action, "ability-index") orelse continue;
         const result = try getRequired(.object, nested, "result");
         const parsed_transition = try parseTransitionExpectation(allocator, result);
 
@@ -1005,16 +1099,16 @@ fn parseTransitionExpectation(
     return .{
         .decision_side = try parseSide(try getRequired(.string, result, "decision-side")),
         .active_player = try parseSide(try getRequired(.string, oracle_state, "active-player")),
-        .turn = try getIntegerAs(state.TurnNumber, oracle_state, "turn"),
+        .turn = try getIntegerAs(u16, oracle_state, "turn"),
         .end_turn = try getBool(oracle_state, "end-turn"),
         .run = try parseOptionalRunState(allocator, oracle_state, "run"),
-        .corp_credit = try getIntegerAs(state.Count, corp, "credit"),
-        .runner_credit = try getIntegerAs(state.Count, runner, "credit"),
-        .runner_run_credit = try getIntegerAsOrDefault(state.Count, runner, "run-credit", 0),
-        .corp_click = try getIntegerAs(state.TinyCount, corp, "click"),
-        .runner_click = try getIntegerAs(state.TinyCount, runner, "click"),
-        .corp_agenda_point = try getIntegerAs(state.TinyCount, corp, "agenda-point"),
-        .runner_agenda_point = try getIntegerAs(state.TinyCount, runner, "agenda-point"),
+        .corp_credit = try getIntegerAs(u16, corp, "credit"),
+        .runner_credit = try getIntegerAs(u16, runner, "credit"),
+        .runner_run_credit = try getIntegerAsOrDefault(u16, runner, "run-credit", 0),
+        .corp_click = try getIntegerAs(u8, corp, "click"),
+        .runner_click = try getIntegerAs(u8, runner, "click"),
+        .corp_agenda_point = try getIntegerAs(u8, corp, "agenda-point"),
+        .runner_agenda_point = try getIntegerAs(u8, runner, "agenda-point"),
         .corp_keep = try parseKeepState(corp, "keep"),
         .runner_keep = try parseKeepState(runner, "keep"),
         .rng_seed = try getInteger(oracle_state, "rng-seed"),
@@ -1037,18 +1131,20 @@ fn parseActionExpectations(
     for (actions.items, 0..) |item, idx| {
         const action = try expectObject(item);
         const side = try parseSide(try getRequired(.string, action, "side"));
-        const ability_index = try getOptionalIntegerAs(state.TinyCount, action, "ability-index");
+        const ability_index = try getOptionalIntegerAs(u8, action, "ability-index");
+        const installed_resource_index = try parseRunnerRigResourceCardIndex(action);
         const choice_text = if (try getOptional(.object, action, "choice")) |choice|
             try dupeOptionalString(allocator, try getOptional(.string, choice, "value"))
         else
             null;
+        const raw_kind = try parseActionKind(try getRequired(.string, action, "kind"));
 
         parsed[idx] = .{
-            .kind = try parseActionKind(try getRequired(.string, action, "kind")),
+            .kind = if (raw_kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .use_installed_ability else raw_kind,
             .side = side,
             .choice_text = choice_text,
             .server = try dupeOptionalString(allocator, try getOptional(.string, action, "server")),
-            .card_index = try parseOptionalCardIndex(action),
+            .card_index = installed_resource_index orelse try parseOptionalCardIndex(action),
             .card_title = try dupeOptionalString(allocator, try getOptional(.string, action, "card-title")),
             .ability_index = ability_index,
             .label = try dupeOptionalString(allocator, try getOptional(.string, action, "label")),
@@ -1068,6 +1164,15 @@ fn parseCards(
         cards[idx] = try parseCard(allocator, try expectObject(item));
     }
     return cards;
+}
+
+fn parseOptionalCards(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+    key: []const u8,
+) ![]const state.CardInstance {
+    if (try getOptional(.array, object, key) == null) return try allocator.alloc(state.CardInstance, 0);
+    return parseCards(allocator, object, key);
 }
 
 fn parseServers(
@@ -1140,7 +1245,7 @@ fn normalizeInternalServerName(
     return allocator.dupe(u8, name);
 }
 
-fn parseOptionalCardIndex(object: std.json.ObjectMap) !?state.TinyCount {
+fn parseOptionalCardIndex(object: std.json.ObjectMap) !?u8 {
     const locator = try getOptional(.array, object, "card-locator") orelse return null;
     if (locator.items.len < 3) return null;
     const zone = switch (locator.items[1]) {
@@ -1157,15 +1262,15 @@ fn parseOptionalCardIndex(object: std.json.ObjectMap) !?state.TinyCount {
         return null;
     }
     return switch (locator.items[locator.items.len - 1]) {
-        .integer => |value| try castInteger(state.TinyCount, value),
+        .integer => |value| try castInteger(u8, value),
         else => null,
     };
 }
 
 fn parseHandSize(object: std.json.ObjectMap) !state.HandSize {
     return .{
-        .base = try getIntegerAs(state.TinyCount, object, "base"),
-        .total = try getIntegerAs(state.TinyCount, object, "total"),
+        .base = try getIntegerAs(u8, object, "base"),
+        .total = try getIntegerAs(u8, object, "total"),
     };
 }
 
@@ -1175,8 +1280,8 @@ fn parseOptionalBadPublicity(
 ) !?state.BadPublicity {
     const bp = try getOptional(.object, object, key) orelse return null;
     return .{
-        .base = try getIntegerAs(state.TinyCount, bp, "base"),
-        .additional = try getIntegerAs(state.TinyCount, bp, "additional"),
+        .base = try getIntegerAs(u8, bp, "base"),
+        .additional = try getIntegerAs(u8, bp, "additional"),
     };
 }
 
@@ -1186,8 +1291,8 @@ fn parseOptionalTagState(
 ) !?state.TagState {
     const tag = try getOptional(.object, object, key) orelse return null;
     return .{
-        .base = try getIntegerAs(state.TinyCount, tag, "base"),
-        .total = try getIntegerAs(state.TinyCount, tag, "total"),
+        .base = try getIntegerAs(u8, tag, "base"),
+        .total = try getIntegerAs(u8, tag, "total"),
         .is_tagged = try getBool(tag, "is-tagged"),
     };
 }
@@ -1202,13 +1307,13 @@ fn parseOptionalMemoryState(
     const virus = if (only_for) |value| try getOptional(.object, value, "virus") else null;
 
     return .{
-        .base = try getIntegerAs(state.TinyCount, memory, "base"),
-        .available = try getIntegerAs(state.TinyCount, memory, "available"),
-        .used = try getIntegerAs(state.TinyCount, memory, "used"),
-        .caissa_available = if (caissa) |value| try getIntegerAs(state.TinyCount, value, "available") else 0,
-        .caissa_used = if (caissa) |value| try getIntegerAs(state.TinyCount, value, "used") else 0,
-        .virus_available = if (virus) |value| try getIntegerAs(state.TinyCount, value, "available") else 0,
-        .virus_used = if (virus) |value| try getIntegerAs(state.TinyCount, value, "used") else 0,
+        .base = try getIntegerAs(u8, memory, "base"),
+        .available = try getIntegerAs(u8, memory, "available"),
+        .used = try getIntegerAs(u8, memory, "used"),
+        .caissa_available = if (caissa) |value| try getIntegerAs(u8, value, "available") else 0,
+        .caissa_used = if (caissa) |value| try getIntegerAs(u8, value, "used") else 0,
+        .virus_available = if (virus) |value| try getIntegerAs(u8, value, "available") else 0,
+        .virus_used = if (virus) |value| try getIntegerAs(u8, value, "used") else 0,
     };
 }
 
@@ -1319,9 +1424,11 @@ fn parseActionKind(raw: []const u8) !state.ActionKind {
     if (std.mem.eql(u8, raw, "continue")) return .@"continue";
     if (std.mem.eql(u8, raw, "start-turn")) return .start_turn;
     if (std.mem.eql(u8, raw, "end-turn")) return .end_turn;
+    if (std.mem.eql(u8, raw, "install-from-hand")) return .install_from_hand;
     if (std.mem.eql(u8, raw, "play-from-hand")) return .play_from_hand;
     if (std.mem.eql(u8, raw, "flashback")) return .flashback;
     if (std.mem.eql(u8, raw, "use-ability")) return .use_ability;
+    if (std.mem.eql(u8, raw, "use-installed-ability")) return .use_installed_ability;
     if (std.mem.eql(u8, raw, "use-corp-ability")) return .use_corp_ability;
     if (std.mem.eql(u8, raw, "use-runner-ability")) return .use_runner_ability;
     if (std.mem.eql(u8, raw, "use-subroutine")) return .use_subroutine;
@@ -1442,12 +1549,12 @@ fn getOptionalIntegerAs(comptime T: type, object: std.json.ObjectMap, key: []con
         null;
 }
 
-fn getOptionalCardCode(object: std.json.ObjectMap, key: []const u8) !?state.CardCode {
+fn getOptionalCardCode(object: std.json.ObjectMap, key: []const u8) !?u32 {
     const value = getOptionalValue(object, key) orelse return null;
     return switch (value) {
         .null => null,
-        .integer => |integer| try castInteger(state.CardCode, integer),
-        .string => |text| try std.fmt.parseInt(state.CardCode, text, 10),
+        .integer => |integer| try castInteger(u32, integer),
+        .string => |text| try std.fmt.parseInt(u32, text, 10),
         else => error.UnexpectedType,
     };
 }

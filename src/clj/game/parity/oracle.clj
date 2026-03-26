@@ -10,8 +10,8 @@
    [game.parity.export :as export]))
 
 (defn request->bundle
-  [{:keys [seed actions]}]
-  (export/bundle-after-actions (or seed 1) (or actions [])))
+  [{:keys [seed actions run-ice-windows-enabled]}]
+  (export/replay-bundle-after-actions (or seed 1) (or actions []) (or run-ice-windows-enabled false)))
 
 (defn read-request
   [path]

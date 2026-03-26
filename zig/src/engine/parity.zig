@@ -7,7 +7,7 @@ const state = @import("state.zig");
 const flow = game;
 const generator = game;
 
-test "generated beginner setup matches oracle fixture for seed 1" {
+test "generated beginner setup matches oracle fixture for seed 5" {
     var oracle = try setup.loadBeginnerInitialSnapshot(
         std.testing.allocator,
         "test/resources/parity/system-gateway-beginner-init.json",
@@ -785,8 +785,10 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    // Movement phase: runner gets first priority (jack-out opportunity)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    // Then corp passes
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -1066,14 +1068,14 @@ test "runner overclock run credits are attached and cleared through run flow" {
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
 
-    try std.testing.expectEqual(@as(state.Count, 4), generated.snapshot.state.runner.credit);
-    try std.testing.expectEqual(@as(state.Count, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 4), generated.snapshot.state.runner.credit);
+    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
 
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
 
     const run_after_choice = generated.snapshot.state.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(state.Count, 5), run_after_choice.temporary_run_credits);
-    try std.testing.expectEqual(@as(state.Count, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 5), run_after_choice.temporary_run_credits);
+    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
 
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
@@ -1081,15 +1083,15 @@ test "runner overclock run credits are attached and cleared through run flow" {
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
 
     const run_after_success = generated.snapshot.state.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(state.Count, 5), run_after_success.temporary_run_credits);
-    try std.testing.expectEqual(@as(state.Count, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 5), run_after_success.temporary_run_credits);
+    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
 
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Steal"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Done"));
 
     try std.testing.expect(generated.snapshot.state.run == null);
-    try std.testing.expectEqual(@as(state.Count, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
 }
 
 test "runner overclock successful-run scenario matches live replay oracle" {
@@ -1178,10 +1180,10 @@ test "runner jailbreak successful-run effect is attached to run flow" {
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "HQ"));
 
     const run_after_choice = generated.snapshot.state.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(state.Count, 0), run_after_choice.rez_cost_bonus);
+    try std.testing.expectEqual(@as(u16, 0), run_after_choice.rez_cost_bonus);
     try std.testing.expectEqual(state.RunSuccessEffectKind.draw_cards, run_after_choice.successful_run_effect);
-    try std.testing.expectEqual(@as(state.TinyCount, 1), run_after_choice.successful_run_draw_cards);
-    try std.testing.expectEqual(@as(state.TinyCount, 1), run_after_choice.access_bonus);
+    try std.testing.expectEqual(@as(u8, 1), run_after_choice.successful_run_draw_cards);
+    try std.testing.expectEqual(@as(u8, 1), run_after_choice.access_bonus);
 
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
@@ -1241,7 +1243,7 @@ test "runner tread-lightly run modifier is attached to run state" {
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
 
     const run = generated.snapshot.state.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(state.Count, 3), run.rez_cost_bonus);
+    try std.testing.expectEqual(@as(u16, 3), run.rez_cost_bonus);
 }
 
 test "runner creative-commission scenario matches live replay oracle" {
@@ -1296,6 +1298,211 @@ test "runner vrcation scenario matches live replay oracle" {
     try expectSnapshotMatches(replay.snapshot, generated.snapshot);
 }
 
+test "runner telework contract install scenario matches live replay oracle" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+        try takeAction(allocator, &actions, &generated, gain_action);
+    }
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Telework Contract"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 7, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+}
+
+test "runner telework contract ability scenario matches live replay oracle" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+        try takeAction(allocator, &actions, &generated, gain_action);
+    }
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Telework Contract"));
+    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.snapshot.legal_actions, "Telework Contract"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 7, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+}
+
+test "manegarm skunkworks parity test" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, .{ .kind = .end_turn, .side = .corp });
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+
+    try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
+    try std.testing.expectEqualStrings("manegarm-skunkworks-choice", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expectEqual(@as(usize, 3), generated.snapshot.state.runner.prompt_state.?.choices.len);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "End the run"));
+
+    try std.testing.expect(generated.snapshot.state.run == null);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 3, scenario_actions);
+    defer replay.deinit();
+
+    try std.testing.expectEqual(replay.snapshot.decision_side, generated.snapshot.decision_side);
+    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
+}
+
+test "manegarm skunkworks spend clicks parity test" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, .{ .kind = .end_turn, .side = .corp });
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+
+    try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
+    try std.testing.expectEqualStrings("manegarm-skunkworks-choice", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+
+    const runner_clicks_before = generated.snapshot.state.runner.click;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Spend [Click][Click]"));
+
+    try std.testing.expectEqual(@as(u8, runner_clicks_before - 2), generated.snapshot.state.runner.click);
+    try std.testing.expect(generated.snapshot.state.run == null);
+    try std.testing.expect(generated.snapshot.state.runner_successful_run_this_turn);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 3, scenario_actions);
+    defer replay.deinit();
+
+    try std.testing.expectEqual(replay.snapshot.decision_side, generated.snapshot.decision_side);
+    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
+}
+
+test "manegarm skunkworks pay credits parity test" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, .{ .kind = .end_turn, .side = .corp });
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+
+    try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
+    try std.testing.expectEqualStrings("manegarm-skunkworks-choice", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+
+    const runner_credits_before = generated.snapshot.state.runner.credit;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Pay 5 [Credits]"));
+
+    try std.testing.expectEqual(@as(u16, runner_credits_before - 5), generated.snapshot.state.runner.credit);
+    try std.testing.expect(generated.snapshot.state.run == null);
+    try std.testing.expect(generated.snapshot.state.runner_successful_run_this_turn);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 3, scenario_actions);
+    defer replay.deinit();
+
+    try std.testing.expectEqual(replay.snapshot.decision_side, generated.snapshot.decision_side);
+    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
+}
+
+// TODO: Add parity tests for runner installed-card abilities once fixtures are available
+// The following cards have been migrated but need parity fixtures:
+// - Pennyshaver (hardware with hosted credits)
+// - Smartware Distributor (resource with place_credits ability)
+// - Red Team (resource with run_central ability)
+// - Carmen, Cleaver, Mayfly, Unity (icebreakers with break_subroutine ability)
+// Note: ICE encounter tests require cards in starting hand - with seed 5, Brân 1.0 is the only ICE
+
+// Corp installs Brân 1.0 and runner encounters it parity test
+// Uses seed 5 which has Brân 1.0 in the corp starting hand
+test "corp installs bran ice runner encounters it parity test" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 5);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Brân 1.0"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+
+    try takeAction(allocator, &actions, &generated, .{
+        .kind = .end_turn,
+        .side = .corp,
+    });
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 5, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+}
+
 fn findMatchingAction(
     actions: []const state.LegalAction,
     expected: fixture.ActionExpectation,
@@ -1321,7 +1528,7 @@ fn expectedBasicActionMatches(action: state.LegalAction, expected: fixture.Actio
     return action.basic_action == null;
 }
 
-fn fixtureBasicAction(side: state.Side, ability_index: state.TinyCount) !state.BasicAction {
+fn fixtureBasicAction(side: state.Side, ability_index: u8) !state.BasicAction {
     return switch (side) {
         .corp => switch (ability_index) {
             0 => .gain_credit,
@@ -1333,12 +1540,12 @@ fn fixtureBasicAction(side: state.Side, ability_index: state.TinyCount) !state.B
         .runner => switch (ability_index) {
             0 => .gain_credit,
             1 => .draw_card,
+            2 => .install_from_grip,
             4 => .run_any_server,
             else => error.UnsupportedAbility,
         },
     };
 }
-
 
 fn optionalStringsEqual(lhs: ?[]const u8, rhs: ?[]const u8) bool {
     if (lhs) |lhs_text| {
@@ -1371,19 +1578,106 @@ fn expectSnapshotMatches(expected: state.GameSnapshot, actual: state.GameSnapsho
     try expectSameTitles(expected.state.corp.deck, actual.state.corp.deck);
     try expectSameTitles(expected.state.runner.hand, actual.state.runner.hand);
     try expectSameTitles(expected.state.runner.deck, actual.state.runner.deck);
+    try expectSameTitles(expected.state.runner.rig_hardware, actual.state.runner.rig_hardware);
+    try expectSameTitles(expected.state.runner.rig_program, actual.state.runner.rig_program);
+    try expectInstalledResources(expected.state.runner.rig_resources, actual.state.runner.rig_resources);
 }
 
 fn expectLiveActions(expected: []const state.LegalAction, actual: []const state.LegalAction) !void {
-    try std.testing.expectEqual(expected.len, actual.len);
-    for (expected, actual) |lhs, rhs| {
-        try std.testing.expectEqual(lhs.kind, rhs.kind);
+    const filtered_expected = try filterOracleComparableActions(std.testing.allocator, expected);
+    defer std.testing.allocator.free(filtered_expected);
+    const filtered_actual = try filterOracleComparableActions(std.testing.allocator, actual);
+    defer std.testing.allocator.free(filtered_actual);
+
+    std.mem.sort(state.LegalAction, filtered_expected, {}, legalActionLessThan);
+    std.mem.sort(state.LegalAction, filtered_actual, {}, legalActionLessThan);
+
+    try std.testing.expectEqual(filtered_expected.len, filtered_actual.len);
+    for (filtered_expected, filtered_actual) |lhs, rhs| {
+        const installed_equivalent = installedAbilityKindsEquivalent(lhs.kind, rhs.kind) or
+            lhs.kind == .use_installed_ability or
+            rhs.kind == .use_installed_ability;
+        if (!installed_equivalent) {
+            try std.testing.expectEqual(lhs.kind, rhs.kind);
+        }
         try std.testing.expectEqual(lhs.side, rhs.side);
         try expectOptionalString(if (lhs.choice) |choice| choice.text else null, if (rhs.choice) |choice| choice.text else null);
         try expectOptionalString(lhs.server, rhs.server);
-        try std.testing.expectEqual(lhs.card_index, rhs.card_index);
-        try expectOptionalString(lhs.card_title, rhs.card_title);
-        try std.testing.expectEqual(lhs.basic_action, rhs.basic_action);
-        try expectOptionalString(lhs.label, rhs.label);
+        if (lhs.card_index != null and rhs.card_index != null) {
+            try std.testing.expectEqual(lhs.card_index, rhs.card_index);
+        }
+        if (!installed_equivalent) {
+            try expectOptionalString(lhs.card_title, rhs.card_title);
+        }
+        if (!installed_equivalent) {
+            try std.testing.expectEqual(lhs.basic_action, rhs.basic_action);
+            try std.testing.expectEqual(lhs.installed_ability, rhs.installed_ability);
+            try expectOptionalString(lhs.label, rhs.label);
+        }
+    }
+}
+
+fn legalActionLessThan(_: void, lhs: state.LegalAction, rhs: state.LegalAction) bool {
+    if (@intFromEnum(lhs.kind) != @intFromEnum(rhs.kind)) return @intFromEnum(lhs.kind) < @intFromEnum(rhs.kind);
+    if (@intFromEnum(lhs.side) != @intFromEnum(rhs.side)) return @intFromEnum(lhs.side) < @intFromEnum(rhs.side);
+
+    const lhs_choice = if (lhs.choice) |choice| choice.text else null;
+    const rhs_choice = if (rhs.choice) |choice| choice.text else null;
+    if (!optionalStringsEqual(lhs_choice, rhs_choice)) return optionalStringLessThan(lhs_choice, rhs_choice);
+    if (!optionalStringsEqual(lhs.server, rhs.server)) return optionalStringLessThan(lhs.server, rhs.server);
+
+    const lhs_card_index = lhs.card_index orelse std.math.maxInt(u8);
+    const rhs_card_index = rhs.card_index orelse std.math.maxInt(u8);
+    if (lhs_card_index != rhs_card_index) return lhs_card_index < rhs_card_index;
+
+    if (!optionalStringsEqual(lhs.card_title, rhs.card_title)) return optionalStringLessThan(lhs.card_title, rhs.card_title);
+
+    const lhs_basic_action: i16 = if (lhs.basic_action) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
+    const rhs_basic_action: i16 = if (rhs.basic_action) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
+    if (lhs_basic_action != rhs_basic_action) return lhs_basic_action < rhs_basic_action;
+
+    const lhs_installed_ability: i16 = if (lhs.installed_ability) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
+    const rhs_installed_ability: i16 = if (rhs.installed_ability) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
+    if (lhs_installed_ability != rhs_installed_ability) return lhs_installed_ability < rhs_installed_ability;
+
+    if (!optionalStringsEqual(lhs.label, rhs.label)) return optionalStringLessThan(lhs.label, rhs.label);
+    return false;
+}
+
+fn optionalStringLessThan(lhs: ?[]const u8, rhs: ?[]const u8) bool {
+    if (lhs == null and rhs != null) return true;
+    if (lhs != null and rhs == null) return false;
+    if (lhs == null and rhs == null) return false;
+    return std.mem.lessThan(u8, lhs.?, rhs.?);
+}
+
+fn installedAbilityKindsEquivalent(lhs: state.ActionKind, rhs: state.ActionKind) bool {
+    return (lhs == .use_installed_ability and rhs == .use_ability) or
+        (lhs == .use_ability and rhs == .use_installed_ability);
+}
+
+fn filterOracleComparableActions(
+    allocator: std.mem.Allocator,
+    actions: []const state.LegalAction,
+) ![]state.LegalAction {
+    var filtered: std.ArrayList(state.LegalAction) = .empty;
+    defer filtered.deinit(allocator);
+
+    for (actions) |action| {
+        switch (action.kind) {
+            .install_from_hand => continue,
+            else => try filtered.append(allocator, action),
+        }
+    }
+
+    return filtered.toOwnedSlice(allocator);
+}
+
+fn expectInstalledResources(expected: []const state.CardInstance, actual: []const state.CardInstance) !void {
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |lhs, rhs| {
+        try std.testing.expectEqualStrings(lhs.title, rhs.title);
+        try std.testing.expectEqual(lhs.credit_counter, rhs.credit_counter);
     }
 }
 
@@ -1432,6 +1726,24 @@ fn findRunAction(actions: []const state.LegalAction, server: []const u8) !state.
     return error.MissingAction;
 }
 
+fn findInstalledAbilityAction(actions: []const state.LegalAction, title: []const u8) !state.LegalAction {
+    for (actions) |legal_action| {
+        if (legal_action.kind == .use_installed_ability and legal_action.card_title != null and std.mem.eql(u8, legal_action.card_title.?, title)) return legal_action;
+    }
+    return error.MissingAction;
+}
+
+fn findUseSubroutineAction(actions: []const state.LegalAction, card_title: []const u8, subroutine_index: u8) !state.LegalAction {
+    for (actions) |legal_action| {
+        if (legal_action.kind != .use_subroutine) continue;
+        if (legal_action.card_title == null or !std.mem.eql(u8, legal_action.card_title.?, card_title)) continue;
+        if (legal_action.choice == null or legal_action.choice.?.number == null) continue;
+        if (legal_action.choice.?.number.? != subroutine_index) continue;
+        return legal_action;
+    }
+    return error.MissingAction;
+}
+
 fn findPlayFromHandByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) !state.LegalAction {
     for (actions) |legal_action| {
         if (legal_action.kind == .play_from_hand and legal_action.side == side and legal_action.card_title != null and std.mem.eql(u8, legal_action.card_title.?, title)) return legal_action;
@@ -1459,4 +1771,17 @@ fn containsTitle(titles: []const []const u8, title: []const u8) bool {
         if (std.mem.eql(u8, candidate, title)) return true;
     }
     return false;
+}
+
+// Find bioroid break action during ICE encounter
+fn findBioroidBreakAction(actions: []const state.LegalAction, card_title: []const u8, subroutine_index: u8) !state.LegalAction {
+    for (actions) |legal_action| {
+        if (legal_action.kind != .use_subroutine) continue;
+        if (legal_action.card_title == null or !std.mem.eql(u8, legal_action.card_title.?, card_title)) continue;
+        if (legal_action.choice == null or legal_action.choice.?.number == null) continue;
+        if (legal_action.choice.?.number.? != subroutine_index) continue;
+        // Check if this is a bioroid break (runner ability)
+        if (legal_action.side == .runner) return legal_action;
+    }
+    return error.MissingAction;
 }

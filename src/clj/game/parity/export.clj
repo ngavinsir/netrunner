@@ -184,6 +184,23 @@
 
 (declare canonical-card)
 
+(defn- hide-only-prompt?
+  [prompt]
+  (and (= :select (:prompt-type prompt))
+       (empty? (remove (fn [choice]
+                         (or (= "Hide" choice)
+                             (= "Hide" (:value choice))))
+                       (:choices prompt)))))
+
+(defn- filter-hide-choices
+  [choices]
+  (when (sequential? choices)
+    (->> choices
+         (remove (fn [choice]
+                   (or (= "Hide" choice)
+                       (= "Hide" (:value choice)))))
+         vec)))
+
 (defn- canonical-cards
   [cards path-prefix host-locator]
   (when (seq cards)
@@ -243,12 +260,15 @@
 
 (defn- canonical-prompt
   [prompt]
-  (when prompt
+  (when (and prompt
+             (not (hide-only-prompt? prompt)))
+    (let [choices (or (filter-hide-choices (:choices prompt))
+                      (:choices prompt))]
     (select-non-nil-keys
       {:prompt-type (:prompt-type prompt)
        :source-card (some-> (:card prompt)
                             (select-non-nil-keys [:code :title :printed-title :side]))
-       :choices (some->> (:choices prompt)
+       :choices (some->> choices
                          (mapv canonical-choice)
                          not-empty)
        :show-discard (:show-discard prompt)
@@ -265,7 +285,7 @@
        :runner-credits (:runner-credits prompt)}
       [:prompt-type :source-card :choices :show-discard :show-opponent-discard
        :offer-bad-pub? :player :base :bonus :strength :unbeatable :beat-trace
-       :link :corp-credits :runner-credits])))
+       :link :corp-credits :runner-credits]))))
 
 (defn- canonical-servers
   [servers side]
@@ -339,9 +359,10 @@
        :cannot-jack-out (:cannot-jack-out run)
        :corp-auto-no-action (:corp-auto-no-action run)
        :no-action (:no-action run)
-       :approached-ice-in-position? (:approached-ice-in-position? run)}
+       :approached-ice-in-position? (:approached-ice-in-position? run)
+       :jack-out-available (:jack-out-available run)}
       [:server :position :phase :next-phase :cannot-jack-out :corp-auto-no-action
-       :no-action :approached-ice-in-position?])))
+       :no-action :approached-ice-in-position? :jack-out-available])))
 
 (defn- canonical-encounters
   [encounters]
@@ -371,16 +392,19 @@
      :mark (:mark state)
      :run (canonical-run (:run state))
      :encounters (canonical-encounters (:encounters state))
+     :run-ice-windows-enabled (:run-ice-windows-enabled state)
      :corp (canonical-player (:corp state) "corp")
      :runner (canonical-player (:runner state) "runner")}
     [:format :seed :rng-seed :active-player :turn :corp-phase-12 :runner-phase-12
      :corp-post-discard :runner-post-discard :end-turn :winner :reason :mark
-     :run :encounters :corp :runner]))
+     :run :encounters :run-ice-windows-enabled :corp :runner]))
 
 (defn- decision-side
   [corp-observation runner-observation]
-  (let [corp-prompt (get-in corp-observation [:corp :prompt-state])
-        runner-prompt (get-in runner-observation [:runner :prompt-state])
+  (let [corp-prompt-raw (get-in corp-observation [:corp :prompt-state])
+        runner-prompt-raw (get-in runner-observation [:runner :prompt-state])
+        corp-prompt (when-not (hide-only-prompt? corp-prompt-raw) corp-prompt-raw)
+        runner-prompt (when-not (hide-only-prompt? runner-prompt-raw) runner-prompt-raw)
         run (:run corp-observation)]
     (cond
       (and run
@@ -399,24 +423,33 @@
 (declare card-actions)
 
 (defn- prompt-actions
-  [side prompt]
-  (when (and prompt
-             (not= :waiting (:prompt-type prompt)))
-    (cond
-      (= :run (:prompt-type prompt))
-      [{:kind :continue
-        :side side
-        :prompt-type (:prompt-type prompt)}]
+  [side prompt run]
+  (let [choices (or (filter-hide-choices (:choices prompt))
+                    (:choices prompt))]
+    (when (and prompt
+               (not= :waiting (:prompt-type prompt))
+               (not (hide-only-prompt? prompt)))
+      (cond
+        (= :run (:prompt-type prompt))
+        (let [base-action {:kind :continue
+                           :side side
+                           :prompt-type (:prompt-type prompt)}]
+          (if (and (= side :runner) (:jack-out-available run))
+            [base-action {:kind :jack-out
+                          :side :runner
+                          :prompt-type (:prompt-type prompt)
+                          :label "Jack out"}]
+            [base-action]))
 
-      (seq (:choices prompt))
-      (mapv (fn [choice]
-              {:kind :prompt-choice
-               :side side
-               :prompt-type (:prompt-type prompt)
-               :choice choice})
-            (:choices prompt))
+        (seq choices)
+        (mapv (fn [choice]
+                {:kind :prompt-choice
+                 :side side
+                 :prompt-type (:prompt-type prompt)
+                 :choice choice})
+              choices)
 
-      :else nil)))
+        :else nil))))
 
 (defn- abilities->actions
   [kind side loc abilities]
@@ -533,8 +566,9 @@
   (let [side (decision-side corp-observation runner-observation)
         observation (if (= side :corp) corp-observation runner-observation)
         prompt (get-in observation [side :prompt-state])
+        run (:run corp-observation)
         actions (if (and prompt (not= :waiting (:prompt-type prompt)))
-                  (prompt-actions side prompt)
+                  (prompt-actions side prompt run)
                   (or (start-turn-actions side observation)
                       (end-turn-actions side observation)
                       (root-actions side observation)))]
@@ -546,11 +580,28 @@
   (get-in @state (mapv segment->path-key loc)))
 
 (defn- resolve-action-card
-  [state side {:keys [card-locator card-index]}]
-  (cond
-    card-locator (resolve-card state card-locator)
-    (some? card-index) (get-in @state [side :hand card-index])
-    :else nil))
+  [state side {:keys [card-locator card-index card-title]}]
+  (let [card-from-locator (when card-locator (resolve-card state card-locator))]
+    (or card-from-locator
+        (when (some? card-title)
+          (some #(when (= card-title (:title %)) %) (get-in @state [side :hand])))
+        (when (some? card-index)
+          (get-in @state [side :hand card-index])))))
+
+(defn- resolve-installed-card
+  [state side {:keys [card-locator card-index card-title]}]
+  (let [card-from-locator (when card-locator (resolve-card state card-locator))]
+    (or card-from-locator
+        (when (some? card-title)
+          (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :resource])))
+        (when (some? card-index)
+          (get-in @state [side :rig :resource card-index])))))
+
+(defn- require-card!
+  [card action]
+  (or card
+      (throw (ex-info "Unable to resolve card for parity replay action"
+                      {:action action}))))
 
 (defn- resolve-ability-card
   [state side {:keys [card-locator]}]
@@ -560,7 +611,8 @@
 
 (defn- resolve-prompt-choice
   [state side {:keys [choice-type value card] :as choice}]
-  (let [prompt (first (get-in @state [side :prompt]))
+  (let [prompt (or (first (get-in @state [side :prompt]))
+                   (get-in @state [side :prompt-state]))
         choices (:choices prompt)]
     (cond
       (and (sequential? choices)
@@ -585,13 +637,20 @@
       (main/handle-action state side "choice" {:choice (resolve-prompt-choice state side (:choice action))})
 
       :play-from-hand
-      (main/handle-action state side "play" {:card (resolve-action-card state side action)})
+      (main/handle-action state side "play" {:card (require-card! (resolve-action-card state side action) action)})
+
+      :install-from-hand
+      (main/handle-action state side "play" {:card (require-card! (resolve-action-card state side action) action)})
 
       :flashback
       (main/handle-action state side "flashback" {:card (resolve-card state (:card-locator action))})
 
       :use-ability
       (main/handle-action state side "ability" {:card (resolve-ability-card state side action)
+                                                :ability (:ability-index action)})
+
+      :use-installed-ability
+      (main/handle-action state side "ability" {:card (require-card! (resolve-installed-card state side action) action)
                                                 :ability (:ability-index action)})
 
       :use-corp-ability
@@ -608,6 +667,9 @@
       :continue
       (main/handle-action state side "continue" nil)
 
+      :jack-out
+      (main/handle-action state side "jack-out" nil)
+
       :start-turn
       (main/handle-action state side "start-turn" nil)
 
@@ -619,6 +681,56 @@
                                                    :subroutine (:subroutine-index action)})
 
       (throw (ex-info "Unsupported parity action" {:action action})))))
+
+(defn- transient-hide-action?
+  [action]
+  (and (= :prompt-choice (:kind action))
+       (= "Hide" (get-in action [:choice :value]))))
+
+(defn- ack-top-toast!
+  [state side]
+  (when-let [toast-id (some-> (get-in @state [side :toast]) first :id)]
+    (main/handle-action state side "toast" {:id (str toast-id)})
+    true))
+
+(defn- clear-hide-only-prompt!
+  [state side]
+  (let [prompt-queue (vec (get-in @state [side :prompt]))
+        active-prompt (or (first prompt-queue)
+                          (get-in @state [side :prompt-state]))]
+    (when (hide-only-prompt? active-prompt)
+      (let [remaining (if (seq prompt-queue) (vec (rest prompt-queue)) prompt-queue)
+            next-prompt (first remaining)]
+        (swap! state (fn [s]
+                       (-> s
+                           (assoc-in [side :prompt] remaining)
+                           (assoc-in [side :prompt-state] next-prompt))))
+        (ack-top-toast! state side)
+        true))))
+
+(defn- auto-dismiss-hide-prompts!
+  [state]
+  (loop [remaining 12]
+    (when (pos? remaining)
+      (let [cleared? (or (clear-hide-only-prompt! state :corp)
+                         (clear-hide-only-prompt! state :runner))]
+        (when cleared?
+          (recur (dec remaining))))))
+  state)
+
+(defn- clear-leading-waiting-prompt-for-side!
+  [state side]
+  (let [prompt-queue (vec (get-in @state [side :prompt]))
+        prompt-state (get-in @state [side :prompt-state])
+        active-prompt (or (first prompt-queue) prompt-state)]
+    (when (= :waiting (:prompt-type active-prompt))
+      (let [remaining (vec (drop-while #(= :waiting (:prompt-type %)) prompt-queue))
+            next-prompt (first remaining)]
+        (swap! state (fn [s]
+                       (-> s
+                           (assoc-in [side :prompt] remaining)
+                           (assoc-in [side :prompt-state] next-prompt))))
+        true))))
 
 (defn- normalize-choice
   [choice]
@@ -655,12 +767,29 @@
        (apply-action! state (normalize-action action)))
      (canonical-bundle state))))
 
+(defn replay-bundle-after-actions
+  ([actions]
+   (replay-bundle-after-actions 1 actions false))
+  ([seed actions]
+   (replay-bundle-after-actions seed actions false))
+  ([seed actions run-ice-windows-enabled]
+   (let [state (beginner-state seed)]
+     (when run-ice-windows-enabled
+       (swap! state assoc :run-ice-windows-enabled true))
+     (doseq [action actions]
+       (let [normalized-action (normalize-action action)]
+         (auto-dismiss-hide-prompts! state)
+         (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
+         (apply-action! state normalized-action)))
+     (auto-dismiss-hide-prompts! state)
+     (canonical-bundle state))))
+
 (defn- export-transition-tree
   [make-state actions depth]
   (mapv (fn [action]
-          (let [state (make-state)
-                _ (apply-action! state action)
-                result (canonical-bundle state)
+        (let [state (make-state)
+              _ (apply-action! state action)
+              result (canonical-bundle state)
                 node {:action action
                       :result result}]
             (if (pos? depth)
