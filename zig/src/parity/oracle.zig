@@ -213,14 +213,13 @@ pub fn replayActions(
     seed: u64,
     actions: []const state.LegalAction,
 ) !ReplaySnapshot {
-    return replayActionsWithOptions(backing_allocator, seed, actions, false);
+    return replayActionsWithOptions(backing_allocator, seed, actions);
 }
 
 pub fn replayActionsWithOptions(
     backing_allocator: std.mem.Allocator,
     seed: u64,
     actions: []const state.LegalAction,
-    run_ice_windows_enabled: bool,
 ) !ReplaySnapshot {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
@@ -229,11 +228,11 @@ pub fn replayActionsWithOptions(
     const repo_root = try repoRootPath(allocator);
     const parsed = blk: {
         const socket_path = try ensurePersistentOracleServer(repo_root);
-        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions, run_ice_windows_enabled) catch {
+        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions) catch {
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
-            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, run_ice_windows_enabled);
+            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
 
@@ -241,7 +240,7 @@ pub fn replayActionsWithOptions(
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
-            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, run_ice_windows_enabled);
+            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
     };
@@ -289,14 +288,13 @@ fn runReplayOracleSocket(
     socket_path: []const u8,
     seed: u64,
     actions: []const state.LegalAction,
-    run_ice_windows_enabled: bool,
 ) ![]const u8 {
     var stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
     var write_buffer: [4096]u8 = undefined;
     var read_buffer: [4096]u8 = undefined;
 
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions, run_ice_windows_enabled);
+    const request_payload = try buildReplayRequestJson(allocator, seed, actions);
     defer allocator.free(request_payload);
     var writer = stream.writer(&write_buffer);
     try writer.interface.writeAll(request_payload);
@@ -318,12 +316,11 @@ fn runReplayOracleOnce(
     repo_root: []const u8,
     seed: u64,
     actions: []const state.LegalAction,
-    run_ice_windows_enabled: bool,
 ) ![]const u8 {
     const request_path = try std.fmt.allocPrint(allocator, "/tmp/netrunner-oracle-{d}.json", .{std.time.microTimestamp()});
     defer allocator.free(request_path);
 
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions, run_ice_windows_enabled);
+    const request_payload = try buildReplayRequestJson(allocator, seed, actions);
     defer allocator.free(request_payload);
     try std.fs.cwd().writeFile(.{ .sub_path = request_path, .data = request_payload });
     defer std.fs.cwd().deleteFile(request_path) catch {};
@@ -356,7 +353,6 @@ fn buildReplayRequestJson(
     allocator: std.mem.Allocator,
     seed: u64,
     actions: []const state.LegalAction,
-    run_ice_windows_enabled: bool,
 ) ![]const u8 {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(allocator);
@@ -364,8 +360,6 @@ fn buildReplayRequestJson(
     var writer = output.writer(allocator);
     try writer.writeAll("{\"seed\":");
     try writer.print("{d}", .{seed});
-    try writer.writeAll(",\"run-ice-windows-enabled\":");
-    try writer.print("{}", .{run_ice_windows_enabled});
     try writer.writeAll(",\"actions\":[");
     var wrote_action = false;
     for (actions) |action| {
@@ -655,7 +649,6 @@ fn parseGameState(
         .turn = try getIntegerAs(u16, object, "turn"),
         .end_turn = try getBool(object, "end-turn"),
         .run = try parseOptionalRunState(allocator, object, "run"),
-        .run_ice_windows_enabled = (try getOptional(.boolean, object, "run-ice-windows-enabled")) orelse false,
         .pending_install = null,
         .corp = try parsePlayerState(allocator, try getRequired(.object, object, "corp")),
         .runner = try parsePlayerState(allocator, try getRequired(.object, object, "runner")),

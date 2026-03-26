@@ -888,9 +888,9 @@ Execution order for remaining core engine work:
   - [x] jack-out window/path (implemented, parity test framework in place)
   - [x] apply run rez-cost modifiers (`run.rez_cost_bonus`) to corp rez costs
 - [x] Migrate beginner ICE card behaviors:
-  - [~] `Brân 1.0`:
+  - [x] `Brân 1.0`:
     - [x] Basic subroutines (bioroid break, end the run)
-    - [ ] "Install ice from HQ/Archives" subroutine (defined but needs full implementation - see TODO in game.zig:2328)
+    - [x] "Install ice from HQ/Archives" subroutine (prompt-based with pause/resume via `pending_subroutine`)
   - [x] `Palisade`
   - [x] `Diviner`
   - [x] `Whitespace`
@@ -917,7 +917,7 @@ Execution order for remaining core engine work:
 
 ### M1: Core Skeleton In Zig [COMPLETE]
 
-**Status:** All 58 tests passing under `zig build test`. M1 is complete.
+**Status:** All 57 tests passing under `zig build test`. M1 is complete.
 
 **Achievements:**
 - Zig state model exists.
@@ -944,9 +944,7 @@ Execution order for remaining core engine work:
 - Terminal conditions: flatline loss, deck-out loss.
 
 **Deferred to M2:**
-- Corp rez window during ICE encounter (requires corp having remaining click after turn-end).
-- Icebreaker break subroutine parity (test skipped - oracle needs `run_ice_windows_enabled` support).
-- Jack-out window/path.
+- Icebreaker break subroutine parity.
 - Intermediate deck mechanics parity.
 
 **Key Files:**
@@ -962,13 +960,15 @@ Execution order for remaining core engine work:
 - Beginner decks initialize correctly.
 - A constrained set of games can be replayed end to end.
 - Terminal results match Clojure.
-- [ ] Verify all card logic is fully migrated (audit cards migrated in M1 for missing abilities):
-  - [x] `Brân 1.0` - on-encounter: lose 1 click to break 1 subroutine (IMPLEMENTED)
-    - [ ] Subroutine 0: "Install an ice from HQ or Archives" (currently has 3 ETR instead)
-    - [ ] Design: Add card-specific subroutine handler pattern (avoid one-off enum variants)
-    - [ ] TODO: Add `card_subroutine_handler: ?*const fn(...) void` to CardSpec for custom logic
-  - [ ] Review other M1 cards for similar partial implementations
+- [x] Removed `run_ice_windows_enabled` flag — corp rez window is always active during runs.
+- [x] Fixed `advanceApproachIcePhase` early-return bug (stale "run" prompt state was blocking position advance after subroutine resolution).
+- [x] `Brân 1.0` fully implemented:
+  - [x] on-encounter: lose 1 click to break 1 subroutine (bioroid break)
+  - [x] Subroutine 0: "Install an ice from HQ/Archives" (prompt-based with pause/resume via `pending_subroutine`)
+  - [x] Subroutines 1-2: End the run
+- [ ] Review other M1 cards for missing partial implementations
 - [ ] Implement missing card abilities and mechanics
+- [ ] Icebreaker break subroutine parity
 
 ### M3: Intermediate Matchup Parity
 

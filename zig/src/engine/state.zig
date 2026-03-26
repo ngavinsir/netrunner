@@ -348,7 +348,6 @@ pub const GameState = struct {
     run: ?RunState = null,
     runner_successful_run_last_turn: bool = false,
     runner_successful_run_this_turn: bool = false,
-    run_ice_windows_enabled: bool = false,
     game_over: bool = false,
     winner: ?Side = null,
     pending_install: ?PendingInstall = null,

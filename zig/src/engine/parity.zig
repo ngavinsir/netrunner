@@ -752,9 +752,12 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    // Initiation: both sides pass
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    // Approach-ice: corp continue triggers rez window, decline
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "No rez"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -781,9 +784,13 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    // Initiation: both sides pass
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    // Approach-ice: corp continue triggers rez window, decline
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "No rez"));
+    // Approach-ice: runner passes → advance (unrezzed ice, skip encounter) → movement
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
     // Movement phase: runner gets first priority (jack-out opportunity)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));

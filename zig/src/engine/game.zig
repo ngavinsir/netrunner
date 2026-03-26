@@ -172,7 +172,6 @@ pub fn createInitialSnapshot(
             .active_player = .runner,
             .turn = 0,
             .end_turn = true,
-            .run_ice_windows_enabled = false,
             .pending_install = null,
             .corp = .{
                 .identity = corp_identity,
@@ -244,10 +243,6 @@ pub fn currentPlayer(snapshot: *const Game) state.Side {
 
 pub fn legalActionCount(snapshot: *const Game) usize {
     return snapshot.snapshot.legal_actions.len;
-}
-
-pub fn setRunIceWindowsEnabled(generated: *Game, enabled: bool) void {
-    generated.snapshot.state.run_ice_windows_enabled = enabled;
 }
 
 pub fn legalActionAt(
@@ -2079,33 +2074,23 @@ fn applyContinue(
 }
 
 fn maybeOpenRezWindowPrompt(generated: *Game) !bool {
-    if (!generated.snapshot.state.run_ice_windows_enabled) {
-        std.debug.print("maybeOpenRezWindowPrompt: run_ice_windows_enabled false\n", .{});
-        return false;
-    }
     if (generated.snapshot.state.corp.prompt_state) |prompt_state| {
         if (!std.mem.eql(u8, prompt_state.prompt_type, "run")) {
-            std.debug.print("maybeOpenRezWindowPrompt: corp.prompt_state not 'run', is '{s}'\n", .{prompt_state.prompt_type});
             return false;
         }
     } else {
-        std.debug.print("maybeOpenRezWindowPrompt: corp.prompt_state is null\n", .{});
         return false;
     }
     if (generated.snapshot.state.run == null) {
-        std.debug.print("maybeOpenRezWindowPrompt: run is null\n", .{});
         return false;
     }
     const target = try currentApproachedIce(generated) orelse {
-        std.debug.print("maybeOpenRezWindowPrompt: no approached ice\n", .{});
         return false;
     };
     if (target.ice.rezzed) {
-        std.debug.print("maybeOpenRezWindowPrompt: ice already rezzed\n", .{});
         return false;
     }
     if (generated.snapshot.state.corp.credit < (target.ice.cost orelse 0)) {
-        std.debug.print("maybeOpenRezWindowPrompt: corp credits {d} < ice cost {d}\n", .{ generated.snapshot.state.corp.credit, target.ice.cost orelse 0 });
         return false;
     }
 
@@ -2147,12 +2132,18 @@ fn applyRezWindowChoice(
         return error.UnsupportedChoice;
     }
 
-    generated.snapshot.state.corp.prompt_state = null;
+    // Restore "run" prompt state (run is still in progress)
+    const allocator = generated.arena.allocator();
+    generated.snapshot.state.corp.prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "run"),
+        .choices = &.{},
+        .source_card = null,
+    };
     const run = &generated.snapshot.state.run;
     if (run.* == null) return error.NoRunInProgress;
     run.*.?.no_action = .corp;
     generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try continueActionsForRun(generated.arena.allocator(), .runner, run.*);
+    generated.snapshot.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
 }
 
 const ApproachedIceTarget = struct {
@@ -2164,33 +2155,14 @@ const ApproachedIceTarget = struct {
 // Find approached ice using internal mutable state, not snapshot
 // This avoids stale data issues from syncOwnedViews
 fn currentApproachedIceInternal(generated: *const Game) !?ApproachedIceTarget {
-    const run = generated.snapshot.state.run orelse {
-        std.debug.print("currentApproachedIceInternal: run is null\n", .{});
-        return null;
-    };
-    if (!std.mem.eql(u8, run.phase, "approach-ice")) {
-        std.debug.print("currentApproachedIceInternal: phase is '{s}', not 'approach-ice'\n", .{run.phase});
-        return null;
-    }
-    if (run.position == 0) {
-        std.debug.print("currentApproachedIceInternal: position is 0\n", .{});
-        return null;
-    }
+    const run = generated.snapshot.state.run orelse return null;
+    if (!std.mem.eql(u8, run.phase, "approach-ice")) return null;
+    if (run.position == 0) return null;
 
-    // Use internal corp_servers instead of snapshot
-    std.debug.print("currentApproachedIceInternal: Looking for server '{s}' in {d} servers\n", .{ run.server[0], generated.corp_servers.items.len });
     const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
-    std.debug.print("currentApproachedIceInternal: Found server '{s}' at index {d}\n", .{ target_server.server.name, target_server.index });
-
     const ice_index = @as(usize, run.position) - 1;
-    std.debug.print("currentApproachedIceInternal: Looking for ice at index {d}, server has {d} ices\n", .{ ice_index, target_server.server.ices.items.len });
-
-    if (ice_index >= target_server.server.ices.items.len) {
-        std.debug.print("currentApproachedIceInternal: ice_index {d} >= ices.len {d}\n", .{ ice_index, target_server.server.ices.items.len });
-        return null;
-    }
+    if (ice_index >= target_server.server.ices.items.len) return null;
     const ice = target_server.server.ices.items[ice_index];
-    std.debug.print("currentApproachedIceInternal: Found ice '{s}', rezzed={any}\n", .{ ice.title, ice.rezzed });
     return .{
         .server_index = target_server.index,
         .ice_index = ice_index,
@@ -2289,8 +2261,12 @@ fn advanceApproachIcePhase(generated: *Game) !void {
         if (target.ice.rezzed) {
             // Encounter the ice - resolve unbroken subroutines
             try resolveEncounteredIceSubroutines(generated, target.ice, target.server_index, target.ice_index, 0);
-            // ETR fired or prompt opened (e.g., Bran 1.0 install ice)
-            if (generated.snapshot.state.run == null or generated.snapshot.state.corp.prompt_state != null) return;
+            // ETR fired
+            if (generated.snapshot.state.run == null) return;
+            // Subroutine opened a new prompt (e.g., Brân 1.0 install ice) - wait for resolution
+            if (generated.snapshot.state.corp.prompt_state) |ps| {
+                if (!std.mem.eql(u8, ps.prompt_type, "run")) return;
+            }
         }
     }
 
@@ -4034,8 +4010,6 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
         2,
     );
     defer generated.deinit();
-    setRunIceWindowsEnabled(&generated, true);
-
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
@@ -4308,8 +4282,6 @@ test "jack out is available after passing ice" {
         101,
     );
     defer generated.deinit();
-    setRunIceWindowsEnabled(&generated, true);
-
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
@@ -4374,8 +4346,6 @@ test "ICE subroutine end the run fires" {
         102,
     );
     defer generated.deinit();
-    setRunIceWindowsEnabled(&generated, true);
-
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
@@ -4413,8 +4383,6 @@ test "ICE net damage subroutine applies damage" {
         103,
     );
     defer generated.deinit();
-    setRunIceWindowsEnabled(&generated, true);
-
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
@@ -4450,8 +4418,6 @@ test "runner loses credits subroutine" {
         104,
     );
     defer generated.deinit();
-    setRunIceWindowsEnabled(&generated, true);
-
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
@@ -4487,8 +4453,6 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
         1,
     );
     defer generated.deinit();
-    setRunIceWindowsEnabled(&generated, true);
-
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });

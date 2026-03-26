@@ -392,12 +392,11 @@
      :mark (:mark state)
      :run (canonical-run (:run state))
      :encounters (canonical-encounters (:encounters state))
-     :run-ice-windows-enabled (:run-ice-windows-enabled state)
      :corp (canonical-player (:corp state) "corp")
      :runner (canonical-player (:runner state) "runner")}
     [:format :seed :rng-seed :active-player :turn :corp-phase-12 :runner-phase-12
      :corp-post-discard :runner-post-discard :end-turn :winner :reason :mark
-     :run :encounters :run-ice-windows-enabled :corp :runner]))
+     :run :encounters :corp :runner]))
 
 (defn- decision-side
   [corp-observation runner-observation]
@@ -769,13 +768,10 @@
 
 (defn replay-bundle-after-actions
   ([actions]
-   (replay-bundle-after-actions 1 actions false))
+   (replay-bundle-after-actions 1 actions))
   ([seed actions]
-   (replay-bundle-after-actions seed actions false))
-  ([seed actions run-ice-windows-enabled]
    (let [state (beginner-state seed)]
-     (when run-ice-windows-enabled
-       (swap! state assoc :run-ice-windows-enabled true))
+     (swap! state assoc :run-ice-windows-enabled true)
      (doseq [action actions]
        (let [normalized-action (normalize-action action)]
          (auto-dismiss-hide-prompts! state)
