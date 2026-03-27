@@ -3,6 +3,7 @@
    [cheshire.core :as json]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
+   [clojure.string :as string]
    [game.core.diffs :as diffs]
    [game.main :as main]
    [game.core.set-up :as set-up]
@@ -135,6 +136,46 @@
    (ensure-card-defs-loaded!)
    (register-beginner-cards!)
    (set-up/init-game (beginner-game seed))))
+
+(defn- register-intermediate-cards!
+  []
+  (let [corp (prepare-precon-deck "Corp" preconstructed/gateway-intermediate-corp)
+        runner (prepare-precon-deck "Runner" preconstructed/gateway-intermediate-runner)
+        corp-cards (into {}
+                         (map (fn [{:keys [card]}]
+                                [(:title card) card]))
+                         (:cards corp))
+        runner-cards (into {}
+                           (map (fn [{:keys [card]}]
+                                  [(:title card) card]))
+                           (:cards runner))
+        identities {(:title (:identity corp)) (:identity corp)
+                    (:title (:identity runner)) (:identity runner)}]
+    (swap! all-cards merge identities corp-cards runner-cards)))
+
+(defn intermediate-game
+  ([]
+   (intermediate-game 1))
+  ([seed]
+   (let [corp preconstructed/gateway-intermediate-corp
+         runner preconstructed/gateway-intermediate-runner]
+     {:gameid 1
+      :format "system-gateway"
+      :seed seed
+      :players [{:side "Corp"
+                 :user {:username "Corp"}
+                 :deck (prepare-precon-deck "Corp" corp)}
+                {:side "Runner"
+                 :user {:username "Runner"}
+                 :deck (prepare-precon-deck "Runner" runner)}]})))
+
+(defn intermediate-state
+  ([]
+   (intermediate-state 1))
+  ([seed]
+   (ensure-card-defs-loaded!)
+   (register-intermediate-cards!)
+   (set-up/init-game (intermediate-game seed))))
 
 (defn- canonical-choice
   [choice]
@@ -734,7 +775,9 @@
 (defn- normalize-choice
   [choice]
   (cond-> choice
-    (string? (:choice-type choice)) (update :choice-type keyword)))
+    (string? (:choice-type choice)) (update :choice-type keyword)
+    (and (:card choice) (string? (get-in choice [:card :side])))
+    (update-in [:card :side] (fn [s] (keyword (string/lower-case s))))))
 
 (defn normalize-action
   [action]
@@ -770,7 +813,11 @@
   ([actions]
    (replay-bundle-after-actions 1 actions))
   ([seed actions]
-   (let [state (beginner-state seed)]
+   (replay-bundle-after-actions seed actions nil))
+  ([seed actions matchup]
+   (let [state (if (= matchup "system-gateway-intermediate")
+                 (intermediate-state seed)
+                 (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [action actions]
        (let [normalized-action (normalize-action action)]

@@ -89,6 +89,7 @@ const prompt_retribution = "retribution-choice";
 const prompt_wildcat_strike = "wildcat-strike-choice";
 const prompt_run_target = "run-target";
 const prompt_run_any_server_basic = "run-any-server-basic";
+const prompt_run_central = "run-central";
 const prompt_hq_access = "hq-access";
 const prompt_rez_window = "rez-window";
 const prompt_bran_install_ice = "bran-install-ice";
@@ -523,6 +524,11 @@ fn applyPromptChoice(
         return;
     }
 
+    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_run_central)) {
+        try applyRun(generated, .runner, choice_text);
+        return;
+    }
+
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_wildcat_strike)) {
         try applyWildcatStrikeChoice(generated, choice_text);
         return;
@@ -701,11 +707,11 @@ fn applyScoreAgendaChoice(
     try syncOwnedViews(generated);
 
     corp.agenda_point += agenda_points;
-    // TODO: Generalize on-score agenda effects instead of card-specific checks
-    // Offworld Office: gain 7 credits
-    // Send a Message: rez an ice
+    // On-score agenda effects
     if (std.mem.eql(u8, scored_agenda.title, "Offworld Office")) {
         generated.snapshot.state.corp.credit += 7;
+    } else if (std.mem.eql(u8, scored_agenda.title, "Superconducting Hub")) {
+        try drawCards(generated, .corp, 2);
     }
 
     updateTerminalState(generated);
@@ -947,6 +953,7 @@ fn applyPredictivePlanogramChoice(
     } else return error.UnsupportedChoice;
 
     corp.prompt_state = null;
+    generated.snapshot.state.runner.prompt_state = null;
     generated.snapshot.decision_side = .corp;
     generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), corp);
 }
@@ -1646,6 +1653,11 @@ fn playCorpOperation(
                 .choices = try predictivePlanogramChoices(allocator, generated.snapshot.state.runner),
                 .source_card = card,
             };
+            generated.snapshot.state.runner.prompt_state = .{
+                .prompt_type = try allocator.dupe(u8, "waiting"),
+                .choices = &.{},
+                .source_card = null,
+            };
             generated.snapshot.decision_side = .corp;
             generated.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
             return;
@@ -1979,8 +1991,17 @@ fn applyInstalledAbility(
                 .run_central => {
                     try spendClicks(runner, card.installed_ability.click_cost);
                     card.ability_used_this_turn = true;
-                    // TODO: Initiate run on central server
                     try syncOwnedViews(generated);
+                    // Open central server choice prompt
+                    const choices = try runTargetChoicesFor(allocator, .central_only, generated.snapshot.state.corp.servers);
+                    runner.prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, prompt_run_central),
+                        .choices = choices,
+                        .source_card = card.*,
+                    };
+                    generated.snapshot.decision_side = .runner;
+                    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, runner.prompt_state.?);
+                    return;
                 },
                 .none => return error.UnsupportedAbility,
             }
@@ -3042,7 +3063,9 @@ fn runnerOpeningActionsForState(
     for (runner.hand) |card| {
         if (isRunnerCardPlayableFromHand(runner, card)) playable_hand_count += 1;
     }
-    const installed_ability_count = countRunnerInstalledAbilityActions(runner.rig_resources);
+    const resource_ability_count = countRunnerInstalledAbilityActions(runner.rig_resources);
+    const hardware_ability_count = countRunnerInstalledAbilityActions(runner.rig_hardware);
+    const installed_ability_count = resource_ability_count + hardware_ability_count;
 
     var count: usize = playable_hand_count + runnable_servers.len + installed_ability_count;
     if (runner.click >= 1) count += 1;
@@ -3070,6 +3093,18 @@ fn runnerOpeningActionsForState(
         next += 1;
     }
     for (runner.rig_resources, 0..) |card, idx| {
+        if (!hasRunnerInstalledAbilityAction(card)) continue;
+        actions[next] = .{
+            .kind = .use_installed_ability,
+            .side = .runner,
+            .card_index = @intCast(idx),
+            .card_title = try allocator.dupe(u8, card.title),
+            .installed_ability = card.installed_ability.kind,
+            .label = try installedAbilityLabel(allocator, card),
+        };
+        next += 1;
+    }
+    for (runner.rig_hardware, 0..) |card, idx| {
         if (!hasRunnerInstalledAbilityAction(card)) continue;
         actions[next] = .{
             .kind = .use_installed_ability,
@@ -3604,6 +3639,7 @@ fn runTargetChoicesFor(
     const names: []const []const u8 = switch (kind) {
         .any_runnable => try runnableServers(allocator, servers),
         .hq_and_rnd_only => try allocator.dupe([]const u8, &.{ "HQ", "R&D" }),
+        .central_only => try allocator.dupe([]const u8, &.{ "HQ", "R&D", "Archives" }),
     };
     const choices = try allocator.alloc(state.PromptChoice, names.len);
     for (names, 0..) |name, idx| {

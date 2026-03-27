@@ -57,6 +57,7 @@ pub const CorpPlayKind = enum(u8) {
 pub const RunTargetKind = enum(u8) {
     any_runnable,
     hq_and_rnd_only,
+    central_only,
 };
 
 pub const RunSuccessEffectKind = enum(u8) {

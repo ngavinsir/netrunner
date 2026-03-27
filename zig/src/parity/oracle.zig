@@ -213,13 +213,14 @@ pub fn replayActions(
     seed: u64,
     actions: []const state.LegalAction,
 ) !ReplaySnapshot {
-    return replayActionsWithOptions(backing_allocator, seed, actions);
+    return replayActionsWithMatchup(backing_allocator, seed, actions, null);
 }
 
-pub fn replayActionsWithOptions(
+pub fn replayActionsWithMatchup(
     backing_allocator: std.mem.Allocator,
     seed: u64,
     actions: []const state.LegalAction,
+    matchup: ?[]const u8,
 ) !ReplaySnapshot {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
@@ -228,11 +229,11 @@ pub fn replayActionsWithOptions(
     const repo_root = try repoRootPath(allocator);
     const parsed = blk: {
         const socket_path = try ensurePersistentOracleServer(repo_root);
-        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions) catch {
+        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions, matchup) catch {
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
-            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions);
+            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, matchup);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
 
@@ -240,7 +241,7 @@ pub fn replayActionsWithOptions(
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
-            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions);
+            const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, matchup);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
     };
@@ -288,13 +289,14 @@ fn runReplayOracleSocket(
     socket_path: []const u8,
     seed: u64,
     actions: []const state.LegalAction,
+    matchup: ?[]const u8,
 ) ![]const u8 {
     var stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
     var write_buffer: [4096]u8 = undefined;
     var read_buffer: [4096]u8 = undefined;
 
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions);
+    const request_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
     defer allocator.free(request_payload);
     var writer = stream.writer(&write_buffer);
     try writer.interface.writeAll(request_payload);
@@ -316,11 +318,12 @@ fn runReplayOracleOnce(
     repo_root: []const u8,
     seed: u64,
     actions: []const state.LegalAction,
+    matchup: ?[]const u8,
 ) ![]const u8 {
     const request_path = try std.fmt.allocPrint(allocator, "/tmp/netrunner-oracle-{d}.json", .{std.time.microTimestamp()});
     defer allocator.free(request_path);
 
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions);
+    const request_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
     defer allocator.free(request_payload);
     try std.fs.cwd().writeFile(.{ .sub_path = request_path, .data = request_payload });
     defer std.fs.cwd().deleteFile(request_path) catch {};
@@ -353,6 +356,7 @@ fn buildReplayRequestJson(
     allocator: std.mem.Allocator,
     seed: u64,
     actions: []const state.LegalAction,
+    matchup: ?[]const u8,
 ) ![]const u8 {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(allocator);
@@ -360,6 +364,11 @@ fn buildReplayRequestJson(
     var writer = output.writer(allocator);
     try writer.writeAll("{\"seed\":");
     try writer.print("{d}", .{seed});
+    if (matchup) |m| {
+        try writer.writeAll(",\"matchup\":\"");
+        try writer.writeAll(m);
+        try writer.writeByte('"');
+    }
     try writer.writeAll(",\"actions\":[");
     var wrote_action = false;
     for (actions) |action| {
@@ -469,6 +478,10 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "install-destination")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-choice")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
+    if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
+    if (std.mem.eql(u8, prompt_type, "predictive-planogram-choice")) return "other";
+    if (std.mem.eql(u8, prompt_type, "wildcat-strike-choice")) return "other";
+    if (std.mem.eql(u8, prompt_type, "mutual-favor-choice")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     return prompt_type;
 }

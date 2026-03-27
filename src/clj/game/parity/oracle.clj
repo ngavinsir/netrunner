@@ -10,8 +10,8 @@
    [game.parity.export :as export]))
 
 (defn request->bundle
-  [{:keys [seed actions]}]
-  (export/replay-bundle-after-actions (or seed 1) (or actions [])))
+  [{:keys [seed actions matchup]}]
+  (export/replay-bundle-after-actions (or seed 1) (or actions []) matchup))
 
 (defn read-request
   [path]
