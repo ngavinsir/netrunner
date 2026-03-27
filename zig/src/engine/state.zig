@@ -48,9 +48,7 @@ pub const CorpPlayKind = enum(u8) {
     none,
     gain_credits,
     advance_installed,
-    predictive_planogram,
-    public_trail,
-    retribution,
+    custom,
     no_op,
 };
 
@@ -69,15 +67,14 @@ pub const RunnerPlayKind = enum(u8) {
     none,
     gain_credits,
     choose_run_target,
-    mutual_favor,
-    wildcat_strike,
+    custom,
 };
 
 pub const AccessKind = enum(u8) {
     none,
     steal_agenda,
-    urtica_cipher,
-    manegarm_skunkworks,
+    net_damage_on_access,
+    tax_or_etr,
 };
 
 pub const InstallKind = enum(u8) {
@@ -120,6 +117,18 @@ pub const SubroutineSpec = struct {
     base_trace: u8 = 0,
 };
 
+pub const AgendaEffectKind = enum(u8) {
+    none,
+    gain_credits,
+    draw_cards,
+    rez_ice_free,
+};
+
+pub const AgendaEffectSpec = struct {
+    kind: AgendaEffectKind = .none,
+    amount: u8 = 0,
+};
+
 // Runner abilities printed on ICE cards (e.g., bioroid break)
 pub const RunnerAbilityKind = enum(u8) {
     none,
@@ -154,6 +163,11 @@ pub const RunnerPlaySpec = struct {
 
 pub const AccessSpec = struct {
     kind: AccessKind = .none,
+    corp_credit_cost: u16 = 0,
+    base_damage: u8 = 0,
+    adds_advancement: bool = false,
+    click_cost: u8 = 0,
+    credit_cost: u16 = 0,
 };
 
 pub const InstallSpec = struct {

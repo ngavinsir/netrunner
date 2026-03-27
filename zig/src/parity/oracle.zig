@@ -479,9 +479,6 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "access-choice")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
-    if (std.mem.eql(u8, prompt_type, "predictive-planogram-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "wildcat-strike-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "mutual-favor-choice")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     return prompt_type;
 }

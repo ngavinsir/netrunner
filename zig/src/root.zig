@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const engine = struct {
-    pub const catalog = @import("engine/catalog.zig");
+    pub const catalog = @import("engine/game.zig");
     pub const game = @import("engine/game.zig");
     pub const parity = @import("engine/parity.zig");
     pub const state = @import("engine/state.zig");

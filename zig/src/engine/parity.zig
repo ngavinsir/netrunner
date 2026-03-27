@@ -1,6 +1,6 @@
 const std = @import("std");
 const game = @import("game.zig");
-const matchups = @import("catalog.zig");
+const matchups = @import("game.zig");
 const fixture = @import("../parity/oracle.zig");
 const setup = fixture;
 const state = @import("state.zig");
@@ -1375,7 +1375,7 @@ test "manegarm skunkworks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("manegarm-skunkworks-choice", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("other", generated.snapshot.state.runner.prompt_state.?.prompt_type);
     try std.testing.expectEqual(@as(usize, 3), generated.snapshot.state.runner.prompt_state.?.choices.len);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "End the run"));
@@ -1412,7 +1412,7 @@ test "manegarm skunkworks spend clicks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("manegarm-skunkworks-choice", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("other", generated.snapshot.state.runner.prompt_state.?.prompt_type);
 
     const runner_clicks_before = generated.snapshot.state.runner.click;
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Spend [Click][Click]"));
@@ -1451,7 +1451,7 @@ test "manegarm skunkworks pay credits parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("manegarm-skunkworks-choice", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("other", generated.snapshot.state.runner.prompt_state.?.prompt_type);
 
     const runner_credits_before = generated.snapshot.state.runner.credit;
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Pay 5 [Credits]"));
