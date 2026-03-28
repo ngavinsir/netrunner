@@ -174,10 +174,13 @@ pub fn loadBeginnerInitialSnapshot(
     backing_allocator: std.mem.Allocator,
     fixture_path: []const u8,
 ) !BeginnerInitialSnapshot {
-    var arena = std.heap.ArenaAllocator.init(backing_allocator);
-    errdefer arena.deinit();
+    var result: BeginnerInitialSnapshot = .{
+        .arena = std.heap.ArenaAllocator.init(backing_allocator),
+        .snapshot = undefined,
+    };
+    errdefer result.arena.deinit();
 
-    const allocator = arena.allocator();
+    const allocator = result.arena.allocator();
     const source = try std.fs.cwd().readFileAlloc(allocator, fixture_path, 64 << 20);
     const root_value = try std.json.parseFromSliceLeaky(std.json.Value, allocator, source, .{});
 
@@ -186,14 +189,12 @@ pub fn loadBeginnerInitialSnapshot(
     const oracle_state = try getRequired(.object, initial, "oracle-state");
     const legal_actions_value = try getRequired(.array, initial, "legal-actions");
 
-    return .{
-        .arena = arena,
-        .snapshot = .{
-            .state = try parseGameState(allocator, oracle_state),
-            .decision_side = try parseSide(try getRequired(.string, initial, "decision-side")),
-            .legal_actions = try parseLegalActions(allocator, legal_actions_value),
-        },
+    result.snapshot = .{
+        .state = try parseGameState(allocator, oracle_state),
+        .decision_side = try parseSide(try getRequired(.string, initial, "decision-side")),
+        .legal_actions = try parseLegalActions(allocator, legal_actions_value),
     };
+    return result;
 }
 
 pub fn loadSummary(
@@ -236,10 +237,13 @@ pub fn replayActionsWithMatchup(
     actions: []const state.LegalAction,
     matchup: ?[]const u8,
 ) !ReplaySnapshot {
-    var arena = std.heap.ArenaAllocator.init(backing_allocator);
-    errdefer arena.deinit();
+    var result: ReplaySnapshot = .{
+        .arena = std.heap.ArenaAllocator.init(backing_allocator),
+        .snapshot = undefined,
+    };
+    errdefer result.arena.deinit();
 
-    const allocator = arena.allocator();
+    const allocator = result.arena.allocator();
     const repo_root = try repoRootPath(allocator);
     const root_value = blk: {
         const socket_path = try ensurePersistentOracleServer(repo_root);
@@ -270,14 +274,12 @@ pub fn replayActionsWithMatchup(
     const oracle_state = try getRequired(.object, root, "oracle-state");
     const legal_actions_value = try getRequired(.array, root, "legal-actions");
 
-    return .{
-        .arena = arena,
-        .snapshot = .{
-            .state = try parseGameState(allocator, oracle_state),
-            .decision_side = try parseSide(try getRequired(.string, root, "decision-side")),
-            .legal_actions = try parseLegalActions(allocator, legal_actions_value),
-        },
+    result.snapshot = .{
+        .state = try parseGameState(allocator, oracle_state),
+        .decision_side = try parseSide(try getRequired(.string, root, "decision-side")),
+        .legal_actions = try parseLegalActions(allocator, legal_actions_value),
     };
+    return result;
 }
 
 pub fn freeSummary(allocator: std.mem.Allocator, summary: *FixtureSummary) void {

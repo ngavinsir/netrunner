@@ -986,15 +986,14 @@ Execution order for remaining core engine work:
 - Mayfly end-of-run trash (trashes_after_break)
 - Advance prompt only shows advanceable cards (agendas, advanceable assets)
 
-**Known deferred items (not blocking M2):**
-- Nico Campaign auto-trigger at start of turn (currently click action; needs corp phase 12 timing)
-- Nico Campaign draw 1 on empty
-- Red Team credits on successful run (currently taken before run)
-- Red Team server-not-run-this-turn restriction
-- Seamless Launch not-installed-this-turn restriction
-- Verbal Plasticity first-per-turn restriction
-- Carmen install cost reduction
-- HQ multi-access flow (Jailbreak + Docklands Pass combo)
+**Previously deferred items (now resolved):**
+- Nico Campaign auto-trigger at start of corp turn (start_of_turn_credits) + draw 1 on empty
+- Red Team credits on successful run (source_card_code tracking) + server-not-run-this-turn restriction
+- Seamless Launch not-installed-this-turn restriction (installed_this_turn flag)
+- Verbal Plasticity first-per-turn restriction (already implemented via runner_click_draws counter)
+- Carmen install cost reduction (-2 if successful run this turn)
+- HQ multi-access index tracking fix (adjustAccessedIndexes after steal/trash)
+- Red Team double-click-spend bug fix (separate applyRunFromAbility handler)
 
 ### M3: Intermediate Matchup Parity
 

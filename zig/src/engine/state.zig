@@ -98,6 +98,7 @@ pub const InstalledAbilityKind = enum(u8) {
     break_subroutine,
     pump_strength,
     run_central,
+    run_rd, // Conduit: click to run R&D
     start_of_turn_credits, // Nico Campaign: auto-take credits at start of corp turn
 };
 
@@ -115,6 +116,7 @@ pub const SubroutineKind = enum(u8) {
     do_net_damage_conditional_etr, // Do N net damage; if trashed card has odd cost, ETR
     runner_loses_credits_or_etr, // Runner loses N credits (sub1); ETR if runner has ≤ amount credits (sub2)
     do_net_damage_then_jack_out, // Do N net damage, then runner may jack out
+    give_tag_or_pay_credits, // Funhouse: give 1 tag unless runner pays N credits
 };
 
 pub const SubroutineSpec = struct {
@@ -152,6 +154,7 @@ pub const CorpPlaySpec = struct {
     gain_credits: u16 = 0,
     draw_cards: u8 = 0,
     advancement_amount: u8 = 1,
+    not_installed_this_turn: bool = false, // Seamless Launch: exclude cards installed this turn
 };
 
 pub const RunnerPlaySpec = struct {
@@ -182,6 +185,7 @@ pub const InstallSpec = struct {
 
 pub const RunnerInstallSpec = struct {
     kind: RunnerInstallKind = .none,
+    install_cost_reduction_if_successful_run: u16 = 0, // Carmen: -2 if successful run this turn
 };
 
 pub const InstalledAbilitySpec = struct {
@@ -202,6 +206,13 @@ pub const InstalledAbilitySpec = struct {
     draw_on_empty: u8 = 0, // Nico Campaign: draw N cards when trashed due to empty
     on_successful_run_place_credits: u8 = 0, // Pennyshaver: place N credits on successful run
     takes_all_credits: bool = false, // Pennyshaver: click ability takes all hosted credits + 1
+    mu_provided: u8 = 0, // DZMZ Optimizer: provides extra MU
+    first_program_install_discount: u16 = 0, // DZMZ Optimizer: first program install each turn costs N less
+    virus_on_successful_central: bool = false, // Leech: place virus counter on successful central run
+    virus_on_successful_rd: bool = false, // Conduit: place virus counter on successful R&D run
+    rd_access_bonus_per_virus: bool = false, // Conduit: RD access bonus = virus counters
+    virus_ice_strength_reduction: u8 = 0, // Leech: spend 1 virus for -N ICE strength
+    tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements: give N tags if agenda stolen from server
 };
 
 pub const CardReference = struct {
@@ -251,7 +262,9 @@ pub const CardInstance = struct {
     current_strength: ?u8 = null, // Boosted strength during encounter
     advancement_counter: u8 = 0,
     credit_counter: u16 = 0,
+    virus_counter: u16 = 0,
     ability_used_this_turn: bool = false,
+    installed_this_turn: bool = false, // Seamless Launch: cannot target cards installed this turn
     used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
 };
@@ -303,6 +316,10 @@ pub const RunState = struct {
     access_bonus: u8 = 0,
     jack_out_available: bool = false,
     pending_subroutine: ?PendingSubroutine = null,
+    source_card_code: ?u32 = null, // Red Team: track which card initiated the run
+    ice_strength_modifier: i8 = 0, // Leech: temporary ICE strength reduction
+    did_steal_this_run: bool = false, // AMAZE: track if agenda was stolen during run
+    tags_pending_on_steal: u8 = 0, // AMAZE: tags to give if agenda stolen (survives card trash)
 };
 
 pub const HandSize = struct {
@@ -361,6 +378,10 @@ pub const PlayerState = struct {
 pub const TurnEvents = struct {
     runner_click_draws: u8 = 0,
     runner_hq_breaches: u8 = 0,
+    made_run_on_hq: bool = false,
+    made_run_on_rnd: bool = false,
+    made_run_on_archives: bool = false,
+    programs_installed_this_turn: u8 = 0,
 };
 
 pub const LegalAction = struct {
