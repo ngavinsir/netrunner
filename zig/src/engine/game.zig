@@ -82,7 +82,8 @@ pub const all_cards = [_]CardSpec{
         }.score,
     },
     .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+        .kind = .take_credits,
+        .click_cost = 1,
         .initial_credit_counters = 9,
         .take_credits_amount = 3,
         .trash_on_empty = true,
@@ -2950,6 +2951,10 @@ fn applyInstalledAbility(
                     card.ability_used_this_turn = true;
 
                     if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
+                        // Nico Campaign: draw cards before trashing
+                        if (card.installed_ability.draw_on_empty > 0) {
+                            try drawCards(generated, .corp, card.installed_ability.draw_on_empty);
+                        }
                         const trashed = generated.corp_servers.items[server_index].content.orderedRemove(card_index);
                         try appendDiscardCard(generated, .corp, trashed);
                     }
@@ -4780,7 +4785,7 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
         var i: usize = 0;
         while (i < server.content.items.len) {
             var card = &server.content.items[i];
-            if (card.installed_ability.kind == .start_of_turn_credits and card.rezzed and card.credit_counter > 0) {
+            if (card.installed_ability.kind == .start_of_turn_credits and card.credit_counter > 0) {
                 const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
                 card.credit_counter -= take;
                 game.corp_credit += take;

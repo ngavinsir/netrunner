@@ -2405,42 +2405,17 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     const actions = gen.legal_actions;
     const side = gen.decision_side;
 
-    // Mulligan: keep
-    for (actions) |a| {
-        if (a.kind != .prompt_choice) continue;
-        if (a.choice) |c| {
-            if (c.text) |t| {
-                if (std.mem.eql(u8, t, "Keep")) return a;
-            }
-        }
-    }
+    // === Prompts ===
+    if (findPromptText(actions, "Keep")) |a| return a;
+    if (findPromptText(actions, "Steal")) |a| return a;
+    if (findPromptText(actions, "No action")) |a| return a;
 
-    // Access prompt: "No action" to skip trashing
-    for (actions) |a| {
-        if (a.kind != .prompt_choice) continue;
-        if (a.choice) |c| {
-            if (c.text) |t| {
-                if (std.mem.eql(u8, t, "No action")) return a;
-            }
-        }
-    }
-
-    // Steal agenda if available
-    for (actions) |a| {
-        if (a.kind != .prompt_choice) continue;
-        if (a.choice) |c| {
-            if (c.text) |t| {
-                if (std.mem.eql(u8, t, "Steal")) return a;
-            }
-        }
-    }
-
-    // Any remaining prompt: pick first
+    // Any other prompt: first choice
     for (actions) |a| {
         if (a.kind == .prompt_choice) return a;
     }
 
-    // Continue actions (run phases)
+    // Run phases
     if (findFirstKindAction(actions, .@"continue", .corp)) |a| return a;
     if (findFirstKindAction(actions, .@"continue", .runner)) |a| return a;
 
@@ -2471,6 +2446,26 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     // End turn
     if (findFirstKindAction(actions, .end_turn, side)) |a| return a;
 
-    // Fallback: first available action
     return actions[0];
+}
+
+fn findPromptText(actions: []const state.LegalAction, text: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .prompt_choice) continue;
+        if (a.choice) |c| {
+            if (c.text) |t| {
+                if (std.mem.eql(u8, t, text)) return a;
+            }
+        }
+    }
+    return null;
+}
+
+fn findPlayByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .play_from_hand and a.side == side and a.card_title != null) {
+            if (std.mem.eql(u8, a.card_title.?, title)) return a;
+        }
+    }
+    return null;
 }
