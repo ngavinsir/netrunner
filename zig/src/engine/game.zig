@@ -37,6 +37,7 @@ pub const CardSpec = struct {
     // Card-specific subroutine handler - for complex subroutines that need custom logic
     // Set this instead of/in addition to subroutines for cards like Brân 1.0
     card_subroutine_handler: ?CardSubroutineHandler = null,
+    trash_cost: ?u16 = null,
     on_play: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
@@ -78,21 +79,21 @@ pub const all_cards = [_]CardSpec{
             }
         }.score,
     },
-    .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
+    .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
         .kind = .take_credits,
         .click_cost = 1,
         .initial_credit_counters = 9,
         .take_credits_amount = 3,
         .trash_on_empty = true,
     } },
-    .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
+    .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .trash_cost = 3, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
         .kind = .take_credits,
         .click_cost = 1,
         .initial_credit_counters = 15,
         .take_credits_amount = 3,
         .trash_on_empty = true,
     } },
-    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .access = .{ .kind = .net_damage_on_access, .corp_credit_cost = 2, .base_damage = 2, .adds_advancement = true }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .access = .{ .kind = .net_damage_on_access, .corp_credit_cost = 2, .base_damage = 2, .adds_advancement = true }, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .corp_play = .{ .kind = .gain_credits, .gain_credits = 15 } },
     .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .corp_play = .{ .kind = .gain_credits, .gain_credits = 9 } },
     .{ .title = "Seamless Launch", .side = .corp, .code = 30040, .card_type = "Operation", .cost = 1, .corp_play = .{ .kind = .advance_installed, .advancement_amount = 2 } },
@@ -224,7 +225,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Manegarm Skunkworks", .side = .corp, .code = 30042, .card_type = "Upgrade", .cost = 2, .access = .{ .kind = .tax_or_etr, .click_cost = 2, .credit_cost = 5 }, .install = .{ .kind = .corp_remote_only },
+    .{ .title = "Manegarm Skunkworks", .side = .corp, .code = 30042, .card_type = "Upgrade", .cost = 2, .trash_cost = 3, .access = .{ .kind = .tax_or_etr, .click_cost = 2, .credit_cost = 5 }, .install = .{ .kind = .corp_remote_only },
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -252,7 +253,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Brân 1.0", .side = .corp, .code = 30039, .card_type = "ICE", .cost = 6, .strength = 6, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .install_ice_from_hq_archives },
         .{ .kind = .end_the_run },
@@ -1726,12 +1727,47 @@ fn applyAccessPromptChoice(
     choice_text: []const u8,
 ) !void {
     if (side != .runner) return error.UnsupportedSide;
+    // Check for trash/no-action choices first
+    if (std.mem.eql(u8, choice_text, "No action")) {
+        try finishAccessCard(generated);
+        return;
+    }
+    if (std.mem.startsWith(u8, choice_text, "Pay ") and std.mem.endsWith(u8, choice_text, " to trash")) {
+        try applyTrashOnAccess(generated, accessed);
+        return;
+    }
     switch (accessed.access.kind) {
         .steal_agenda => try applyStealAgendaChoice(generated, accessed, choice_text),
         .net_damage_on_access => return error.UnsupportedAccessTarget,
         .tax_or_etr => return error.UnsupportedAccessTarget,
         .none => return error.UnsupportedAccessTarget,
     }
+}
+
+fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
+    const spec = lookupCardSpec(accessed) orelse return error.UnsupportedAccessTarget;
+    const trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
+    try spendCredits(&generated.snapshot.state.runner, trash_cost);
+    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    try removeAccessedCard(generated, run);
+    // Move to corp discard
+    try appendDiscardCard(generated, .corp, accessed);
+    try finishAccessCard(generated);
+}
+
+fn finishAccessCard(generated: *Game) !void {
+    const allocator = generated.arena.allocator();
+    const run = &generated.snapshot.state.run.?;
+    generated.snapshot.state.runner.prompt_state = null;
+
+    if (run.accesses_remaining > 0) {
+        run.phase = try allocator.dupe(u8, "success");
+        generated.snapshot.decision_side = .corp;
+        generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+        return;
+    }
+
+    try completeRunAfterAccess(generated);
 }
 
 fn applyStealAgendaChoice(
@@ -3140,11 +3176,33 @@ fn beginAccessFlow(
         },
         .net_damage_on_access => {
             try applyNetDamageOnAccess(generated, accessed);
-            return false;
+            return try beginTrashAccessPrompt(generated, accessed);
         },
         .tax_or_etr => return false,
-        .none => return false,
+        .none => return try beginTrashAccessPrompt(generated, accessed),
     }
+}
+
+fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
+    const spec = lookupCardSpec(accessed) orelse return false;
+    const trash_cost = spec.trash_cost orelse return false;
+    const allocator = generated.arena.allocator();
+    const runner = &generated.snapshot.state.runner;
+    const can_afford = runner.credit >= trash_cost;
+    const choice_count: usize = if (can_afford) 2 else 1;
+    const choices = try allocator.alloc(state.PromptChoice, choice_count);
+    var idx: usize = 0;
+    if (can_afford) {
+        choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Pay {d} [Credits] to trash", .{trash_cost}));
+        idx += 1;
+    }
+    choices[idx] = stringChoice("No action");
+    runner.prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, prompt_access_choice),
+        .choices = choices,
+        .source_card = accessed,
+    };
+    return true;
 }
 
 fn applyNetDamageOnAccess(
