@@ -42,6 +42,7 @@ pub const BasicAction = enum(u8) {
     score_agenda,
     purge_viruses,
     run_any_server,
+    remove_tag,
 };
 
 pub const CorpPlayKind = enum(u8) {
@@ -233,9 +234,11 @@ pub const CardInstance = struct {
     install: InstallSpec = .{},
     runner_install: RunnerInstallSpec = .{},
     installed_ability: InstalledAbilitySpec = .{},
+    pump_ability: InstalledAbilitySpec = .{},
     subroutines: []const SubroutineSpec = &.{},
     runner_abilities: []const RunnerAbilitySpec = &.{}, // Runner abilities printed on ICE cards
     rezzed: bool = false,
+    current_strength: ?u8 = null, // Boosted strength during encounter
     advancement_counter: u8 = 0,
     credit_counter: u16 = 0,
     ability_used_this_turn: bool = false,

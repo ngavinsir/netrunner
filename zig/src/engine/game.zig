@@ -30,6 +30,7 @@ pub const CardSpec = struct {
     install: state.InstallSpec = .{},
     runner_install: state.RunnerInstallSpec = .{},
     installed_ability: state.InstalledAbilitySpec = .{},
+    pump_ability: state.InstalledAbilitySpec = .{},
     subroutines: []const state.SubroutineSpec = &.{},
     runner_abilities: []const state.RunnerAbilitySpec = &.{}, // Runner abilities printed on ICE cards
     on_score: state.AgendaEffectSpec = .{},
@@ -64,16 +65,15 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Orbital Superiority", .side = .corp, .code = 30068, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
-                var runner = &g.snapshot.state.runner;
-                if (is_runner_tagged(runner.*)) {
+                if (is_runner_tagged(g.runner_tag)) {
                     try trashRandomRunnerHandCards(g, 4);
                     updateTerminalState(g);
                 } else {
-                    if (runner.tag == null) {
-                        runner.tag = .{ .base = 0, .total = 1, .is_tagged = true };
+                    if (g.runner_tag == null) {
+                        g.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
                     } else {
-                        runner.tag.?.total += 1;
-                        runner.tag.?.is_tagged = true;
+                        g.runner_tag.?.total += 1;
+                        g.runner_tag.?.is_tagged = true;
                     }
                 }
             }
@@ -101,36 +101,34 @@ pub const all_cards = [_]CardSpec{
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
-                var corp = &g.snapshot.state.corp;
-                corp.prompt_state = .{
+                g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
-                    .choices = try predictive_planogram_choices(allocator, g.snapshot.state.runner),
+                    .choices = try predictive_planogram_choices(allocator, g.runner_tag),
                     .source_card = card,
                 };
-                g.snapshot.state.runner.prompt_state = .{
+                g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
                     .choices = &.{},
                     .source_card = null,
                 };
-                g.snapshot.decision_side = .corp;
-                g.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play,
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                var corp = &g.snapshot.state.corp;
                 if (std.mem.eql(u8, choice_text, "Gain 3 [Credits]")) {
-                    corp.credit += 3;
+                    g.corp_credit += 3;
                 } else if (std.mem.eql(u8, choice_text, "Draw 3 cards")) {
                     try drawCards(g, .corp, 3);
                 } else if (std.mem.eql(u8, choice_text, "Gain 3 [Credits] and draw 3 cards")) {
-                    corp.credit += 3;
+                    g.corp_credit += 3;
                     try drawCards(g, .corp, 3);
                 } else return error.UnsupportedChoice;
-                corp.prompt_state = null;
-                g.snapshot.state.runner.prompt_state = null;
-                g.snapshot.decision_side = .corp;
-                g.snapshot.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), corp);
+                g.corp_prompt_state = null;
+                g.runner_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
             }
         }.choice,
     },
@@ -138,43 +136,41 @@ pub const all_cards = [_]CardSpec{
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
-                const corp = &g.snapshot.state.corp;
                 if (!runner_had_successful_run_last_turn(g)) {
-                    g.snapshot.decision_side = .corp;
-                    g.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
                     return;
                 }
-                g.snapshot.state.corp.prompt_state = .{
+                g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
                     .choices = &.{},
                     .source_card = null,
                 };
-                g.snapshot.state.runner.prompt_state = .{
+                g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
-                    .choices = try public_trail_choices(allocator, g.snapshot.state.runner.credit),
+                    .choices = try public_trail_choices(allocator, g.runner_credit),
                     .source_card = card,
                 };
-                g.snapshot.decision_side = .runner;
-                g.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, g.snapshot.state.runner.prompt_state.?);
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
         }.play,
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const runner = &g.snapshot.state.runner;
                 if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
-                    if (runner.tag == null) {
-                        runner.tag = .{ .base = 0, .total = 1, .is_tagged = true };
+                    if (g.runner_tag == null) {
+                        g.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
                     } else {
-                        runner.tag.?.total += 1;
-                        runner.tag.?.is_tagged = runner.tag.?.total > 0;
+                        g.runner_tag.?.total += 1;
+                        g.runner_tag.?.is_tagged = g.runner_tag.?.total > 0;
                     }
                 } else if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
-                    try spendCredits(runner, 8);
+                    try spendCredits(g, .runner, 8);
                 } else return error.UnsupportedChoice;
-                g.snapshot.state.runner.prompt_state = null;
-                g.snapshot.state.corp.prompt_state = null;
-                g.snapshot.decision_side = .corp;
-                g.snapshot.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), &g.snapshot.state.corp);
+                g.runner_prompt_state = null;
+                g.corp_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
             }
         }.choice,
     },
@@ -182,25 +178,24 @@ pub const all_cards = [_]CardSpec{
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
-                var corp = &g.snapshot.state.corp;
-                if (!is_runner_tagged(g.snapshot.state.runner)) {
-                    g.snapshot.decision_side = .corp;
-                    g.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+                if (!is_runner_tagged(g.runner_tag)) {
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
                     return;
                 }
-                const choices = try retribution_choices(allocator, g.snapshot.state.runner);
+                const choices = try retribution_choices(allocator, g.runner_rig_hardware.items, g.runner_rig_program.items);
                 if (choices.len == 0) {
-                    g.snapshot.decision_side = .corp;
-                    g.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
                     return;
                 }
-                corp.prompt_state = .{
+                g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = choices,
                     .source_card = card,
                 };
-                g.snapshot.decision_side = .corp;
-                g.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play,
         .on_prompt_choice = &struct {
@@ -217,11 +212,14 @@ pub const all_cards = [_]CardSpec{
                     if (index >= g.runner_rig_program.items.len) return error.UnsupportedChoice;
                     const trashed = g.runner_rig_program.orderedRemove(index);
                     try g.runner_discard.append(g.backing_allocator, trashed);
+                    if (g.runner_memory) |*mem| {
+                        if (mem.used > 0) mem.used -= 1;
+                        mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+                    }
                 } else return error.UnsupportedChoice;
-                g.snapshot.state.corp.prompt_state = null;
-                g.snapshot.decision_side = .corp;
-                try syncOwnedViews(g);
-                g.snapshot.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), &g.snapshot.state.corp);
+                g.corp_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
             }
         }.choice,
     },
@@ -229,24 +227,23 @@ pub const all_cards = [_]CardSpec{
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
-                const prompt = g.snapshot.state.runner.prompt_state orelse return error.MissingPrompt;
+                const prompt = g.runner_prompt_state orelse return error.MissingPrompt;
                 const card = prompt.source_card orelse return error.MissingSourceCard;
-                var runner = &g.snapshot.state.runner;
-                var run = &g.snapshot.state.run.?;
+                var run = &g.run.?;
                 if (std.mem.eql(u8, choice_text, "Spend [Click][Click]")) {
-                    runner.click -= card.access.click_cost;
+                    g.runner_click -= card.access.click_cost;
                 } else if (std.mem.eql(u8, choice_text, "Pay 5 [Credits]")) {
-                    runner.credit -= @intCast(card.access.credit_cost);
+                    g.runner_credit -= @intCast(card.access.credit_cost);
                 } else if (std.mem.eql(u8, choice_text, "End the run")) {
                     try completeUnsuccessfulRun(g);
                     return;
                 } else return error.UnsupportedChoice;
-                runner.prompt_state = null;
+                g.runner_prompt_state = null;
                 try applySuccessfulRunEffects(g);
                 if (try prepareNextAccess(g)) {
                     run.phase = try allocator.dupe(u8, "success");
-                    g.snapshot.decision_side = .corp;
-                    g.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+                    g.decision_side = .corp;
+                    g.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
                     return;
                 }
                 try completeSuccessfulRunWithCorpPriority(g);
@@ -254,7 +251,7 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Brân 1.0", .side = .corp, .code = 30039, .card_type = "ICE", .cost = 6, .strength = 6, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Brân 1.0", .side = .corp, .code = 30039, .card_type = "ICE", .subtypes = &.{ "Bioroid", "Barrier" }, .cost = 6, .strength = 6, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .install_ice_from_hq_archives },
         .{ .kind = .end_the_run },
         .{ .kind = .end_the_run },
@@ -267,26 +264,26 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .cost = 3, .strength = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .end_the_run },
     } },
-    .{ .title = "Diviner", .side = .corp, .code = 30046, .card_type = "ICE", .cost = 2, .strength = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Diviner", .side = .corp, .code = 30046, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .do_net_damage, .amount = 1 },
         .{ .kind = .end_the_run },
     } },
-    .{ .title = "Whitespace", .side = .corp, .code = 30074, .card_type = "ICE", .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Whitespace", .side = .corp, .code = 30074, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .runner_loses_credits, .amount = 2 },
         .{ .kind = .runner_loses_credits, .amount = 2 },
     } },
-    .{ .title = "Karunā", .side = .corp, .code = 30047, .card_type = "ICE", .cost = 4, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Karunā", .side = .corp, .code = 30047, .card_type = "ICE", .subtypes = &.{"Sentry"}, .cost = 4, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .do_net_damage, .amount = 2 },
         .{ .kind = .do_net_damage, .amount = 2 },
     } },
-    .{ .title = "Tithe", .side = .corp, .code = 30073, .card_type = "ICE", .cost = 1, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Tithe", .side = .corp, .code = 30073, .card_type = "ICE", .subtypes = &.{"Sentry"}, .cost = 1, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .do_net_damage, .amount = 1 },
         .{ .kind = .end_the_run },
     } },
-    .{ .title = "Funhouse", .side = .corp, .code = 30054, .card_type = "ICE", .cost = 5, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Funhouse", .side = .corp, .code = 30054, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 5, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .trace_tag, .base_trace = 4 },
         .{ .kind = .end_the_run },
     } },
@@ -326,12 +323,10 @@ pub const all_cards = [_]CardSpec{
                     try g.runner_hand.append(g.backing_allocator, chosen);
                     try shuffleDeck(g, .runner);
                 }
-                try syncOwnedViews(g);
-                g.snapshot.decision_side = .runner;
-                g.snapshot.legal_actions = try runnerOpeningActionsForState(
+                g.decision_side = .runner;
+                g.legal_actions = try runnerOpeningActionsForState(
                     g.arena.allocator(),
-                    g.snapshot.state.runner,
-                    g.snapshot.state.corp.servers,
+                    g,
                 );
             }
         }.play,
@@ -340,35 +335,33 @@ pub const all_cards = [_]CardSpec{
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
-                g.snapshot.state.runner.prompt_state = .{
+                g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
                     .choices = &.{},
                     .source_card = null,
                 };
-                g.snapshot.state.corp.prompt_state = .{
+                g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try wildcat_strike_choices(allocator),
                     .source_card = null,
                 };
-                g.snapshot.decision_side = .corp;
-                g.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, g.snapshot.state.corp.prompt_state.?);
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play,
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                var runner = &g.snapshot.state.runner;
                 if (std.mem.eql(u8, choice_text, "Runner gains 6 [Credits]")) {
-                    runner.credit += 6;
+                    g.runner_credit += 6;
                 } else if (std.mem.eql(u8, choice_text, "Runner draws 4 cards")) {
                     try drawCards(g, .runner, 4);
                 } else return error.UnsupportedChoice;
-                g.snapshot.state.corp.prompt_state = null;
-                g.snapshot.state.runner.prompt_state = null;
-                g.snapshot.decision_side = .runner;
-                g.snapshot.legal_actions = try runnerOpeningActionsForState(
+                g.corp_prompt_state = null;
+                g.runner_prompt_state = null;
+                g.decision_side = .runner;
+                g.legal_actions = try runnerOpeningActionsForState(
                     g.arena.allocator(),
-                    runner.*,
-                    g.snapshot.state.corp.servers,
+                    g,
                 );
             }
         }.choice,
@@ -388,6 +381,8 @@ pub const all_cards = [_]CardSpec{
         .kind = .run_central,
         .click_cost = 1,
         .initial_credit_counters = 12,
+        .take_credits_amount = 3,
+        .trash_on_empty = true,
     } },
     .{ .title = "Smartware Distributor", .side = .runner, .code = 30033, .card_type = "Resource", .cost = 0, .runner_install = .{ .kind = .resource }, .installed_ability = .{
         .kind = .place_credits,
@@ -408,12 +403,12 @@ pub const all_cards = [_]CardSpec{
         .kind = .break_subroutine,
         .credit_cost = 1,
         .break_subroutine_count = 1,
-    } },
+    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 2, .pump_strength_amount = 3 } },
     .{ .title = "Cleaver", .side = .runner, .code = 30006, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Fracter" }, .cost = 3, .strength = 3, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .credit_cost = 1,
         .break_subroutine_count = 2,
-    } },
+    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 2, .pump_strength_amount = 1 } },
     .{ .title = "Mayfly", .side = .runner, .code = 30032, .card_type = "Program", .subtypes = &.{ "Icebreaker", "AI" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .credit_cost = 1,
@@ -424,7 +419,7 @@ pub const all_cards = [_]CardSpec{
         .kind = .break_subroutine,
         .credit_cost = 1,
         .break_subroutine_count = 2,
-    } },
+    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 1, .pump_strength_amount = 1 } },
     .{ .title = "Conduit", .side = .runner, .code = 30024, .card_type = "Program", .cost = 4, .runner_install = .{ .kind = .program } },
     .{ .title = "Leech", .side = .runner, .code = 30008, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program } },
 };
@@ -558,8 +553,8 @@ const MutableServer = struct {
 pub const Game = struct {
     arena: std.heap.ArenaAllocator,
     backing_allocator: std.mem.Allocator,
-    // Internal mutable state for gameplay logic
-    // These ArrayLists contain the source of truth for game state
+
+    // --- Internal card collections (source of truth) ---
     corp_hand: std.ArrayListUnmanaged(state.CardInstance) = .empty,
     corp_deck: std.ArrayListUnmanaged(state.CardInstance) = .empty,
     corp_discard: std.ArrayListUnmanaged(state.CardInstance) = .empty,
@@ -572,14 +567,59 @@ pub const Game = struct {
     runner_rig_program: std.ArrayListUnmanaged(state.CardInstance) = .empty,
     runner_rig_resources: std.ArrayListUnmanaged(state.CardInstance) = .empty,
     corp_servers: std.ArrayListUnmanaged(MutableServer) = .empty,
-    // Snapshot state for parity testing only
-    // NOTE: snapshot should only be used for:
-    // - Comparing against the Clojure oracle (parity testing)
-    // - Generating legal actions
-    // - Serializing game state for fixtures
-    // Do NOT use snapshot for core gameplay logic as it may contain stale data.
-    // Always use the internal ArrayLists above for gameplay state lookups.
-    snapshot: state.GameSnapshot,
+
+    // --- Internal scalar state (source of truth) ---
+    // Game-level
+    format: []const u8 = "",
+    seed: u64 = 0,
+    rng_seed: ?i64 = null,
+    active_player: state.Side = .corp,
+    turn: u16 = 0,
+    end_turn: bool = true,
+    run: ?state.RunState = null,
+    runner_successful_run_last_turn: bool = false,
+    runner_successful_run_this_turn: bool = false,
+    turn_events: state.TurnEvents = .{},
+    game_over: bool = false,
+    winner: ?state.Side = null,
+    pending_install: ?state.PendingInstall = null,
+
+    // Corp scalars
+    corp_identity: state.CardInstance = undefined,
+    corp_basic_action_card: state.CardInstance = undefined,
+    corp_click: u8 = 0,
+    corp_click_per_turn: u8 = 3,
+    corp_credit: u16 = 5,
+    corp_agenda_point: u8 = 0,
+    corp_agenda_point_req: u8 = 7,
+    corp_hand_size: state.HandSize = .{ .base = 5, .total = 5 },
+    corp_bad_publicity: ?state.BadPublicity = .{ .base = 0, .additional = 0 },
+    corp_keep: state.KeepState = .undecided,
+    corp_prompt_state: ?state.PromptState = null,
+
+    // Runner scalars
+    runner_identity: state.CardInstance = undefined,
+    runner_basic_action_card: state.CardInstance = undefined,
+    runner_click: u8 = 0,
+    runner_click_per_turn: u8 = 4,
+    runner_credit: u16 = 5,
+    runner_agenda_point: u8 = 0,
+    runner_agenda_point_req: u8 = 7,
+    runner_hand_size: state.HandSize = .{ .base = 5, .total = 5 },
+    runner_run_credit: u16 = 0,
+    runner_link: u8 = 0,
+    runner_tag: ?state.TagState = .{ .base = 0, .total = 0, .is_tagged = false },
+    runner_memory: ?state.MemoryState = .{ .base = 4, .available = 4, .used = 0 },
+    runner_brain_damage: u8 = 0,
+    runner_keep: state.KeepState = .undecided,
+    runner_prompt_state: ?state.PromptState = null,
+
+    // Decision state
+    decision_side: state.Side = .corp,
+    legal_actions: []const state.LegalAction = &.{},
+
+    // Remote server counter (monotonically increasing, never resets on server removal)
+    next_remote_number: usize = 1,
 
     pub fn deinit(self: *Game) void {
         for (self.corp_servers.items) |*server| {
@@ -600,6 +640,85 @@ pub const Game = struct {
         self.runner_rig_resources.deinit(self.backing_allocator);
         self.arena.deinit();
         self.* = undefined;
+    }
+
+    pub fn toSnapshot(self: *Game) !state.GameSnapshot {
+        const allocator = self.arena.allocator();
+
+        // Deep clone servers
+        const servers = try allocator.alloc(state.ServerSlot, self.corp_servers.items.len);
+        for (self.corp_servers.items, 0..) |server, idx| {
+            const ice_copy = try allocator.alloc(state.CardInstance, server.ices.items.len);
+            const content_copy = try allocator.alloc(state.CardInstance, server.content.items.len);
+            for (server.ices.items, 0..) |card, i| ice_copy[i] = try deepCloneCard(allocator, card);
+            for (server.content.items, 0..) |card, i| content_copy[i] = try deepCloneCard(allocator, card);
+            servers[idx] = .{
+                .name = server.name,
+                .state = .{ .ices = ice_copy, .content = content_copy },
+            };
+        }
+
+        return .{
+            .state = .{
+                .format = self.format,
+                .seed = self.seed,
+                .rng_seed = self.rng_seed,
+                .active_player = self.active_player,
+                .turn = self.turn,
+                .end_turn = self.end_turn,
+                .run = self.run,
+                .runner_successful_run_last_turn = self.runner_successful_run_last_turn,
+                .runner_successful_run_this_turn = self.runner_successful_run_this_turn,
+                .turn_events = self.turn_events,
+                .game_over = self.game_over,
+                .winner = self.winner,
+                .pending_install = self.pending_install,
+                .corp = .{
+                    .identity = self.corp_identity,
+                    .basic_action_card = self.corp_basic_action_card,
+                    .click = self.corp_click,
+                    .click_per_turn = self.corp_click_per_turn,
+                    .credit = self.corp_credit,
+                    .agenda_point = self.corp_agenda_point,
+                    .agenda_point_req = self.corp_agenda_point_req,
+                    .hand_size = self.corp_hand_size,
+                    .bad_publicity = self.corp_bad_publicity,
+                    .keep = self.corp_keep,
+                    .prompt_state = self.corp_prompt_state,
+                    .hand = self.corp_hand.items,
+                    .deck = self.corp_deck.items,
+                    .discard = self.corp_discard.items,
+                    .scored = self.corp_scored.items,
+                    .servers = servers,
+                },
+                .runner = .{
+                    .identity = self.runner_identity,
+                    .basic_action_card = self.runner_basic_action_card,
+                    .click = self.runner_click,
+                    .click_per_turn = self.runner_click_per_turn,
+                    .credit = self.runner_credit,
+                    .agenda_point = self.runner_agenda_point,
+                    .agenda_point_req = self.runner_agenda_point_req,
+                    .hand_size = self.runner_hand_size,
+                    .run_credit = self.runner_run_credit,
+                    .link = self.runner_link,
+                    .tag = self.runner_tag,
+                    .memory = self.runner_memory,
+                    .brain_damage = self.runner_brain_damage,
+                    .keep = self.runner_keep,
+                    .prompt_state = self.runner_prompt_state,
+                    .hand = self.runner_hand.items,
+                    .deck = self.runner_deck.items,
+                    .discard = self.runner_discard.items,
+                    .scored = self.runner_scored.items,
+                    .rig_hardware = self.runner_rig_hardware.items,
+                    .rig_program = self.runner_rig_program.items,
+                    .rig_resources = self.runner_rig_resources.items,
+                },
+            },
+            .decision_side = self.decision_side,
+            .legal_actions = self.legal_actions,
+        };
     }
 };
 
@@ -689,7 +808,6 @@ pub fn createInitialSnapshot(
     var game = Game{
         .arena = arena,
         .backing_allocator = backing_allocator,
-        .snapshot = undefined,
     };
     errdefer game.deinit();
 
@@ -713,93 +831,57 @@ pub fn createInitialSnapshot(
     game.runner_hand = try initCardList(backing_allocator, runner_hand);
     game.runner_deck = try initCardList(backing_allocator, runner_deck);
     game.corp_servers = try initEmptyCorpServers(backing_allocator, allocator);
-    game.snapshot = .{
-        .state = .{
-            .format = try allocator.dupe(u8, matchup.format),
-            .seed = seed,
-            .rng_seed = oracleSeed(rng_state),
-            .active_player = .runner,
-            .turn = 0,
-            .end_turn = true,
-            .pending_install = null,
-            .corp = .{
-                .identity = corp_identity,
-                .basic_action_card = try makeCardInstance(allocator, corp_basic_action),
-                .click = 0,
-                .click_per_turn = 3,
-                .credit = 5,
-                .agenda_point = 0,
-                .agenda_point_req = matchup.agenda_point_req,
-                .hand_size = .{ .base = 5, .total = 5 },
-                .bad_publicity = .{ .base = 0, .additional = 0 },
-                .run_credit = 0,
-                .link = 0,
-                .tag = null,
-                .memory = null,
-                .brain_damage = 0,
-                .keep = .undecided,
-                .prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "mulligan"),
-                    .choices = mulligan_prompt,
-                    .source_card = null,
-                },
-                .deck = &.{},
-                .hand = &.{},
-                .discard = &.{},
-                .servers = &.{},
-            },
-            .runner = .{
-                .identity = runner_identity,
-                .basic_action_card = try makeCardInstance(allocator, runner_basic_action),
-                .click = 0,
-                .click_per_turn = 4,
-                .credit = 5,
-                .agenda_point = 0,
-                .agenda_point_req = matchup.agenda_point_req,
-                .hand_size = .{ .base = 5, .total = 5 },
-                .bad_publicity = null,
-                .run_credit = 0,
-                .link = 0,
-                .tag = .{ .base = 0, .total = 0, .is_tagged = false },
-                .memory = .{
-                    .base = 4,
-                    .available = 4,
-                    .used = 0,
-                },
-                .brain_damage = 0,
-                .keep = .undecided,
-                .prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "waiting"),
-                    .choices = &.{},
-                    .source_card = null,
-                },
-                .deck = &.{},
-                .hand = &.{},
-                .discard = &.{},
-                .servers = &.{},
-            },
-        },
-        .decision_side = .corp,
-        .legal_actions = &corp_mulligan_actions,
+
+    // Initialize internal scalar state
+    game.format = try allocator.dupe(u8, matchup.format);
+    game.seed = seed;
+    game.rng_seed = oracleSeed(rng_state);
+    game.active_player = .runner;
+    game.turn = 0;
+    game.end_turn = true;
+
+    game.corp_identity = corp_identity;
+    game.corp_basic_action_card = try makeCardInstance(allocator, corp_basic_action);
+    game.corp_credit = 5;
+    game.corp_agenda_point_req = matchup.agenda_point_req;
+    game.corp_keep = .undecided;
+    game.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "mulligan"),
+        .choices = mulligan_prompt,
+        .source_card = null,
     };
-    try syncOwnedViews(&game);
+
+    game.runner_identity = runner_identity;
+    game.runner_basic_action_card = try makeCardInstance(allocator, runner_basic_action);
+    game.runner_credit = 5;
+    game.runner_agenda_point_req = matchup.agenda_point_req;
+    game.runner_keep = .undecided;
+    game.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "waiting"),
+        .choices = &.{},
+        .source_card = null,
+    };
+
+    game.decision_side = .corp;
+    game.legal_actions = &corp_mulligan_actions;
+
     return game;
 }
 
 pub fn currentPlayer(snapshot: *const Game) state.Side {
-    return snapshot.snapshot.decision_side;
+    return snapshot.decision_side;
 }
 
 pub fn legalActionCount(snapshot: *const Game) usize {
-    return snapshot.snapshot.legal_actions.len;
+    return snapshot.legal_actions.len;
 }
 
 pub fn legalActionAt(
     snapshot: *const Game,
     index: usize,
 ) !state.LegalAction {
-    if (index >= snapshot.snapshot.legal_actions.len) return error.InvalidActionIndex;
-    return snapshot.snapshot.legal_actions[index];
+    if (index >= snapshot.legal_actions.len) return error.InvalidActionIndex;
+    return snapshot.legal_actions[index];
 }
 
 pub fn applyActionByIndex(
@@ -813,7 +895,7 @@ pub fn applyAction(
     generated: *Game,
     action: state.LegalAction,
 ) !void {
-    if (generated.snapshot.decision_side != action.side) return error.NotCurrentDecision;
+    if (generated.decision_side != action.side) return error.NotCurrentDecision;
 
     switch (action.kind) {
         .prompt_choice => {
@@ -860,46 +942,43 @@ pub fn applyMulliganChoice(
     choice: state.KeepState,
 ) !void {
     if (choice == .undecided) return error.InvalidChoice;
-    if (generated.snapshot.decision_side != side) return error.NotCurrentDecision;
+    if (generated.decision_side != side) return error.NotCurrentDecision;
 
     const allocator = generated.arena.allocator();
-    var player = switch (side) {
-        .corp => &generated.snapshot.state.corp,
-        .runner => &generated.snapshot.state.runner,
-    };
-    player.keep = choice;
+    const hand = handList(generated, side).items;
+    const deck = deckList(generated, side).items;
+    switch (side) { .corp => { generated.corp_keep = choice; }, .runner => { generated.runner_keep = choice; } }
 
     if (choice == .mulligan) {
-        var rng_state = fromOracleSeed(generated.snapshot.state.rng_seed orelse return error.MissingRngSeed);
-        const combined = try combineCards(allocator, player.hand, player.deck);
+        var rng_state = fromOracleSeed(generated.rng_seed orelse return error.MissingRngSeed);
+        const combined = try combineCards(allocator, hand, deck);
         shuffleInPlace(state.CardInstance, &rng_state, combined);
         try replaceCardList(generated.backing_allocator, handList(generated, side), combined[0..5]);
         try replaceCardList(generated.backing_allocator, deckList(generated, side), combined[5..]);
-        generated.snapshot.state.rng_seed = oracleSeed(rng_state);
-        try syncOwnedViews(generated);
+        generated.rng_seed = oracleSeed(rng_state);
     }
 
     switch (side) {
         .corp => {
-            player.prompt_state = .{
+            generated.corp_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, "waiting"),
                 .choices = &.{},
                 .source_card = null,
             };
 
-            generated.snapshot.state.runner.prompt_state = .{
+            generated.runner_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, "mulligan"),
                 .choices = try dupPromptChoices(allocator),
                 .source_card = null,
             };
-            generated.snapshot.decision_side = .runner;
-            generated.snapshot.legal_actions = try mulliganActionsForSide(allocator, .runner);
+            generated.decision_side = .runner;
+            generated.legal_actions = try mulliganActionsForSide(allocator, .runner);
         },
         .runner => {
-            generated.snapshot.state.corp.prompt_state = null;
-            generated.snapshot.state.runner.prompt_state = null;
-            generated.snapshot.decision_side = .corp;
-            generated.snapshot.legal_actions = try startTurnActions(allocator, .corp);
+            generated.corp_prompt_state = null;
+            generated.runner_prompt_state = null;
+            generated.decision_side = .corp;
+            generated.legal_actions = try startTurnActions(allocator, .corp);
         },
     }
 }
@@ -908,39 +987,48 @@ pub fn applyStartTurn(
     generated: *Game,
     side: state.Side,
 ) !void {
-    if (generated.snapshot.decision_side != side) return error.NotCurrentDecision;
+    if (generated.decision_side != side) return error.NotCurrentDecision;
 
     const allocator = generated.arena.allocator();
-    if (!generated.snapshot.state.end_turn) return error.TurnAlreadyStarted;
+    if (!generated.end_turn) return error.TurnAlreadyStarted;
 
     switch (side) {
         .corp => {
-            var corp = &generated.snapshot.state.corp;
-            if (generated.corp_deck.items.len == 0) return error.EmptyDeck;
+            // Corp must draw at start of turn — empty deck means runner wins
+            if (generated.corp_deck.items.len == 0) {
+                setGameOver(generated, .runner);
+                return;
+            }
             try drawCard(generated, .corp);
-            corp.click = corp.click_per_turn;
-            generated.snapshot.state.runner_successful_run_last_turn = generated.snapshot.state.runner_successful_run_this_turn;
-            generated.snapshot.state.runner_successful_run_this_turn = false;
+            generated.corp_click = generated.corp_click_per_turn;
+            generated.runner_successful_run_last_turn = generated.runner_successful_run_this_turn;
+            generated.runner_successful_run_this_turn = false;
 
-            generated.snapshot.state.active_player = .corp;
-            generated.snapshot.state.turn += 1;
-            generated.snapshot.state.end_turn = false;
-            generated.snapshot.decision_side = .corp;
-            generated.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+            generated.active_player = .corp;
+            generated.turn += 1;
+            generated.end_turn = false;
+            generated.decision_side = .corp;
+            generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
         },
         .runner => {
-            var runner = &generated.snapshot.state.runner;
-            runner.click = runner.click_per_turn;
-            generated.snapshot.state.turn_events = .{};
+            generated.runner_click = generated.runner_click_per_turn;
+            generated.turn_events = .{};
             resetInstalledAbilityUsage(generated);
 
-            generated.snapshot.state.active_player = .runner;
-            generated.snapshot.state.end_turn = false;
-            generated.snapshot.decision_side = .runner;
-            generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+            // Start-of-turn: take 1 credit from each card with place_credits ability and counters
+            for (generated.runner_rig_resources.items) |*card| {
+                if (card.installed_ability.kind == .place_credits and card.credit_counter > 0) {
+                    card.credit_counter -= 1;
+                    generated.runner_credit += 1;
+                }
+            }
+
+            generated.active_player = .runner;
+            generated.end_turn = false;
+            generated.decision_side = .runner;
+            generated.legal_actions = try runnerOpeningActionsForState(
                 allocator,
-                runner.*,
-                generated.snapshot.state.corp.servers,
+                generated,
             );
         },
     }
@@ -950,13 +1038,13 @@ pub fn applyEndTurn(
     generated: *Game,
     side: state.Side,
 ) !void {
-    if (generated.snapshot.state.end_turn) return error.TurnAlreadyEnded;
-    if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
+    if (generated.end_turn) return error.TurnAlreadyEnded;
+    if (generated.active_player != side) return error.NotActivePlayer;
 
     const hand_len = handList(generated, side).items.len;
     const hand_size = switch (side) {
-        .corp => generated.snapshot.state.corp.hand_size.total,
-        .runner => generated.snapshot.state.runner.hand_size.total,
+        .corp => generated.corp_hand_size.total,
+        .runner => generated.runner_hand_size.total,
     };
 
     if (hand_len > hand_size) {
@@ -983,18 +1071,14 @@ fn beginDiscardPrompt(generated: *Game, side: state.Side, discard_count: usize) 
         };
     }
 
-    const player = switch (side) {
-        .corp => &generated.snapshot.state.corp,
-        .runner => &generated.snapshot.state.runner,
-    };
-    player.prompt_state = .{
+    (switch (side) { .corp => generated.corp_prompt_state, .runner => generated.runner_prompt_state }) = .{
         .prompt_type = try allocator.dupe(u8, prompt_discard),
         .choices = choices,
         .source_card = null,
         .min_choices = @intCast(discard_count),
     };
-    generated.snapshot.decision_side = side;
-    generated.snapshot.legal_actions = try promptChoiceActions(allocator, side, player.prompt_state.?);
+    generated.decision_side = side;
+    generated.legal_actions = try promptChoiceActions(allocator, side, (switch (side) { .corp => generated.corp_prompt_state, .runner => generated.runner_prompt_state }).?);
 }
 
 fn applyDiscardChoice(generated: *Game, side: state.Side, choice_text: []const u8) !void {
@@ -1010,13 +1094,12 @@ fn applyDiscardChoice(generated: *Game, side: state.Side, choice_text: []const u
     const idx = found orelse return error.UnsupportedChoice;
     const discarded = hand.orderedRemove(idx);
     try appendDiscardCard(generated, side, discarded);
-    try syncOwnedViews(generated);
 
     // Check if more discards needed
     const hand_len = hand.items.len;
     const hand_size = switch (side) {
-        .corp => generated.snapshot.state.corp.hand_size.total,
-        .runner => generated.snapshot.state.runner.hand_size.total,
+        .corp => generated.corp_hand_size.total,
+        .runner => generated.runner_hand_size.total,
     };
 
     if (hand_len > hand_size) {
@@ -1029,14 +1112,14 @@ fn applyDiscardChoice(generated: *Game, side: state.Side, choice_text: []const u
 
 fn finishEndTurn(generated: *Game, side: state.Side) !void {
     const next_side = otherSide(side);
-    generated.snapshot.state.end_turn = true;
+    generated.end_turn = true;
     // Clear any discard prompt
     switch (side) {
-        .corp => generated.snapshot.state.corp.prompt_state = null,
-        .runner => generated.snapshot.state.runner.prompt_state = null,
+        .corp => generated.corp_prompt_state = null,
+        .runner => generated.runner_prompt_state = null,
     }
-    generated.snapshot.decision_side = next_side;
-    generated.snapshot.legal_actions = try startTurnActions(generated.arena.allocator(), next_side);
+    generated.decision_side = next_side;
+    generated.legal_actions = try startTurnActions(generated.arena.allocator(), next_side);
 }
 
 pub fn init(seed: u64) RngState {
@@ -1072,11 +1155,8 @@ fn applyPromptChoice(
     side: state.Side,
     choice_text: []const u8,
 ) !void {
-    const player = switch (side) {
-        .corp => generated.snapshot.state.corp,
-        .runner => generated.snapshot.state.runner,
-    };
-    const prompt = player.prompt_state orelse return error.MissingPrompt;
+
+    const prompt = (switch (side) { .corp => generated.corp_prompt_state, .runner => generated.runner_prompt_state }) orelse return error.MissingPrompt;
 
     if (std.mem.eql(u8, prompt.prompt_type, "mulligan")) {
         const keep_state = parseKeepState(choice_text);
@@ -1084,8 +1164,8 @@ fn applyPromptChoice(
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_install_destination) and generated.snapshot.state.pending_install != null and prompt.source_card != null) {
-        try applyPendingInstallChoice(generated, prompt.source_card.?, choice_text);
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_install_destination) and generated.pending_install != null and prompt.source_card != null) {
+        try applyPendingInstallChoice(generated, choice_text);
         return;
     }
 
@@ -1100,7 +1180,7 @@ fn applyPromptChoice(
     }
 
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_access_cleanup) and prompt.source_card != null) {
-        try applyAccessCleanupChoice(generated, prompt.source_card.?, choice_text);
+        try applyAccessCleanupChoice(generated, choice_text);
         return;
     }
 
@@ -1119,8 +1199,13 @@ fn applyPromptChoice(
         return;
     }
 
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "net-damage-on-access")) {
+        try applyNetDamageOnAccessChoice(generated, choice_text);
+        return;
+    }
+
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_access_choice) and prompt.source_card != null) {
-        try applyAccessPromptChoice(generated, side, prompt.source_card.?, choice_text);
+        try applyAccessPromptChoice(generated, side, choice_text);
         return;
     }
 
@@ -1130,7 +1215,7 @@ fn applyPromptChoice(
     }
 
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_run_target) and prompt.source_card != null) {
-        try applyRunnerRunTargetChoice(generated, prompt.source_card.?, choice_text);
+        try applyRunnerRunTargetChoice(generated, choice_text);
         return;
     }
 
@@ -1143,6 +1228,11 @@ fn applyPromptChoice(
         std.mem.eql(u8, prompt.prompt_type, prompt_run_central))
     {
         try applyRun(generated, .runner, choice_text);
+        return;
+    }
+
+    if (std.mem.eql(u8, prompt.prompt_type, "trace")) {
+        try applyTraceChoice(generated, side, choice_text);
         return;
     }
 
@@ -1164,8 +1254,8 @@ fn applyBasicActionAbility(
     side: state.Side,
     basic_action: state.BasicAction,
 ) !void {
-    if (generated.snapshot.state.end_turn) return error.TurnNotStarted;
-    if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
+    if (generated.end_turn) return error.TurnNotStarted;
+    if (generated.active_player != side) return error.NotActivePlayer;
 
     switch (side) {
         .corp => try applyCorpBasicActionAbility(generated, basic_action),
@@ -1177,21 +1267,19 @@ fn applyCorpBasicActionAbility(
     generated: *Game,
     basic_action: state.BasicAction,
 ) !void {
-    var corp = &generated.snapshot.state.corp;
-
     switch (basic_action) {
         .gain_credit => {
-            try spendClicks(corp, 1);
-            corp.credit += 1;
+            try spendClicks(generated, .corp, 1);
+            generated.corp_credit += 1;
         },
         .draw_card => {
-            try spendClicks(corp, 1);
+            try spendClicks(generated, .corp, 1);
             try drawCard(generated, .corp);
         },
         .advance_installed => {
-            if (countInstalledCards(corp.servers) == 0) {
-                try spendClicks(corp, 1);
-                try spendCredits(corp, 1);
+            if (countInstalledCards(generated.corp_servers.items) == 0) {
+                try spendClicks(generated, .corp, 1);
+                try spendCredits(generated, .corp, 1);
             } else {
                 try beginAdvanceInstalledPrompt(generated);
                 return;
@@ -1202,47 +1290,54 @@ fn applyCorpBasicActionAbility(
             return;
         },
         .purge_viruses => {
-            try spendClicks(corp, 3);
+            try spendClicks(generated, .corp, 3);
         },
         else => return error.UnsupportedAbility,
     }
 
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), corp);
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn applyRunnerBasicActionAbility(
     generated: *Game,
     basic_action: state.BasicAction,
 ) !void {
-    const runner = &generated.snapshot.state.runner;
-
     switch (basic_action) {
         .gain_credit => {
-            try spendClicks(runner, 1);
-            runner.credit += 1;
+            try spendClicks(generated, .runner, 1);
+            generated.runner_credit += 1;
         },
         .draw_card => {
-            try spendClicks(runner, 1);
+            try spendClicks(generated, .runner, 1);
             var draw_amount: u8 = 1;
-            if (generated.snapshot.state.turn_events.runner_click_draws == 0) {
+            if (generated.turn_events.runner_click_draws == 0) {
                 draw_amount += runner_installed_click_draw_bonus(generated);
             }
             try drawCards(generated, .runner, draw_amount);
-            generated.snapshot.state.turn_events.runner_click_draws += 1;
+            generated.turn_events.runner_click_draws += 1;
         },
         .run_any_server => {
             try beginRunAnyServerPrompt(generated);
             return;
         },
+        .remove_tag => {
+            try spendClicks(generated, .runner, 1);
+            try spendCredits(generated, .runner, 2);
+            if (generated.runner_tag) |*tag| {
+                if (tag.total > 0) {
+                    tag.total -= 1;
+                    tag.is_tagged = tag.total > 0;
+                }
+            }
+        },
         else => return error.UnsupportedAbility,
     }
 
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(
         generated.arena.allocator(),
-        runner.*,
-        generated.snapshot.state.corp.servers,
+        generated,
     );
 }
 
@@ -1253,57 +1348,53 @@ const InstalledTarget = struct {
 };
 
 fn beginAdvanceInstalledPrompt(generated: *Game) !void {
-    var corp = &generated.snapshot.state.corp;
     const allocator = generated.arena.allocator();
-    const choices = try installedCardChoices(allocator, generated.snapshot.state.corp.servers);
+    const choices = try installedCardChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return error.UnsupportedAbility;
 
-    corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_advance_installed),
         .choices = choices,
         .source_card = null,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
 }
 
 fn applyAdvanceInstalledChoice(
     generated: *Game,
     choice_text: []const u8,
 ) !void {
-    var corp = &generated.snapshot.state.corp;
-    const source_card = if (corp.prompt_state) |prompt_state| prompt_state.source_card else null;
+    const source_card = if (generated.corp_prompt_state) |prompt_state| prompt_state.source_card else null;
     const advancement_amount = if (source_card) |card| card.corp_play.advancement_amount else 1;
     if (advancement_amount == 1) {
-        try spendClicks(corp, 1);
-        try spendCredits(corp, 1);
+        try spendClicks(generated, .corp, 1);
+        try spendCredits(generated, .corp, 1);
     }
     _ = try addAdvancementCounter(generated, choice_text, advancement_amount);
-    corp.prompt_state = null;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), corp);
+    generated.corp_prompt_state = null;
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn beginScoreAgendaPrompt(generated: *Game) !void {
-    var corp = &generated.snapshot.state.corp;
     const allocator = generated.arena.allocator();
-    const choices = try scoreableAgendaChoices(allocator, generated.snapshot.state.corp.servers);
+    const choices = try scoreableAgendaChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return error.UnsupportedAbility;
 
-    corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_score_agenda),
         .choices = choices,
         .source_card = null,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
 }
 
 fn applyScoreAgendaChoice(
     generated: *Game,
     choice_text: []const u8,
 ) !void {
-    var corp = &generated.snapshot.state.corp;
 
     const target = try parseInstalledTargetChoice(choice_text);
     if (target.is_ice) return error.UnsupportedChoice;
@@ -1320,21 +1411,20 @@ fn applyScoreAgendaChoice(
     const scored_agenda = removeServerContentCard(generated, target.server_index, @intCast(target.card_index));
     try generated.corp_scored.append(generated.backing_allocator, scored_agenda);
     try removeServerIfEmpty(generated, target.server_index);
-    try syncOwnedViews(generated);
 
-    corp.agenda_point += agenda_points;
+    generated.corp_agenda_point += agenda_points;
     // On-score agenda effects
     if (lookupCardSpec(scored_agenda)) |spec| {
         if (spec.on_score_fn) |handler| {
             try handler(generated, scored_agenda);
-            if (generated.snapshot.state.game_over) {
-                generated.snapshot.state.corp.prompt_state = null;
+            if (generated.game_over) {
+                generated.corp_prompt_state = null;
                 return;
             }
         }
         switch (spec.on_score.kind) {
             .gain_credits => {
-                generated.snapshot.state.corp.credit += spec.on_score.amount;
+                generated.corp_credit += spec.on_score.amount;
             },
             .draw_cards => {
                 try drawCards(generated, .corp, spec.on_score.amount);
@@ -1347,8 +1437,8 @@ fn applyScoreAgendaChoice(
     }
 
     updateTerminalState(generated);
-    if (generated.snapshot.state.game_over) {
-        generated.snapshot.state.corp.prompt_state = null;
+    if (generated.game_over) {
+        generated.corp_prompt_state = null;
         return;
     }
 
@@ -1358,33 +1448,32 @@ fn applyScoreAgendaChoice(
         }
     }
 
-    corp.prompt_state = null;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), corp);
+    generated.corp_prompt_state = null;
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn beginRunAnyServerPrompt(generated: *Game) !void {
-    const runner = &generated.snapshot.state.runner;
     const allocator = generated.arena.allocator();
-    const choices = try runTargetChoicesFor(allocator, .any_runnable, generated.snapshot.state.corp.servers);
+    const choices = try runTargetChoicesFor(allocator, .any_runnable, generated.corp_servers.items);
     if (choices.len == 0) return error.UnsupportedAbility;
-    runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_run_any_server_basic),
         .choices = choices,
         .source_card = null,
     };
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, runner.prompt_state.?);
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
 }
 
 fn scoreableAgendaChoices(
     allocator: std.mem.Allocator,
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
 ) ![]const state.PromptChoice {
     var count: usize = 0;
     for (servers, 0..) |server, server_index| {
         if (server_index < 3) continue;
-        for (server.state.content) |card| {
+        for (server.content.items) |card| {
             if (card.agenda_points == null) continue;
             if (card.advancement_requirement == null) continue;
             if (card.advancement_counter < card.advancement_requirement.?) continue;
@@ -1395,7 +1484,7 @@ fn scoreableAgendaChoices(
     var next: usize = 0;
     for (servers, 0..) |server, server_index| {
         if (server_index < 3) continue;
-        for (server.state.content, 0..) |card, card_index| {
+        for (server.content.items, 0..) |card, card_index| {
             if (card.agenda_points == null) continue;
             if (card.advancement_requirement == null) continue;
             if (card.advancement_counter < card.advancement_requirement.?) continue;
@@ -1409,21 +1498,21 @@ fn scoreableAgendaChoices(
 
 fn installedCardChoices(
     allocator: std.mem.Allocator,
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
 ) ![]const state.PromptChoice {
     var count: usize = 0;
     for (servers) |server| {
-        count += server.state.ices.len + server.state.content.len;
+        count += server.ices.items.len + server.content.items.len;
     }
     const choices = try allocator.alloc(state.PromptChoice, count);
     var next: usize = 0;
     for (servers) |server| {
-        for (server.state.ices, 0..) |_, card_index| {
+        for (server.ices.items, 0..) |_, card_index| {
             const text = try std.fmt.allocPrint(allocator, "{s}|i|{d}", .{ server.name, card_index });
             choices[next] = stringChoice(text);
             next += 1;
         }
-        for (server.state.content, 0..) |_, card_index| {
+        for (server.content.items, 0..) |_, card_index| {
             const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
             choices[next] = stringChoice(text);
             next += 1;
@@ -1485,13 +1574,11 @@ fn addAdvancementCounter(
         if (target.card_index >= server.ices.items.len) return error.UnsupportedChoice;
         var card = &server.ices.items[target.card_index];
         card.advancement_counter += amount;
-        try syncOwnedViews(generated);
         return card.*;
     }
     if (target.card_index >= server.content.items.len) return error.UnsupportedChoice;
     var card = &server.content.items[target.card_index];
     card.advancement_counter += amount;
-    try syncOwnedViews(generated);
     return card.*;
 }
 
@@ -1507,56 +1594,46 @@ fn removeServerIfEmpty(
     removed_server.content.deinit(generated.backing_allocator);
 }
 
+fn setGameOver(generated: *Game, winner: state.Side) void {
+    generated.game_over = true;
+    generated.winner = winner;
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.legal_actions = &.{};
+    generated.decision_side = winner;
+}
+
 fn updateTerminalState(generated: *Game) void {
     // Check flatline: runner has damage >= hand size
-    const runner = &generated.snapshot.state.runner;
-    const hand_size = runner.hand_size.total;
-    const brain_damage = runner.brain_damage;
-    if (brain_damage >= hand_size) {
-        generated.snapshot.state.game_over = true;
-        generated.snapshot.state.winner = .corp;
-        generated.snapshot.state.run = null;
-        generated.snapshot.state.corp.prompt_state = null;
-        generated.snapshot.state.runner.prompt_state = null;
-        generated.snapshot.legal_actions = &.{};
-        generated.snapshot.decision_side = .corp;
+    if (generated.runner_brain_damage >= generated.runner_hand_size.total) {
+        setGameOver(generated, .corp);
         return;
     }
 
-    // Check deck-out: corp must draw from empty deck
-    if (generated.corp_deck.items.len == 0 and generated.snapshot.state.active_player == .corp and generated.snapshot.state.corp.click > 0) {
-        // Corp can't draw - this is checked at draw time, but we flag terminal state if needed
+    // Check flatline: runner hand emptied by net/meat damage
+    if (generated.runner_hand.items.len == 0) {
+        setGameOver(generated, .corp);
+        return;
     }
 
     // Check agenda point victories
-    if (generated.snapshot.state.corp.agenda_point >= generated.snapshot.state.corp.agenda_point_req) {
-        generated.snapshot.state.game_over = true;
-        generated.snapshot.state.winner = .corp;
-        generated.snapshot.state.run = null;
-        generated.snapshot.state.corp.prompt_state = null;
-        generated.snapshot.state.runner.prompt_state = null;
-        generated.snapshot.legal_actions = &.{};
-        generated.snapshot.decision_side = .corp;
+    if (generated.corp_agenda_point >= generated.corp_agenda_point_req) {
+        setGameOver(generated, .corp);
         return;
     }
-    if (generated.snapshot.state.runner.agenda_point >= generated.snapshot.state.runner.agenda_point_req) {
-        generated.snapshot.state.game_over = true;
-        generated.snapshot.state.winner = .runner;
-        generated.snapshot.state.run = null;
-        generated.snapshot.state.corp.prompt_state = null;
-        generated.snapshot.state.runner.prompt_state = null;
-        generated.snapshot.legal_actions = &.{};
-        generated.snapshot.decision_side = .runner;
+    if (generated.runner_agenda_point >= generated.runner_agenda_point_req) {
+        setGameOver(generated, .runner);
     }
 }
 
-fn is_runner_tagged(runner: state.PlayerState) bool {
-    if (runner.tag) |tag_state| return tag_state.is_tagged or tag_state.total > 0;
+fn is_runner_tagged(tag: ?state.TagState) bool {
+    if (tag) |tag_state| return tag_state.is_tagged or tag_state.total > 0;
     return false;
 }
 
 fn runner_had_successful_run_last_turn(generated: *const Game) bool {
-    return generated.snapshot.state.runner_successful_run_last_turn;
+    return generated.runner_successful_run_last_turn;
 }
 
 fn runner_installed_click_draw_bonus(generated: *const Game) u8 {
@@ -1581,12 +1658,11 @@ fn runner_installed_hq_access_bonus(generated: *const Game) u8 {
     return bonus;
 }
 
-
 fn predictive_planogram_choices(
     allocator: std.mem.Allocator,
-    runner: state.PlayerState,
+    tag: ?state.TagState,
 ) ![]const state.PromptChoice {
-    const tagged = is_runner_tagged(runner);
+    const tagged = is_runner_tagged(tag);
     const count: usize = if (tagged) 3 else 2;
     const choices = try allocator.alloc(state.PromptChoice, count);
     choices[0] = stringChoice("Gain 3 [Credits]");
@@ -1594,7 +1670,6 @@ fn predictive_planogram_choices(
     if (tagged) choices[2] = stringChoice("Gain 3 [Credits] and draw 3 cards");
     return choices;
 }
-
 
 fn public_trail_choices(
     allocator: std.mem.Allocator,
@@ -1607,28 +1682,26 @@ fn public_trail_choices(
     return choices;
 }
 
-
 fn retribution_choices(
     allocator: std.mem.Allocator,
-    runner: state.PlayerState,
+    hardware: []const state.CardInstance,
+    programs: []const state.CardInstance,
 ) ![]const state.PromptChoice {
-    const count = runner.rig_hardware.len + runner.rig_program.len;
+    const count = hardware.len + programs.len;
     const choices = try allocator.alloc(state.PromptChoice, count);
     var next: usize = 0;
-    for (runner.rig_hardware, 0..) |_, idx| {
+    for (hardware, 0..) |_, idx| {
         const text = try std.fmt.allocPrint(allocator, "h|{d}", .{idx});
         choices[next] = stringChoice(text);
         next += 1;
     }
-    for (runner.rig_program, 0..) |_, idx| {
+    for (programs, 0..) |_, idx| {
         const text = try std.fmt.allocPrint(allocator, "p|{d}", .{idx});
         choices[next] = stringChoice(text);
         next += 1;
     }
     return choices;
 }
-
-
 
 fn hasSubtype(card: state.CardInstance, subtype: []const u8) bool {
     for (card.subtypes) |s| {
@@ -1641,6 +1714,17 @@ fn isIcebreaker(card: state.CardInstance) bool {
     return hasSubtype(card, "Icebreaker");
 }
 
+fn canBreakIceType(breaker: state.CardInstance, ice: state.CardInstance) bool {
+    if (hasSubtype(breaker, "AI")) return true;
+    if (hasSubtype(breaker, "Fracter") and hasSubtype(ice, "Barrier")) return true;
+    if (hasSubtype(breaker, "Killer") and hasSubtype(ice, "Sentry")) return true;
+    if (hasSubtype(breaker, "Decoder") and hasSubtype(ice, "Code Gate")) return true;
+    return false;
+}
+
+fn effectiveStrength(card: state.CardInstance) u8 {
+    return card.current_strength orelse card.strength orelse 0;
+}
 
 fn wildcat_strike_choices(allocator: std.mem.Allocator) ![]const state.PromptChoice {
     const choices = try allocator.alloc(state.PromptChoice, 2);
@@ -1649,15 +1733,13 @@ fn wildcat_strike_choices(allocator: std.mem.Allocator) ![]const state.PromptCho
     return choices;
 }
 
-
-
 fn applyPlayFromHand(
     generated: *Game,
     side: state.Side,
     card_index: u8,
 ) !void {
-    if (generated.snapshot.state.end_turn) return error.TurnNotStarted;
-    if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
+    if (generated.end_turn) return error.TurnNotStarted;
+    if (generated.active_player != side) return error.NotActivePlayer;
 
     switch (side) {
         .corp => try applyCorpPlayFromHand(generated, card_index),
@@ -1669,10 +1751,9 @@ fn applyCorpPlayFromHand(
     generated: *Game,
     card_index: u8,
 ) !void {
-    var corp = &generated.snapshot.state.corp;
-    if (card_index >= corp.hand.len) return error.InvalidCardIndex;
+    if (card_index >= generated.corp_hand.items.len) return error.InvalidCardIndex;
 
-    const card = corp.hand[card_index];
+    const card = generated.corp_hand.items[card_index];
     const card_type = card.card_type orelse return error.MissingCardType;
 
     if (std.mem.eql(u8, card_type, "Operation")) {
@@ -1681,17 +1762,22 @@ fn applyCorpPlayFromHand(
     }
 
     if (card.install.kind != .none) {
-        corp.prompt_state = .{
-            .prompt_type = try generated.arena.allocator().dupe(u8, prompt_install_destination),
-            .choices = try installChoicesForCard(generated.arena.allocator(), card.install.kind),
+        const allocator = generated.arena.allocator();
+        const is_ice = std.mem.eql(u8, card_type, "ICE");
+        generated.corp_prompt_state = .{
+            .prompt_type = try allocator.dupe(u8, prompt_install_destination),
+            .choices = if (is_ice)
+                try iceInstallChoices(allocator, generated)
+            else
+                try installChoicesForCard(allocator, card.install.kind),
             .source_card = card,
         };
-        generated.snapshot.state.pending_install = .{
+        generated.pending_install = .{
             .card = card,
             .card_index = card_index,
         };
-        generated.snapshot.decision_side = .corp;
-        generated.snapshot.legal_actions = try promptChoiceActions(generated.arena.allocator(), .corp, corp.prompt_state.?);
+        generated.decision_side = .corp;
+        generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
         return;
     }
 
@@ -1700,33 +1786,57 @@ fn applyCorpPlayFromHand(
 
 fn applyPendingInstallChoice(
     generated: *Game,
-    source_card: state.CardInstance,
     choice_text: []const u8,
 ) !void {
-    var corp = &generated.snapshot.state.corp;
-    const pending_install = generated.snapshot.state.pending_install orelse return error.MissingPendingInstall;
+    const source_card = (if (generated.corp_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
+    const pending_install = generated.pending_install orelse return error.MissingPendingInstall;
     if (pending_install.card.install.kind != source_card.install.kind) return error.UnsupportedPrompt;
 
-    try spendClicks(corp, 1);
+    try spendClicks(generated, .corp, 1);
+
+    // ICE install cost: credits equal to the number of ICE already on the server
+    const card_type = pending_install.card.card_type orelse "";
+    if (std.mem.eql(u8, card_type, "ICE")) {
+        const ice_cost = iceInstallCost(generated, choice_text);
+        try spendCredits(generated, .corp, ice_cost);
+    }
+
     _ = try removeCardFromHand(generated, .corp, pending_install.card_index);
     var installed = pending_install.card;
     installed.credit_counter = installed.installed_ability.initial_credit_counters;
     installed.ability_used_this_turn = false;
     try installCard(generated, installed, choice_text);
 
-    corp.prompt_state = null;
-    generated.snapshot.state.pending_install = null;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), corp);
+    generated.corp_prompt_state = null;
+    generated.pending_install = null;
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+}
+
+fn iceInstallCost(generated: *const Game, choice_text: []const u8) u16 {
+    const server_index: ?usize = if (std.mem.eql(u8, choice_text, "HQ"))
+        0
+    else if (std.mem.eql(u8, choice_text, "R&D"))
+        1
+    else if (std.mem.eql(u8, choice_text, "Archives"))
+        2
+    else if (std.mem.eql(u8, choice_text, "New remote"))
+        null
+    else
+        null;
+
+    const idx = server_index orelse return 0; // New remote has no existing ICE
+    if (idx >= generated.corp_servers.items.len) return 0;
+    return @intCast(generated.corp_servers.items[idx].ices.items.len);
 }
 
 fn applyAccessPromptChoice(
     generated: *Game,
     side: state.Side,
-    accessed: state.CardInstance,
     choice_text: []const u8,
 ) !void {
     if (side != .runner) return error.UnsupportedSide;
+    const accessed = (if (generated.runner_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
     // Check for trash/no-action choices first
     if (std.mem.eql(u8, choice_text, "No action")) {
         try finishAccessCard(generated);
@@ -1747,8 +1857,8 @@ fn applyAccessPromptChoice(
 fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     const spec = lookupCardSpec(accessed) orelse return error.UnsupportedAccessTarget;
     const trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
-    try spendCredits(&generated.snapshot.state.runner, trash_cost);
-    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    try spendCredits(generated, .runner, trash_cost);
+    const run = generated.run orelse return error.NoRunInProgress;
     try removeAccessedCard(generated, run);
     // Move to corp discard
     try appendDiscardCard(generated, .corp, accessed);
@@ -1757,13 +1867,13 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
 
 fn finishAccessCard(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    const run = &generated.snapshot.state.run.?;
-    generated.snapshot.state.runner.prompt_state = null;
+    const run = &generated.run.?;
+    generated.runner_prompt_state = null;
 
     if (run.accesses_remaining > 0) {
         run.phase = try allocator.dupe(u8, "success");
-        generated.snapshot.decision_side = .corp;
-        generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
         return;
     }
 
@@ -1778,10 +1888,9 @@ fn applyStealAgendaChoice(
     if (!std.mem.eql(u8, choice_text, "Steal")) return error.UnsupportedChoice;
 
     const allocator = generated.arena.allocator();
-    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    const run = generated.run orelse return error.NoRunInProgress;
 
-    const runner = &generated.snapshot.state.runner;
-    runner.agenda_point += accessed.agenda_points orelse return error.MissingAgendaPoints;
+    generated.runner_agenda_point += accessed.agenda_points orelse return error.MissingAgendaPoints;
     try removeAccessedCard(generated, run);
 
     // On-steal agenda effects
@@ -1801,21 +1910,21 @@ fn applyStealAgendaChoice(
         return;
     }
 
-    generated.snapshot.state.runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "waiting"),
         .choices = &.{},
         .source_card = null,
     };
-    generated.snapshot.state.corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_access_cleanup),
         .choices = try singleStringChoice(allocator, "Done"),
         .source_card = accessed,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(
         allocator,
         .corp,
-        generated.snapshot.state.corp.prompt_state.?,
+        generated.corp_prompt_state.?,
     );
 }
 
@@ -1824,24 +1933,24 @@ fn beginRezIceFreePrompt(
     accessed: state.CardInstance,
 ) !bool {
     const allocator = generated.arena.allocator();
-    const choices = try rezIceFreeChoices(allocator, generated.snapshot.state.corp.servers);
+    const choices = try rezIceFreeChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return false;
 
-    generated.snapshot.state.runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "waiting"),
         .choices = &.{},
         .source_card = null,
     };
-    generated.snapshot.state.corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_rez_ice_free),
         .choices = choices,
         .source_card = accessed,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(
         allocator,
         .corp,
-        generated.snapshot.state.corp.prompt_state.?,
+        generated.corp_prompt_state.?,
     );
     return true;
 }
@@ -1851,24 +1960,24 @@ fn beginRezIceFreePromptForScore(
     scored_agenda: state.CardInstance,
 ) !bool {
     const allocator = generated.arena.allocator();
-    const choices = try rezIceFreeChoices(allocator, generated.snapshot.state.corp.servers);
+    const choices = try rezIceFreeChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return false;
 
-    generated.snapshot.state.corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_rez_ice_free_score),
         .choices = choices,
         .source_card = scored_agenda,
     };
-    generated.snapshot.state.runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "waiting"),
         .choices = &.{},
         .source_card = null,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(
         allocator,
         .corp,
-        generated.snapshot.state.corp.prompt_state.?,
+        generated.corp_prompt_state.?,
     );
     return true;
 }
@@ -1886,10 +1995,10 @@ fn applyRezIceFreeScoreChoice(
     choice_text: []const u8,
 ) !void {
     if (!try rezInstalledIceByTitle(generated, choice_text)) return error.UnsupportedChoice;
-    generated.snapshot.state.corp.prompt_state = null;
-    generated.snapshot.state.runner.prompt_state = null;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated.snapshot.state.corp);
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn continueOrCompleteAfterSteal(
@@ -1897,17 +2006,17 @@ fn continueOrCompleteAfterSteal(
     is_central: bool,
 ) !void {
     updateTerminalState(generated);
-    if (generated.snapshot.state.game_over) return;
+    if (generated.game_over) return;
 
     const allocator = generated.arena.allocator();
     if (is_central) {
-        generated.snapshot.state.runner.prompt_state = null;
-        generated.snapshot.state.corp.prompt_state = null;
-        generated.snapshot.state.run.?.no_action = null;
-        if (generated.snapshot.state.run.?.accesses_remaining > 0) {
-            generated.snapshot.state.run.?.phase = try allocator.dupe(u8, "success");
-            generated.snapshot.decision_side = .corp;
-            generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, generated.snapshot.state.run);
+        generated.runner_prompt_state = null;
+        generated.corp_prompt_state = null;
+        generated.run.?.no_action = null;
+        if (generated.run.?.accesses_remaining > 0) {
+            generated.run.?.phase = try allocator.dupe(u8, "success");
+            generated.decision_side = .corp;
+            generated.legal_actions = try continueActionsForRun(allocator, .corp, generated.run);
             return;
         }
         try completeRunWithoutAccess(generated);
@@ -1918,11 +2027,11 @@ fn continueOrCompleteAfterSteal(
 
 fn rezIceFreeChoices(
     allocator: std.mem.Allocator,
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
 ) ![]const state.PromptChoice {
     var count: usize = 0;
     for (servers) |server| {
-        for (server.state.ices) |ice| {
+        for (server.ices.items) |ice| {
             if (!ice.rezzed) count += 1;
         }
     }
@@ -1931,7 +2040,7 @@ fn rezIceFreeChoices(
     const choices = try allocator.alloc(state.PromptChoice, count);
     var next: usize = 0;
     for (servers) |server| {
-        for (server.state.ices) |ice| {
+        for (server.ices.items) |ice| {
             if (ice.rezzed) continue;
             choices[next] = stringChoice(ice.title);
             next += 1;
@@ -1949,7 +2058,6 @@ fn rezInstalledIceByTitle(
             if (ice.rezzed) continue;
             if (!std.mem.eql(u8, ice.title, title)) continue;
             ice.rezzed = true;
-            try syncOwnedViews(generated);
             return true;
         }
     }
@@ -1961,19 +2069,18 @@ fn applyJackOut(
     side: state.Side,
 ) !void {
     if (side != .runner) return error.UnsupportedSide;
-    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    const run = generated.run orelse return error.NoRunInProgress;
     if (!run.jack_out_available) return error.JackOutNotAvailable;
 
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.run = null;
-    generated.snapshot.state.corp.prompt_state = null;
-    generated.snapshot.state.runner.prompt_state = null;
-    generated.snapshot.state.runner.run_credit = 0;
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.runner_run_credit = 0;
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(
         allocator,
-        generated.snapshot.state.runner,
-        generated.snapshot.state.corp.servers,
+        generated,
     );
 }
 
@@ -1988,7 +2095,7 @@ fn applyUseSubroutine(
     _ = card_index;
 
     // Get the current run and ICE
-    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    const run = generated.run orelse return error.NoRunInProgress;
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
 
     // Find the current ICE in the server using internal corp_servers
@@ -2020,11 +2127,10 @@ fn applyUseSubroutine(
         const ability = found_ability orelse return error.NoBioroidAbility;
 
         // Check if runner has enough clicks
-        const runner = &generated.snapshot.state.runner;
-        if (runner.click < ability.click_cost) return error.InsufficientClicks;
+        if (generated.runner_click < ability.click_cost) return error.InsufficientClicks;
 
         // Spend clicks
-        runner.click -= ability.click_cost;
+        generated.runner_click -= ability.click_cost;
 
         // Break subroutines (up to break_quantity, or fewer if not enough unbroken subs)
         const break_qty = ability.break_quantity;
@@ -2055,6 +2161,11 @@ fn applyUseSubroutine(
             if (!isIcebreaker(icebreaker)) return error.NotAnIcebreaker;
             if (icebreaker.installed_ability.kind != .break_subroutine) return error.UnsupportedAbility;
 
+            // Validate subtype matching
+            if (!canBreakIceType(icebreaker, ice.*)) return error.CannotBreakIceType;
+            // Validate strength
+            if (effectiveStrength(icebreaker) < (ice.strength orelse 0)) return error.InsufficientStrength;
+
             // Check which subroutine to break based on subroutine_index
             const sub_idx: u8 = switch (subroutine_index.kind) {
                 .number => @intCast(subroutine_index.number orelse return error.InvalidSubroutine),
@@ -2064,11 +2175,10 @@ fn applyUseSubroutine(
             if (sub_idx >= ice.subroutines.len) return error.InvalidSubroutine;
 
             // Check if we have enough credits
-            const runner = &generated.snapshot.state.runner;
-            if (runner.credit < icebreaker.installed_ability.credit_cost) return error.InsufficientCredits;
+            if (generated.runner_credit < icebreaker.installed_ability.credit_cost) return error.InsufficientCredits;
 
             // Spend credits
-            runner.credit -= icebreaker.installed_ability.credit_cost;
+            generated.runner_credit -= icebreaker.installed_ability.credit_cost;
 
             // Mark subroutine as broken
             ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(sub_idx)));
@@ -2077,12 +2187,10 @@ fn applyUseSubroutine(
         }
     }
 
-    try syncOwnedViews(generated);
-
     // Generate new legal actions - still in encounter, can break more or continue
     const allocator = generated.arena.allocator();
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
+    generated.decision_side = .runner;
+    generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
 }
 
 fn removeAccessedCard(
@@ -2090,23 +2198,20 @@ fn removeAccessedCard(
     run: state.RunState,
 ) !void {
     const access_index = run.access_card_index orelse return error.MissingAccessTarget;
-    const target_server = try findServerByRunPath(generated.snapshot.state.corp.servers, run.server);
+    const target_server = try findServerByRunPath(generated.corp_servers.items, run.server);
     if (std.mem.eql(u8, run.server[0], "hq")) {
         if (access_index >= generated.corp_hand.items.len) return error.MissingAccessTarget;
         _ = generated.corp_hand.orderedRemove(access_index);
-        try syncOwnedViews(generated);
         return;
     }
     if (std.mem.eql(u8, run.server[0], "rnd")) {
         if (access_index >= generated.corp_deck.items.len) return error.MissingAccessTarget;
         _ = generated.corp_deck.orderedRemove(access_index);
-        try syncOwnedViews(generated);
         return;
     }
     if (std.mem.eql(u8, run.server[0], "archives")) {
         if (access_index >= generated.corp_discard.items.len) return error.MissingAccessTarget;
         _ = generated.corp_discard.orderedRemove(access_index);
-        try syncOwnedViews(generated);
         return;
     }
 
@@ -2117,14 +2222,13 @@ fn removeAccessedCard(
         removed_server.ices.deinit(generated.backing_allocator);
         removed_server.content.deinit(generated.backing_allocator);
     }
-    try syncOwnedViews(generated);
 }
 
 fn applyAccessCleanupChoice(
     generated: *Game,
-    accessed: state.CardInstance,
     choice_text: []const u8,
 ) !void {
+    const accessed = (if (generated.corp_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
     switch (accessed.access.kind) {
         .steal_agenda => {
             if (!std.mem.eql(u8, choice_text, "Done")) return error.UnsupportedChoice;
@@ -2142,29 +2246,28 @@ fn playCorpOperation(
     card: state.CardInstance,
 ) !void {
     const allocator = generated.arena.allocator();
-    var corp = &generated.snapshot.state.corp;
-    try spendClicks(corp, 1);
-    try spendCredits(corp, card.cost orelse 0);
+    try spendClicks(generated, .corp, 1);
+    try spendCredits(generated, .corp, card.cost orelse 0);
     _ = try removeCardFromHand(generated, .corp, card_index);
 
     switch (card.corp_play.kind) {
         .gain_credits => {
-            corp.credit += card.corp_play.gain_credits;
+            generated.corp_credit += card.corp_play.gain_credits;
             try drawCards(generated, .corp, card.corp_play.draw_cards);
         },
         .advance_installed => {
-            if (countInstalledCards(generated.snapshot.state.corp.servers) == 0) {
-                generated.snapshot.decision_side = .corp;
-                generated.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+            if (countInstalledCards(generated.corp_servers.items) == 0) {
+                generated.decision_side = .corp;
+                generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
                 return;
             }
-            corp.prompt_state = .{
+            generated.corp_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, prompt_advance_installed),
-                .choices = try installedCardChoices(allocator, generated.snapshot.state.corp.servers),
+                .choices = try installedCardChoices(allocator, generated.corp_servers.items),
                 .source_card = card,
             };
-            generated.snapshot.decision_side = .corp;
-            generated.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
+            generated.decision_side = .corp;
+            generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
             return;
         },
         .custom => {
@@ -2180,18 +2283,17 @@ fn playCorpOperation(
         .none => return error.UnsupportedOperation,
     }
 
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
 }
 
 fn applyRunnerPlayFromHand(
     generated: *Game,
     card_index: u8,
 ) !void {
-    const runner = &generated.snapshot.state.runner;
-    if (card_index >= runner.hand.len) return error.InvalidCardIndex;
+    if (card_index >= generated.runner_hand.items.len) return error.InvalidCardIndex;
 
-    const card = runner.hand[card_index];
+    const card = generated.runner_hand.items[card_index];
     if (card.runner_install.kind != .none) return applyInstallFromHand(generated, .runner, card_index);
 
     const card_type = card.card_type orelse return error.MissingCardType;
@@ -2204,8 +2306,8 @@ fn applyRunnerPlayFromHand(
             const spec = lookupCardSpec(card) orelse return error.UnsupportedCardType;
             const handler = spec.on_play orelse return error.UnsupportedCardType;
             // Common event play flow: spend click, pay cost, remove from hand, discard
-            try spendClicks(runner, 1);
-            try spendCredits(runner, card.cost orelse 0);
+            try spendClicks(generated, .runner, 1);
+            try spendCredits(generated, .runner, card.cost orelse 0);
             _ = try removeCardFromHand(generated, .runner, card_index);
             try appendDiscardCard(generated, .runner, card);
             try handler(generated, card);
@@ -2219,30 +2321,35 @@ fn applyInstallFromHand(
     side: state.Side,
     card_index: u8,
 ) !void {
-    if (generated.snapshot.state.end_turn) return error.TurnNotStarted;
-    if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
+    if (generated.end_turn) return error.TurnNotStarted;
+    if (generated.active_player != side) return error.NotActivePlayer;
     if (side != .runner) return error.UnsupportedSide;
 
     const allocator = generated.arena.allocator();
-    const runner = &generated.snapshot.state.runner;
-    if (card_index >= runner.hand.len) return error.InvalidCardIndex;
+    if (card_index >= generated.runner_hand.items.len) return error.InvalidCardIndex;
 
-    const card = runner.hand[card_index];
+    const card = generated.runner_hand.items[card_index];
     if (card.runner_install.kind == .none) return error.UnsupportedRunnerInstall;
 
-    try spendClicks(runner, 1);
-    try spendCredits(runner, card.cost orelse 0);
+    try spendClicks(generated, .runner, 1);
+    try spendCredits(generated, .runner, card.cost orelse 0);
 
     var installed_card = try removeCardFromHand(generated, .runner, card_index);
     installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
     installed_card.ability_used_this_turn = false;
     try appendRunnerInstalledCard(generated, installed_card);
 
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+    if (card.runner_install.kind == .program) {
+        if (generated.runner_memory) |*mem| {
+            mem.used += 1;
+            mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+        }
+    }
+
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(
         allocator,
-        runner.*,
-        generated.snapshot.state.corp.servers,
+        generated,
     );
 }
 
@@ -2252,20 +2359,18 @@ fn playRunnerGainCredits(
     card: state.CardInstance,
 ) !void {
     const allocator = generated.arena.allocator();
-    var runner = &generated.snapshot.state.runner;
-    try spendClicks(runner, 1);
-    try spendCredits(runner, card.cost orelse 0);
+    try spendClicks(generated, .runner, 1);
+    try spendCredits(generated, .runner, card.cost orelse 0);
     _ = try removeCardFromHand(generated, .runner, card_index);
     try appendDiscardCard(generated, .runner, card);
-    try spendClicks(runner, card.runner_play.lose_clicks);
-    runner.credit += card.runner_play.gain_credits;
+    try spendClicks(generated, .runner, card.runner_play.lose_clicks);
+    generated.runner_credit += card.runner_play.gain_credits;
     try drawCards(generated, .runner, card.runner_play.draw_cards);
 
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(
         allocator,
-        runner.*,
-        generated.snapshot.state.corp.servers,
+        generated,
     );
 }
 
@@ -2275,49 +2380,46 @@ fn playRunnerChooseRunTarget(
     card: state.CardInstance,
 ) !void {
     const allocator = generated.arena.allocator();
-    var runner = &generated.snapshot.state.runner;
-    try spendClicks(runner, 1);
-    try spendCredits(runner, card.cost orelse 0);
+    try spendClicks(generated, .runner, 1);
+    try spendCredits(generated, .runner, card.cost orelse 0);
     _ = try removeCardFromHand(generated, .runner, card_index);
     try appendDiscardCard(generated, .runner, card);
-    runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_run_target),
-        .choices = try runTargetChoicesFor(allocator, card.runner_play.run_target_kind, generated.snapshot.state.corp.servers),
+        .choices = try runTargetChoicesFor(allocator, card.runner_play.run_target_kind, generated.corp_servers.items),
         .source_card = card,
     };
 
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, runner.prompt_state.?);
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
 }
 
 fn applyRunnerRunTargetChoice(
     generated: *Game,
-    source_card: state.CardInstance,
     server: []const u8,
 ) !void {
+    const source_card = (if (generated.runner_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
     if (source_card.runner_play.kind != .choose_run_target) return error.UnsupportedPrompt;
     const allocator = generated.arena.allocator();
-    var runner = &generated.snapshot.state.runner;
-    var corp = &generated.snapshot.state.corp;
 
     const run_server = try canonicalRunServer(allocator, server);
-    const target_server = try findServerByRunPath(corp.servers, run_server);
+    const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
     const initial_position: u8 = if (isCentralRunServer(run_server))
         0
     else
-        @intCast(target_server.slot.state.ices.len);
+        @intCast(target_server.slot.ices.items.len);
 
-    runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
         .choices = &.{},
         .source_card = null,
     };
-    corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
         .choices = &.{},
         .source_card = null,
     };
-    generated.snapshot.state.run = .{
+    generated.run = .{
         .server = run_server,
         .position = initial_position,
         .phase = try allocator.dupe(u8, "initiation"),
@@ -2336,8 +2438,8 @@ fn applyRunnerRunTargetChoice(
         .access_bonus = source_card.runner_play.successful_run_access_bonus,
         .jack_out_available = false,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try continueActions(allocator, .corp);
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActions(allocator, .corp);
 }
 
 fn applyRun(
@@ -2345,32 +2447,30 @@ fn applyRun(
     side: state.Side,
     server: []const u8,
 ) !void {
-    if (generated.snapshot.state.end_turn) return error.TurnNotStarted;
-    if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
+    if (generated.end_turn) return error.TurnNotStarted;
+    if (generated.active_player != side) return error.NotActivePlayer;
     if (side != .runner) return error.UnsupportedSide;
 
     const allocator = generated.arena.allocator();
-    var runner = &generated.snapshot.state.runner;
-    var corp = &generated.snapshot.state.corp;
-    try spendClicks(runner, 1);
+    try spendClicks(generated, .runner, 1);
 
     const run_server = try canonicalRunServer(allocator, server);
-    const target_server = try findServerByRunPath(corp.servers, run_server);
+    const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
     const initial_position: u8 = if (isCentralRunServer(run_server))
         0
     else
-        @intCast(target_server.slot.state.ices.len);
-    runner.prompt_state = .{
+        @intCast(target_server.slot.ices.items.len);
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
         .choices = &.{},
         .source_card = null,
     };
-    corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
         .choices = &.{},
         .source_card = null,
     };
-    generated.snapshot.state.run = .{
+    generated.run = .{
         .server = run_server,
         .position = initial_position,
         .phase = try allocator.dupe(u8, "initiation"),
@@ -2389,8 +2489,8 @@ fn applyRun(
         .access_bonus = 0,
         .jack_out_available = false,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try continueActions(allocator, .corp);
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActions(allocator, .corp);
 }
 
 fn applyInstalledAbility(
@@ -2400,15 +2500,13 @@ fn applyInstalledAbility(
     card_index_opt: ?u8,
     installed_ability: state.InstalledAbilityKind,
 ) !void {
-    if (generated.snapshot.state.end_turn) return error.TurnNotStarted;
-    if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
+    if (generated.end_turn) return error.TurnNotStarted;
+    if (generated.active_player != side) return error.NotActivePlayer;
     const allocator = generated.arena.allocator();
     const card_index = card_index_opt orelse return error.MissingCardIndex;
 
     switch (side) {
         .runner => {
-            var runner = &generated.snapshot.state.runner;
-
             // Determine which rig zone to look in based on card type
             var card: *state.CardInstance = undefined;
             var rig_zone: enum { resources, programs, hardware } = undefined;
@@ -2433,9 +2531,9 @@ fn applyInstalledAbility(
 
             switch (installed_ability) {
                 .take_credits => {
-                    try spendClicks(runner, card.installed_ability.click_cost);
+                    try spendClicks(generated, .runner, card.installed_ability.click_cost);
                     const amount = @min(card.credit_counter, card.installed_ability.take_credits_amount);
-                    runner.credit += amount;
+                    generated.runner_credit += amount;
                     card.credit_counter -= amount;
                     card.ability_used_this_turn = true;
 
@@ -2449,6 +2547,10 @@ fn applyInstalledAbility(
                                 const program_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len));
                                 const trashed = generated.runner_rig_program.orderedRemove(program_index);
                                 try appendDiscardCard(generated, .runner, trashed);
+                                if (generated.runner_memory) |*mem| {
+                                    if (mem.used > 0) mem.used -= 1;
+                                    mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+                                }
                             },
                             .hardware => {
                                 const hardware_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len + generated.runner_rig_program.items.len));
@@ -2456,75 +2558,109 @@ fn applyInstalledAbility(
                                 try appendDiscardCard(generated, .runner, trashed);
                             },
                         }
-                    } else {
-                        try syncOwnedViews(generated);
                     }
                 },
                 .place_credits => {
-                    try spendClicks(runner, card.installed_ability.click_cost);
+                    try spendClicks(generated, .runner, card.installed_ability.click_cost);
                     card.credit_counter += card.installed_ability.place_credits_amount;
                     card.ability_used_this_turn = true;
-                    try syncOwnedViews(generated);
                 },
-                .break_subroutine, .pump_strength => {
+                .break_subroutine => {
                     return error.UnsupportedAbility;
                 },
+                .pump_strength => {
+                    // Pump strength during encounter
+                    const run = generated.run orelse return error.NoRunInProgress;
+                    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+
+                    // card_index is the combined rig index; convert to program index
+                    const program_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len));
+                    var icebreaker = &generated.runner_rig_program.items[program_index];
+
+                    // Spend credits for pump
+                    if (generated.runner_credit < icebreaker.pump_ability.credit_cost) return error.InsufficientCredits;
+                    generated.runner_credit -= icebreaker.pump_ability.credit_cost;
+
+                    // Boost strength
+                    const current = effectiveStrength(icebreaker.*);
+                    icebreaker.current_strength = current + icebreaker.pump_ability.pump_strength_amount;
+
+                    // Regenerate encounter actions
+                    const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
+                    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
+                    const server = &generated.corp_servers.items[target_server.index];
+                    const ice_count = server.ices.items.len;
+                    if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
+                    const actual_ice_idx = ice_count - 1 - current_ice_idx;
+                    const ice = server.ices.items[actual_ice_idx];
+                    generated.decision_side = .runner;
+                    generated.legal_actions = try encounterActionsForState(allocator, generated, ice);
+                    return;
+                },
                 .run_central => {
-                    try spendClicks(runner, card.installed_ability.click_cost);
+                    try spendClicks(generated, .runner, card.installed_ability.click_cost);
                     card.ability_used_this_turn = true;
-                    try syncOwnedViews(generated);
+
+                    // Spend hosted credits and gain temporary run credits
+                    const hosted_cost = card.installed_ability.take_credits_amount;
+                    if (card.credit_counter < hosted_cost) return error.InsufficientCredits;
+                    card.credit_counter -= hosted_cost;
+                    generated.runner_run_credit += hosted_cost;
+
+                    // Trash card if empty and trash_on_empty
+                    if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
+                        const trashed = generated.runner_rig_resources.orderedRemove(card_index);
+                        try appendDiscardCard(generated, .runner, trashed);
+                    }
+
                     // Open central server choice prompt
-                    const choices = try runTargetChoicesFor(allocator, .central_only, generated.snapshot.state.corp.servers);
-                    runner.prompt_state = .{
+                    const choices = try runTargetChoicesFor(allocator, .central_only, generated.corp_servers.items);
+                    generated.runner_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, prompt_run_central),
                         .choices = choices,
                         .source_card = card.*,
                     };
-                    generated.snapshot.decision_side = .runner;
-                    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, runner.prompt_state.?);
+                    generated.decision_side = .runner;
+                    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
                     return;
                 },
                 .none => return error.UnsupportedAbility,
             }
 
-            generated.snapshot.decision_side = .runner;
-            generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+            generated.decision_side = .runner;
+            generated.legal_actions = try runnerOpeningActionsForState(
                 allocator,
-                runner.*,
-                generated.snapshot.state.corp.servers,
+                generated,
             );
         },
         .corp => {
             const server_display = server_name orelse return error.MissingServer;
-            const server_index = try findServerIndexByDisplayName(generated.snapshot.state.corp.servers, server_display);
+            const server_index = try findServerIndexByDisplayName(generated.corp_servers.items, server_display);
             if (server_index >= generated.corp_servers.items.len) return error.UnknownServer;
             if (card_index >= generated.corp_servers.items[server_index].content.items.len) return error.InvalidCardIndex;
-            var corp = &generated.snapshot.state.corp;
             var card = &generated.corp_servers.items[server_index].content.items[card_index];
             if (card.installed_ability.kind != installed_ability) return error.UnsupportedAbility;
             if (card.installed_ability.once_per_turn and card.ability_used_this_turn) return error.AbilityAlreadyUsed;
 
             switch (installed_ability) {
                 .take_credits => {
-                    try spendClicks(corp, card.installed_ability.click_cost);
+                    try spendClicks(generated, .corp, card.installed_ability.click_cost);
                     const amount = @min(card.credit_counter, card.installed_ability.take_credits_amount);
-                    corp.credit += amount;
+                    generated.corp_credit += amount;
                     card.credit_counter -= amount;
                     card.ability_used_this_turn = true;
 
                     if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
                         const trashed = generated.corp_servers.items[server_index].content.orderedRemove(card_index);
                         try appendDiscardCard(generated, .corp, trashed);
-                    } else {
-                        try syncOwnedViews(generated);
                     }
                 },
                 .place_credits, .break_subroutine, .pump_strength, .run_central => return error.UnsupportedAbility,
                 .none => return error.UnsupportedAbility,
             }
 
-            generated.snapshot.decision_side = .corp;
-            generated.snapshot.legal_actions = try corpOpeningActionsForState(allocator, corp);
+            generated.decision_side = .corp;
+            generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
         },
     }
 }
@@ -2534,11 +2670,48 @@ fn applyContinue(
     side: state.Side,
 ) !void {
     const allocator = generated.arena.allocator();
-    const run = &generated.snapshot.state.run;
+    const run = &generated.run;
     if (run.* == null) return error.NoRunInProgress;
-    if (generated.snapshot.decision_side != side) return error.NotCurrentDecision;
+    if (generated.decision_side != side) return error.NotCurrentDecision;
 
     if (std.mem.eql(u8, run.*.?.phase, "success")) return try advanceSuccessPhase(generated, side);
+
+    // Handle encounter-ice phase - runner chose to let remaining subs fire
+    if (std.mem.eql(u8, run.*.?.phase, "encounter-ice")) {
+        // Get the encountered ICE
+        const current_ice_idx = run.*.?.current_ice_index orelse return error.NoIceEncountered;
+        const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.*.?.server);
+        const server_index = target_server.index;
+        const server = &generated.corp_servers.items[server_index];
+        const ice_count = server.ices.items.len;
+        if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
+        const actual_ice_idx = ice_count - 1 - current_ice_idx;
+        const ice = server.ices.items[actual_ice_idx];
+
+        // Fire unbroken subroutines
+        try resolveEncounteredIceSubroutines(generated, ice, server_index, actual_ice_idx, 0);
+        if (generated.run == null) return; // ETR fired
+        if (generated.corp_prompt_state) |ps| {
+            if (!std.mem.eql(u8, ps.prompt_type, "run")) return; // Sub opened prompt (e.g., Brân)
+        }
+
+        // Clear temporary strength boosts on all icebreakers
+        for (generated.runner_rig_program.items) |*card| {
+            card.current_strength = null;
+        }
+
+        // Move to movement phase
+        var next_run = &generated.run.?;
+        if (next_run.position > 0) next_run.position -= 1;
+        next_run.phase = try allocator.dupe(u8, "movement");
+        next_run.encounter_phase = .none;
+        next_run.current_ice_index = null;
+        next_run.jack_out_available = true;
+        next_run.no_action = null;
+        generated.decision_side = .runner;
+        generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
+        return;
+    }
 
     // Handle movement phase jack-out window
     if (std.mem.eql(u8, run.*.?.phase, "movement") and run.*.?.jack_out_available) {
@@ -2546,8 +2719,8 @@ fn applyContinue(
             // First pass - if runner, they had chance to jack out
             // Now corp gets to pass
             run.*.?.no_action = side;
-            generated.snapshot.decision_side = otherSide(side);
-            generated.snapshot.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
+            generated.decision_side = otherSide(side);
+            generated.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
             return;
         }
         // Both players passed on jack-out - clear flag and continue
@@ -2560,8 +2733,8 @@ fn applyContinue(
             if (try maybeOpenRezWindowPrompt(generated)) return;
         }
         run.*.?.no_action = side;
-        generated.snapshot.decision_side = otherSide(side);
-        generated.snapshot.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
+        generated.decision_side = otherSide(side);
+        generated.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
         return;
     }
 
@@ -2576,14 +2749,14 @@ fn applyContinue(
 }
 
 fn maybeOpenRezWindowPrompt(generated: *Game) !bool {
-    if (generated.snapshot.state.corp.prompt_state) |prompt_state| {
+    if (generated.corp_prompt_state) |prompt_state| {
         if (!std.mem.eql(u8, prompt_state.prompt_type, "run")) {
             return false;
         }
     } else {
         return false;
     }
-    if (generated.snapshot.state.run == null) {
+    if (generated.run == null) {
         return false;
     }
     const target = try currentApproachedIce(generated) orelse {
@@ -2592,20 +2765,20 @@ fn maybeOpenRezWindowPrompt(generated: *Game) !bool {
     if (target.ice.rezzed) {
         return false;
     }
-    if (generated.snapshot.state.corp.credit < (target.ice.cost orelse 0)) {
+    if (generated.corp_credit < (target.ice.cost orelse 0)) {
         return false;
     }
 
-    generated.snapshot.state.corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try generated.arena.allocator().dupe(u8, prompt_rez_window),
         .choices = try rezWindowChoices(generated.arena.allocator()),
         .source_card = target.ice,
     };
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(
         generated.arena.allocator(),
         .corp,
-        generated.snapshot.state.corp.prompt_state.?,
+        generated.corp_prompt_state.?,
     );
     return true;
 }
@@ -2625,27 +2798,26 @@ fn applyRezWindowChoice(
         const target = (try currentApproachedIce(generated)) orelse return error.UnsupportedChoice;
         if (target.ice.rezzed) return error.UnsupportedChoice;
         const rez_cost = target.ice.cost orelse 0;
-        const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+        const run = generated.run orelse return error.NoRunInProgress;
         const adjusted_cost = rez_cost + run.rez_cost_bonus;
-        try spendCredits(&generated.snapshot.state.corp, adjusted_cost);
+        try spendCredits(generated, .corp, adjusted_cost);
         generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
-        try syncOwnedViews(generated);
     } else if (!std.mem.eql(u8, choice_text, "No rez")) {
         return error.UnsupportedChoice;
     }
 
     // Restore "run" prompt state (run is still in progress)
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
         .choices = &.{},
         .source_card = null,
     };
-    const run = &generated.snapshot.state.run;
+    const run = &generated.run;
     if (run.* == null) return error.NoRunInProgress;
     run.*.?.no_action = .corp;
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+    generated.decision_side = .runner;
+    generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
 }
 
 const ApproachedIceTarget = struct {
@@ -2654,10 +2826,9 @@ const ApproachedIceTarget = struct {
     ice: state.CardInstance,
 };
 
-// Find approached ice using internal mutable state, not snapshot
-// This avoids stale data issues from syncOwnedViews
+// Find approached ice using internal mutable state
 fn currentApproachedIceInternal(generated: *const Game) !?ApproachedIceTarget {
-    const run = generated.snapshot.state.run orelse return null;
+    const run = generated.run orelse return null;
     if (!std.mem.eql(u8, run.phase, "approach-ice")) return null;
     if (run.position == 0) return null;
 
@@ -2678,9 +2849,6 @@ const MutableServerLookup = struct {
 };
 
 // Find server by run path using internal MutableServer state
-// NOTE: This uses the internal corp_servers ArrayList, not the snapshot.
-// The snapshot's server data may be stale due to arena allocation patterns.
-// Use this for all gameplay logic; use snapshot only for parity testing.
 fn findMutableServerByRunPath(
     servers: []const MutableServer,
     run_server: []const []const u8,
@@ -2704,28 +2872,33 @@ fn findMutableServerByRunPath(
 }
 
 // Find approached ice using internal mutable state
-// IMPORTANT: Uses generated.corp_servers (internal state) instead of snapshot.state.corp.servers
-// to avoid stale data issues from syncOwnedViews. The snapshot may contain outdated pointers
-// after arena reallocations. Always use internal state for gameplay logic.
 fn currentApproachedIce(generated: *const Game) !?ApproachedIceTarget {
     return currentApproachedIceInternal(generated);
 }
 
 fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
     const allocator = generated.arena.allocator();
-    const run = &generated.snapshot.state.run.?;
-    if (generated.snapshot.state.runner.prompt_state) |runner_prompt| {
+    const run = &generated.run.?;
+    if (generated.corp_prompt_state) |corp_prompt| {
+        if (!std.mem.eql(u8, corp_prompt.prompt_type, "run")) {
+            if (side != .corp) return error.InvalidAction;
+            generated.decision_side = .corp;
+            generated.legal_actions = try promptChoiceActions(allocator, .corp, corp_prompt);
+            return;
+        }
+    }
+    if (generated.runner_prompt_state) |runner_prompt| {
         if (side != .corp) return error.InvalidAction;
-        generated.snapshot.state.corp.prompt_state = null;
-        generated.snapshot.decision_side = .runner;
-        generated.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
+        generated.corp_prompt_state = null;
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
         return;
     }
 
     if (run.no_action == null) {
         run.no_action = side;
-        generated.snapshot.decision_side = otherSide(side);
-        generated.snapshot.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
+        generated.decision_side = otherSide(side);
+        generated.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
         return;
     }
 
@@ -2733,8 +2906,8 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
     run.no_action = null;
     if (try prepareNextAccess(generated)) {
         run.phase = try allocator.dupe(u8, "success");
-        generated.snapshot.decision_side = .corp;
-        generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
         return;
     }
     try completeRunWithoutAccess(generated);
@@ -2742,7 +2915,7 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
 
 fn advanceInitiationPhase(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
     if (run.position == 0) {
         run.phase = try allocator.dupe(u8, "movement");
         run.jack_out_available = false;
@@ -2750,35 +2923,39 @@ fn advanceInitiationPhase(generated: *Game) !void {
         run.phase = try allocator.dupe(u8, "approach-ice");
         run.jack_out_available = false;
     }
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
 }
 
 fn advanceApproachIcePhase(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
 
     // Check if there's approached ice to encounter
     if (try currentApproachedIce(generated)) |target| {
         if (target.ice.rezzed) {
-            // Encounter the ice - resolve unbroken subroutines
-            try resolveEncounteredIceSubroutines(generated, target.ice, target.server_index, target.ice_index, 0);
-            // ETR fired
-            if (generated.snapshot.state.run == null) return;
-            // Subroutine opened a new prompt (e.g., Brân 1.0 install ice) - wait for resolution
-            if (generated.snapshot.state.corp.prompt_state) |ps| {
-                if (!std.mem.eql(u8, ps.prompt_type, "run")) return;
-            }
+            // Enter encounter phase - runner gets to use icebreakers
+            run.phase = try allocator.dupe(u8, "encounter-ice");
+            run.encounter_phase = .encounter;
+            // Store runner-perspective ice index for applyUseSubroutine
+            const ice_count = generated.corp_servers.items[target.server_index].ices.items.len;
+            run.current_ice_index = @intCast(ice_count - 1 - target.ice_index);
+            // Reset broken_subroutines for this encounter
+            generated.corp_servers.items[target.server_index].ices.items[target.ice_index].broken_subroutines = 0;
+            generated.decision_side = .runner;
+            const ice = generated.corp_servers.items[target.server_index].ices.items[target.ice_index];
+            generated.legal_actions = try encounterActionsForState(allocator, generated, ice);
+            return;
         }
     }
 
+    // Unrezzed or no ice - move to movement
     if (run.position > 0) run.position -= 1;
     run.phase = try allocator.dupe(u8, "movement");
-    run.jack_out_available = true; // Runner can jack out after passing ICE
+    run.jack_out_available = true;
     run.no_action = null;
-    // Runner gets first opportunity to jack out
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+    generated.decision_side = .runner;
+    generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
 }
 
 fn resolveEncounteredIceSubroutines(
@@ -2798,15 +2975,14 @@ fn resolveEncounteredIceSubroutines(
 
         switch (sub.kind) {
             .end_the_run => {
-                generated.snapshot.state.run = null;
-                generated.snapshot.state.corp.prompt_state = null;
-                generated.snapshot.state.runner.prompt_state = null;
-                generated.snapshot.state.runner.run_credit = 0;
-                generated.snapshot.decision_side = .runner;
-                generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+                generated.run = null;
+                generated.corp_prompt_state = null;
+                generated.runner_prompt_state = null;
+                generated.runner_run_credit = 0;
+                generated.decision_side = .runner;
+                generated.legal_actions = try runnerOpeningActionsForState(
                     allocator,
-                    generated.snapshot.state.runner,
-                    generated.snapshot.state.corp.servers,
+                    generated,
                 );
                 return;
             },
@@ -2814,48 +2990,59 @@ fn resolveEncounteredIceSubroutines(
                 const damage = sub.amount;
                 try trashRandomRunnerHandCards(generated, damage);
                 updateTerminalState(generated);
-                if (generated.snapshot.state.game_over) return;
+                if (generated.game_over) return;
             },
             .do_brain_damage => {
                 const damage = sub.amount;
-                generated.snapshot.state.runner.brain_damage += damage;
+                generated.runner_brain_damage += damage;
                 try trashRandomRunnerHandCards(generated, damage);
                 updateTerminalState(generated);
-                if (generated.snapshot.state.game_over) return;
+                if (generated.game_over) return;
             },
             .tag_runner => {
-                const runner = &generated.snapshot.state.runner;
-                if (runner.tag == null) {
-                    runner.tag = .{ .base = 0, .total = 1, .is_tagged = true };
+                if (generated.runner_tag == null) {
+                    generated.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
                 } else {
-                    runner.tag.?.total += 1;
-                    runner.tag.?.is_tagged = runner.tag.?.total > 0;
+                    generated.runner_tag.?.total += 1;
+                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
                 }
             },
             .trace_tag => {
-                // For now, auto-resolve trace: runner takes the tag
-                // TODO: implement trace prompt system
-                const runner = &generated.snapshot.state.runner;
-                if (runner.tag == null) {
-                    runner.tag = .{ .base = 0, .total = 1, .is_tagged = true };
-                } else {
-                    runner.tag.?.total += 1;
-                    runner.tag.?.is_tagged = runner.tag.?.total > 0;
+                const run = &(generated.run orelse return error.NoRunInProgress);
+                run.pending_subroutine = .{
+                    .server_index = @intCast(server_index),
+                    .ice_index = @intCast(ice_index),
+                    .subroutine_index = @intCast(idx + 1),
+                };
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                try choices.append(allocator, stringChoice("Take 1 tag"));
+                if (generated.runner_credit >= sub.base_trace) {
+                    const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{sub.base_trace});
+                    try choices.append(allocator, stringChoice(text));
                 }
+                generated.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "trace"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = ice,
+                };
+                generated.decision_side = .runner;
+                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+                return;
             },
             .give_runner_tags => {
                 const tags = sub.amount;
-                const runner = &generated.snapshot.state.runner;
-                if (runner.tag == null) {
-                    runner.tag = .{ .base = 0, .total = tags, .is_tagged = tags > 0 };
+
+                if (generated.runner_tag == null) {
+                    generated.runner_tag = .{ .base = 0, .total = tags, .is_tagged = tags > 0 };
                 } else {
-                    runner.tag.?.total += tags;
-                    runner.tag.?.is_tagged = runner.tag.?.total > 0;
+                    generated.runner_tag.?.total += tags;
+                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
                 }
             },
             .runner_loses_credits => {
-                const loss = @min(sub.amount, @as(u8, @intCast(generated.snapshot.state.runner.credit)));
-                generated.snapshot.state.runner.credit -= loss;
+                const loss = @min(sub.amount, @as(u8, @intCast(generated.runner_credit)));
+                generated.runner_credit -= loss;
             },
             .install_ice_from_hq_archives => {
                 try beginBranInstallIcePrompt(generated, server_index, ice_index, @intCast(idx));
@@ -2867,26 +3054,25 @@ fn resolveEncounteredIceSubroutines(
 }
 
 fn checkManegarmSkunkworks(generated: *Game) !bool {
-    const run = generated.snapshot.state.run orelse return false;
+    const run = generated.run orelse return false;
     if (run.position != 0) return false;
 
-    const target_server = try findServerByRunPath(generated.snapshot.state.corp.servers, run.server);
+    const target_server = try findServerByRunPath(generated.corp_servers.items, run.server);
     const server = target_server.slot;
 
-    for (server.state.content) |card| {
+    for (server.content.items) |card| {
         if (card.access.kind == .tax_or_etr) {
             const allocator = generated.arena.allocator();
             var choices: std.ArrayList(state.PromptChoice) = .empty;
-            const runner = &generated.snapshot.state.runner;
 
-            if (runner.click >= card.access.click_cost) {
+            if (generated.runner_click >= card.access.click_cost) {
                 try choices.append(allocator, .{
                     .kind = .string,
                     .text = try allocator.dupe(u8, "Spend [Click][Click]"),
                 });
             }
 
-            if (runner.credit >= card.access.credit_cost) {
+            if (generated.runner_credit >= card.access.credit_cost) {
                 try choices.append(allocator, .{
                     .kind = .string,
                     .text = try allocator.dupe(u8, "Pay 5 [Credits]"),
@@ -2898,14 +3084,14 @@ fn checkManegarmSkunkworks(generated: *Game) !bool {
                 .text = try allocator.dupe(u8, "End the run"),
             });
 
-            generated.snapshot.state.runner.prompt_state = .{
+            generated.runner_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, "other"),
                 .choices = try choices.toOwnedSlice(allocator),
                 .source_card = card,
             };
 
-            generated.snapshot.decision_side = .runner;
-            generated.snapshot.legal_actions = try promptChoiceActions(allocator, .runner, generated.snapshot.state.runner.prompt_state.?);
+            generated.decision_side = .runner;
+            generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
             return true;
         }
     }
@@ -2920,14 +3106,13 @@ fn beginBranInstallIcePrompt(
     subroutine_index: u8,
 ) !void {
     const allocator = generated.arena.allocator();
-    const corp = &generated.snapshot.state.corp;
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
 
     // Build list of ice cards in HQ and Archives
     var choices: std.ArrayList(state.PromptChoice) = .empty;
 
     // Add ice from HQ
-    for (corp.hand, 0..) |card, idx| {
+    for (generated.corp_hand.items, 0..) |card, idx| {
         if (std.mem.eql(u8, card.card_type orelse "", "ICE")) {
             try choices.append(allocator, .{
                 .kind = .string,
@@ -2937,7 +3122,7 @@ fn beginBranInstallIcePrompt(
     }
 
     // Add ice from Archives (face-up ice)
-    for (corp.discard, 0..) |card, idx| {
+    for (generated.corp_discard.items, 0..) |card, idx| {
         if (std.mem.eql(u8, card.card_type orelse "", "ICE") and card.rezzed) {
             try choices.append(allocator, .{
                 .kind = .string,
@@ -2958,13 +3143,13 @@ fn beginBranInstallIcePrompt(
     };
 
     // Set corp prompt
-    corp.prompt_state = .{
+    generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "other"),
         .choices = try choices.toOwnedSlice(allocator),
     };
 
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try promptChoiceActions(allocator, .corp, corp.prompt_state.?);
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
 }
 
 fn applyBranInstallIceChoice(
@@ -2972,7 +3157,7 @@ fn applyBranInstallIceChoice(
     choice_text: []const u8,
 ) !void {
     const allocator = generated.arena.allocator();
-    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    const run = generated.run orelse return error.NoRunInProgress;
     const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
 
     // Parse choice: "HQ|index|title" or "Archives|index|title"
@@ -2986,11 +3171,9 @@ fn applyBranInstallIceChoice(
     if (std.mem.eql(u8, zone, "HQ")) {
         if (card_index >= generated.corp_hand.items.len) return error.InvalidCardIndex;
         ice_to_install = generated.corp_hand.orderedRemove(card_index);
-        generated.snapshot.state.corp.hand = try sliceFromArrayList(allocator, generated.corp_hand);
     } else if (std.mem.eql(u8, zone, "Archives")) {
         if (card_index >= generated.corp_discard.items.len) return error.InvalidCardIndex;
         ice_to_install = generated.corp_discard.orderedRemove(card_index);
-        generated.snapshot.state.corp.discard = try sliceFromArrayList(allocator, generated.corp_discard);
     } else return error.UnsupportedChoice;
 
     // Install ice at position 0 (outermost position)
@@ -2998,11 +3181,8 @@ fn applyBranInstallIceChoice(
     const target_server = &generated.corp_servers.items[pending.server_index];
     try target_server.ices.insert(generated.backing_allocator, 0, ice_to_install);
 
-    // Sync views
-    try syncOwnedViews(generated);
-
     // Clear prompt
-    generated.snapshot.state.corp.prompt_state = null;
+    generated.corp_prompt_state = null;
 
     // After installation, Bran 1.0 is now at position (ice_index + 1)
     // because we inserted a new ice at position 0
@@ -3013,31 +3193,76 @@ fn applyBranInstallIceChoice(
     try resolveEncounteredIceSubroutines(generated, bran_ice, pending.server_index, new_bran_position, pending.subroutine_index + 1);
 
     // Clear pending state
-    generated.snapshot.state.run.?.pending_subroutine = null;
+    generated.run.?.pending_subroutine = null;
 
     // If ETR fired, we're done
-    if (generated.snapshot.state.run == null) return;
+    if (generated.run == null) return;
 
     // If another prompt opened, return
-    if (generated.snapshot.state.corp.prompt_state != null) return;
+    if (generated.corp_prompt_state != null) return;
 
     // Continue with movement phase
-    const current_run = &generated.snapshot.state.run.?;
+    const current_run = &generated.run.?;
     if (current_run.position > 0) current_run.position -= 1;
     current_run.phase = try allocator.dupe(u8, "movement");
     current_run.jack_out_available = true;
     current_run.no_action = null;
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try continueActionsForRun(allocator, .runner, current_run.*);
+    generated.decision_side = .runner;
+    generated.legal_actions = try continueActionsForRun(allocator, .runner, current_run.*);
 }
 
-fn sliceFromArrayList(allocator: std.mem.Allocator, list: std.ArrayList(state.CardInstance)) ![]const state.CardInstance {
-    return try allocator.dupe(state.CardInstance, list.items);
+fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8) !void {
+    _ = side;
+    if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
+        if (generated.runner_tag == null) {
+            generated.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
+        } else {
+            generated.runner_tag.?.total += 1;
+            generated.runner_tag.?.is_tagged = true;
+        }
+    } else if (std.mem.startsWith(u8, choice_text, "Pay ")) {
+        var iter = std.mem.splitScalar(u8, choice_text, ' ');
+        _ = iter.next(); // "Pay"
+        const amount_str = iter.next() orelse return error.UnsupportedChoice;
+        const amount = try std.fmt.parseInt(u16, amount_str, 10);
+        try spendCredits(generated, .runner, amount);
+    } else return error.UnsupportedChoice;
+
+    generated.runner_prompt_state = null;
+
+    // Resume subroutine resolution
+    const run = &(generated.run orelse return error.NoRunInProgress);
+    const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
+    run.pending_subroutine = null;
+
+    const server = &generated.corp_servers.items[pending.server_index];
+    const ice = server.ices.items[pending.ice_index];
+    try resolveEncounteredIceSubroutines(generated, ice, pending.server_index, pending.ice_index, pending.subroutine_index);
+
+    // If run ended (ETR) or another prompt opened, we're done
+    if (generated.run == null) return;
+    if (generated.runner_prompt_state != null) return;
+    if (generated.game_over) return;
+
+    // Continue with movement phase after subroutines
+    const allocator = generated.arena.allocator();
+    for (generated.runner_rig_program.items) |*card| {
+        card.current_strength = null;
+    }
+    const next_run = &generated.run.?;
+    if (next_run.position > 0) next_run.position -= 1;
+    next_run.phase = try allocator.dupe(u8, "movement");
+    next_run.encounter_phase = .none;
+    next_run.current_ice_index = null;
+    next_run.jack_out_available = true;
+    next_run.no_action = null;
+    generated.decision_side = .runner;
+    generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
 }
 
 fn advanceMovementPhase(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
 
     // Clear jack-out flag since both players passed
     run.jack_out_available = false;
@@ -3046,8 +3271,8 @@ fn advanceMovementPhase(generated: *Game) !void {
     // Check for more ice or success
     if (run.position > 0) {
         run.phase = try allocator.dupe(u8, "approach-ice");
-        generated.snapshot.decision_side = .corp;
-        generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
         return;
     }
 
@@ -3059,8 +3284,8 @@ fn advanceMovementPhase(generated: *Game) !void {
     try applySuccessfulRunEffects(generated);
     if (try prepareNextAccess(generated)) {
         run.phase = try allocator.dupe(u8, "success");
-        generated.snapshot.decision_side = .corp;
-        generated.snapshot.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
         return;
     }
 
@@ -3068,12 +3293,12 @@ fn advanceMovementPhase(generated: *Game) !void {
 }
 
 fn prepareNextAccess(generated: *Game) !bool {
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
     if (run.accesses_remaining == 0) {
         var bonus: u8 = run.access_bonus;
-        if (std.mem.eql(u8, run.server[0], "hq") and generated.snapshot.state.turn_events.runner_hq_breaches == 0) {
+        if (std.mem.eql(u8, run.server[0], "hq") and generated.turn_events.runner_hq_breaches == 0) {
             bonus += runner_installed_hq_access_bonus(generated);
-            generated.snapshot.state.turn_events.runner_hq_breaches += 1;
+            generated.turn_events.runner_hq_breaches += 1;
         }
         run.accesses_remaining = 1 + bonus;
     }
@@ -3102,7 +3327,7 @@ fn prepareNextAccess(generated: *Game) !bool {
 }
 
 fn applySuccessfulRunEffects(generated: *Game) !void {
-    const run = generated.snapshot.state.run orelse return error.NoRunInProgress;
+    const run = generated.run orelse return error.NoRunInProgress;
     switch (run.successful_run_effect) {
         .none => {},
         .draw_cards => try drawCards(generated, .runner, run.successful_run_draw_cards),
@@ -3111,53 +3336,51 @@ fn applySuccessfulRunEffects(generated: *Game) !void {
 
 fn completeRunWithoutAccess(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.runner_successful_run_this_turn = true;
-    generated.snapshot.state.run = null;
-    generated.snapshot.state.corp.prompt_state = null;
-    generated.snapshot.state.runner.prompt_state = null;
-    generated.snapshot.state.runner.run_credit = 0;
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+    generated.runner_successful_run_this_turn = true;
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.runner_run_credit = 0;
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(
         allocator,
-        generated.snapshot.state.runner,
-        generated.snapshot.state.corp.servers,
+        generated,
     );
 }
 
 fn completeRunAfterAccess(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.runner_successful_run_this_turn = true;
-    generated.snapshot.state.run = null;
-    generated.snapshot.state.corp.prompt_state = null;
-    generated.snapshot.state.runner.prompt_state = null;
-    generated.snapshot.state.runner.run_credit = 0;
-    generated.snapshot.decision_side = .runner;
-    generated.snapshot.legal_actions = try runnerOpeningActionsForState(
+    generated.runner_successful_run_this_turn = true;
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.runner_run_credit = 0;
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(
         allocator,
-        generated.snapshot.state.runner,
-        generated.snapshot.state.corp.servers,
+        generated,
     );
 }
 
 fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.runner_successful_run_this_turn = true;
-    generated.snapshot.state.run = null;
-    generated.snapshot.state.corp.prompt_state = null;
-    generated.snapshot.state.runner.prompt_state = null;
-    generated.snapshot.state.runner.run_credit = 0;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try continueActions(allocator, .corp);
+    generated.runner_successful_run_this_turn = true;
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.runner_run_credit = 0;
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActions(allocator, .corp);
 }
 
 fn completeUnsuccessfulRun(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.run = null;
-    generated.snapshot.state.corp.prompt_state = null;
-    generated.snapshot.state.runner.prompt_state = null;
-    generated.snapshot.state.runner.run_credit = 0;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try continueActions(allocator, .corp);
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.runner_run_credit = 0;
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActions(allocator, .corp);
 }
 
 fn beginAccessFlow(
@@ -3167,7 +3390,7 @@ fn beginAccessFlow(
     const allocator = generated.arena.allocator();
     switch (accessed.access.kind) {
         .steal_agenda => {
-            generated.snapshot.state.runner.prompt_state = .{
+            generated.runner_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, prompt_access_choice),
                 .choices = try singleStringChoice(allocator, "Steal"),
                 .source_card = accessed,
@@ -3175,8 +3398,7 @@ fn beginAccessFlow(
             return true;
         },
         .net_damage_on_access => {
-            try applyNetDamageOnAccess(generated, accessed);
-            return try beginTrashAccessPrompt(generated, accessed);
+            return try beginNetDamageOnAccessPrompt(generated, accessed);
         },
         .tax_or_etr => return false,
         .none => return try beginTrashAccessPrompt(generated, accessed),
@@ -3187,8 +3409,8 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
     const spec = lookupCardSpec(accessed) orelse return false;
     const trash_cost = spec.trash_cost orelse return false;
     const allocator = generated.arena.allocator();
-    const runner = &generated.snapshot.state.runner;
-    const can_afford = runner.credit >= trash_cost;
+
+    const can_afford = generated.runner_credit >= trash_cost;
     const choice_count: usize = if (can_afford) 2 else 1;
     const choices = try allocator.alloc(state.PromptChoice, choice_count);
     var idx: usize = 0;
@@ -3197,7 +3419,7 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
         idx += 1;
     }
     choices[idx] = stringChoice("No action");
-    runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_access_choice),
         .choices = choices,
         .source_card = accessed,
@@ -3205,19 +3427,63 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
     return true;
 }
 
-fn applyNetDamageOnAccess(
+fn beginNetDamageOnAccessPrompt(
     generated: *Game,
     accessed: state.CardInstance,
-) !void {
-    if (generated.snapshot.state.corp.credit < accessed.access.corp_credit_cost) return;
-    try spendCredits(&generated.snapshot.state.corp, accessed.access.corp_credit_cost);
+) !bool {
+    const allocator = generated.arena.allocator();
     const damage: u8 = accessed.access.base_damage + if (accessed.access.adds_advancement) accessed.advancement_counter else 0;
-    try trashRandomRunnerHandCards(generated, damage);
+    const cost = accessed.access.corp_credit_cost;
+
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    if (generated.corp_credit >= cost) {
+        const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits] to do {d} net damage", .{ cost, damage });
+        try choices.append(allocator, stringChoice(text));
+    }
+    try choices.append(allocator, stringChoice("No action"));
+
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "net-damage-on-access"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = accessed,
+    };
+    return true;
+}
+
+fn applyNetDamageOnAccessChoice(
+    generated: *Game,
+    choice_text: []const u8,
+) !void {
+    const accessed = (if (generated.corp_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
+    generated.corp_prompt_state = null;
+
+    if (std.mem.startsWith(u8, choice_text, "Pay ")) {
+        try spendCredits(generated, .corp, accessed.access.corp_credit_cost);
+        const damage: u8 = accessed.access.base_damage + if (accessed.access.adds_advancement) accessed.advancement_counter else 0;
+        try trashRandomRunnerHandCards(generated, damage);
+        updateTerminalState(generated);
+        if (generated.game_over) return;
+    }
+
+    // Proceed to trash-on-access prompt for the runner
+    if (try beginTrashAccessPrompt(generated, accessed)) {
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(
+            generated.arena.allocator(),
+            .runner,
+            generated.runner_prompt_state.?,
+        );
+        return;
+    }
+
+    // No trash prompt, finish access
+    try finishAccessCard(generated);
 }
 
 fn beginHqAccessChoicePrompt(generated: *Game) !bool {
     const allocator = generated.arena.allocator();
-    generated.snapshot.state.runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_hq_access),
         .choices = try singleStringChoice(allocator, "Card from hand"),
         .source_card = null,
@@ -3230,24 +3496,24 @@ fn applyHqAccessChoice(
     choice_text: []const u8,
 ) !void {
     if (!std.mem.eql(u8, choice_text, "Card from hand")) return error.UnsupportedChoice;
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
     if (run.accesses_remaining == 0) return error.MissingAccessTarget;
     const access_index = run.access_card_index orelse return error.MissingAccessTarget;
-    if (access_index >= generated.snapshot.state.corp.hand.len) return error.MissingAccessTarget;
-    const accessed = generated.snapshot.state.corp.hand[access_index];
+    if (access_index >= generated.corp_hand.items.len) return error.MissingAccessTarget;
+    const accessed = generated.corp_hand.items[access_index];
     rememberAccessedIndex(run, access_index);
     run.accesses_remaining -= 1;
     if (try beginAccessFlow(generated, accessed)) {
-        generated.snapshot.decision_side = .runner;
-        generated.snapshot.legal_actions = try promptChoiceActions(
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(
             generated.arena.allocator(),
             .runner,
-            generated.snapshot.state.runner.prompt_state.?,
+            generated.runner_prompt_state.?,
         );
         return;
     }
 
-    generated.snapshot.state.runner.prompt_state = .{
+    generated.runner_prompt_state = .{
         .prompt_type = try generated.arena.allocator().dupe(u8, "waiting"),
         .choices = &.{},
         .source_card = null,
@@ -3255,8 +3521,8 @@ fn applyHqAccessChoice(
     if (run.accesses_remaining > 0) {
         run.phase = try generated.arena.allocator().dupe(u8, "success");
         run.no_action = null;
-        generated.snapshot.decision_side = .corp;
-        generated.snapshot.legal_actions = try continueActionsForRun(generated.arena.allocator(), .corp, run.*);
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRun(generated.arena.allocator(), .corp, run.*);
         return;
     }
     try completeRunWithoutAccess(generated);
@@ -3268,15 +3534,15 @@ const AccessTarget = struct {
 };
 
 fn nextAccessTarget(generated: *Game) !?AccessTarget {
-    const run = &generated.snapshot.state.run.?;
+    const run = &generated.run.?;
     if (std.mem.eql(u8, run.server[0], "rnd")) {
-        return nextIndexedAccessTarget(generated.snapshot.state.corp.deck, run.accessed_count);
+        return nextIndexedAccessTarget(generated.corp_deck.items, run.accessed_count);
     }
     if (std.mem.eql(u8, run.server[0], "archives")) {
-        return nextIndexedAccessTarget(generated.snapshot.state.corp.discard, run.accessed_count);
+        return nextIndexedAccessTarget(generated.corp_discard.items, run.accessed_count);
     }
-    const target_server = try findServerByRunPath(generated.snapshot.state.corp.servers, run.server);
-    return nextIndexedAccessTarget(target_server.slot.state.content, run.accessed_count);
+    const target_server = try findServerByRunPath(generated.corp_servers.items, run.server);
+    return nextIndexedAccessTarget(target_server.slot.content.items, run.accessed_count);
 }
 
 fn nextIndexedAccessTarget(cards: []const state.CardInstance, accessed_count: u8) ?AccessTarget {
@@ -3288,19 +3554,19 @@ fn nextIndexedAccessTarget(cards: []const state.CardInstance, accessed_count: u8
 }
 
 fn nextHqAccessTarget(generated: *Game, run: *state.RunState) !?AccessTarget {
-    if (generated.snapshot.state.corp.hand.len == 0) return null;
+    if (generated.corp_hand.items.len == 0) return null;
     var shuffled_indexes: [64]u8 = undefined;
-    for (generated.snapshot.state.corp.hand, 0..) |_, idx| {
+    for (generated.corp_hand.items, 0..) |_, idx| {
         shuffled_indexes[idx] = @intCast(idx);
     }
-    var rng_state = fromOracleSeed(generated.snapshot.state.rng_seed orelse return error.MissingRngSeed);
-    shuffleInPlace(u8, &rng_state, shuffled_indexes[0..generated.snapshot.state.corp.hand.len]);
-    generated.snapshot.state.rng_seed = oracleSeed(rng_state);
-    for (shuffled_indexes[0..generated.snapshot.state.corp.hand.len]) |chosen_index| {
+    var rng_state = fromOracleSeed(generated.rng_seed orelse return error.MissingRngSeed);
+    shuffleInPlace(u8, &rng_state, shuffled_indexes[0..generated.corp_hand.items.len]);
+    generated.rng_seed = oracleSeed(rng_state);
+    for (shuffled_indexes[0..generated.corp_hand.items.len]) |chosen_index| {
         if (wasIndexAccessed(run.*, chosen_index)) continue;
         return .{
             .index = chosen_index,
-            .card = generated.snapshot.state.corp.hand[chosen_index],
+            .card = generated.corp_hand.items[chosen_index],
         };
     }
     return null;
@@ -3358,12 +3624,14 @@ fn encounterActionsForState(
     generated: *Game,
     ice: state.CardInstance,
 ) ![]const state.LegalAction {
-    // Count available icebreakers and unbroken subroutines
+    // Count available icebreakers that can break this ICE type and have sufficient strength
     var breaker_count: usize = 0;
     for (generated.runner_rig_program.items) |card| {
-        if (isIcebreaker(card) and card.installed_ability.kind == .break_subroutine) {
-            breaker_count += 1;
-        }
+        if (!isIcebreaker(card)) continue;
+        if (card.installed_ability.kind != .break_subroutine) continue;
+        if (!canBreakIceType(card, ice)) continue;
+        if (effectiveStrength(card) < (ice.strength orelse 0)) continue;
+        breaker_count += 1;
     }
 
     // Count unbroken subroutines
@@ -3381,8 +3649,17 @@ fn encounterActionsForState(
         }
     }
 
-    // Actions: continue + icebreaker break actions + bioroid break actions
-    const total_actions = 1 + (breaker_count * unbroken_count) + bioroid_ability_count;
+    // Count pump-capable breakers
+    var pump_count: usize = 0;
+    for (generated.runner_rig_program.items) |card| {
+        if (!isIcebreaker(card)) continue;
+        if (card.pump_ability.kind != .pump_strength) continue;
+        if (generated.runner_credit < card.pump_ability.credit_cost) continue;
+        pump_count += 1;
+    }
+
+    // Actions: continue + icebreaker break actions + bioroid break actions + pump actions
+    const total_actions = 1 + (breaker_count * unbroken_count) + bioroid_ability_count + pump_count;
     const actions = try allocator.alloc(state.LegalAction, total_actions);
 
     // Add continue action (let the ice fire)
@@ -3395,10 +3672,12 @@ fn encounterActionsForState(
 
     var next: usize = 1;
 
-    // Add break actions for each icebreaker and each unbroken subroutine
+    // Add break actions for each qualified icebreaker and each unbroken subroutine
     for (generated.runner_rig_program.items, 0..) |card, card_idx| {
         if (!isIcebreaker(card)) continue;
         if (card.installed_ability.kind != .break_subroutine) continue;
+        if (!canBreakIceType(card, ice)) continue;
+        if (effectiveStrength(card) < (ice.strength orelse 0)) continue;
 
         for (ice.subroutines, 0..) |_, sub_idx| {
             const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(sub_idx))) != 0;
@@ -3438,6 +3717,23 @@ fn encounterActionsForState(
         }
     }
 
+    // Add pump actions for icebreakers with pump ability
+    for (generated.runner_rig_program.items, 0..) |card, card_idx| {
+        if (!isIcebreaker(card)) continue;
+        if (card.pump_ability.kind != .pump_strength) continue;
+        if (generated.runner_credit < card.pump_ability.credit_cost) continue;
+
+        actions[next] = .{
+            .kind = .use_installed_ability,
+            .side = .runner,
+            .card_index = @intCast(card_idx),
+            .card_title = try allocator.dupe(u8, card.title),
+            .installed_ability = .pump_strength,
+            .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ card.pump_ability.pump_strength_amount, card.title }),
+        };
+        next += 1;
+    }
+
     return actions;
 }
 
@@ -3465,27 +3761,28 @@ fn endTurnActions(
 
 fn corpOpeningActionsForState(
     allocator: std.mem.Allocator,
-    corp: *const state.PlayerState,
+    g: *const Game,
 ) ![]const state.LegalAction {
-    if (corp.click == 0) return endTurnActions(allocator, .corp);
-    const scoreable_count = countScoreableAgendas(corp.servers);
+    if (g.corp_click == 0) return endTurnActions(allocator, .corp);
+    const servers = g.corp_servers.items;
+    const scoreable_count = countScoreableAgendas(servers);
     var playable_hand_count: usize = 0;
-    for (corp.hand) |card| {
-        if (isCorpCardPlayableFromHand(corp, card)) playable_hand_count += 1;
+    for (g.corp_hand.items) |card| {
+        if (isCorpCardPlayableFromHand(g.corp_click, g.corp_credit, card)) playable_hand_count += 1;
     }
 
-    const installed_ability_count = countCorpInstalledAbilityActions(corp.servers);
+    const installed_ability_count = countCorpInstalledAbilityActions(servers);
     var count: usize = playable_hand_count + installed_ability_count;
-    if (corp.click >= 1) count += 1;
-    if (corp.click >= 1 and corp.deck.len > 0) count += 1;
-    if (corp.click >= 1 and corp.credit >= 1) count += 1;
-    if (corp.click >= 1 and scoreable_count > 0) count += 1;
-    if (corp.click >= 3) count += 1;
+    if (g.corp_click >= 1) count += 1;
+    if (g.corp_click >= 1 and g.corp_deck.items.len > 0) count += 1;
+    if (g.corp_click >= 1 and g.corp_credit >= 1) count += 1;
+    if (g.corp_click >= 1 and scoreable_count > 0) count += 1;
+    if (g.corp_click >= 3) count += 1;
 
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
-    for (corp.hand, 0..) |card, idx| {
-        if (!isCorpCardPlayableFromHand(corp, card)) continue;
+    for (g.corp_hand.items, 0..) |card, idx| {
+        if (!isCorpCardPlayableFromHand(g.corp_click, g.corp_credit, card)) continue;
         actions[next] = .{
             .kind = .play_from_hand,
             .side = .corp,
@@ -3494,9 +3791,9 @@ fn corpOpeningActionsForState(
         };
         next += 1;
     }
-    for (corp.servers, 0..) |server, server_index| {
+    for (servers, 0..) |server, server_index| {
         const display_name = try displayNameForServer(allocator, server.name, server_index);
-        for (server.state.content, 0..) |card, content_index| {
+        for (server.content.items, 0..) |card, content_index| {
             if (!hasCorpInstalledAbilityAction(card)) continue;
             actions[next] = .{
                 .kind = .use_installed_ability,
@@ -3511,34 +3808,34 @@ fn corpOpeningActionsForState(
         }
     }
 
-    if (corp.click >= 1) {
+    if (g.corp_click >= 1) {
         actions[next] = try basicAbilityAction(allocator, .corp, .gain_credit, "Gain 1 [Credits]");
         next += 1;
     }
-    if (corp.click >= 1 and corp.deck.len > 0) {
+    if (g.corp_click >= 1 and g.corp_deck.items.len > 0) {
         actions[next] = try basicAbilityAction(allocator, .corp, .draw_card, "Draw 1 card");
         next += 1;
     }
-    if (corp.click >= 1 and corp.credit >= 1) {
+    if (g.corp_click >= 1 and g.corp_credit >= 1) {
         actions[next] = try basicAbilityAction(allocator, .corp, .advance_installed, "Advance 1 installed card");
         next += 1;
     }
-    if (corp.click >= 1 and scoreable_count > 0) {
+    if (g.corp_click >= 1 and scoreable_count > 0) {
         actions[next] = try basicAbilityAction(allocator, .corp, .score_agenda, "Score an agenda");
         next += 1;
     }
-    if (corp.click >= 3) {
+    if (g.corp_click >= 3) {
         actions[next] = try basicAbilityAction(allocator, .corp, .purge_viruses, "Purge virus counters");
     }
 
     return actions;
 }
 
-fn countScoreableAgendas(servers: []const state.ServerSlot) usize {
+fn countScoreableAgendas(servers: []const MutableServer) usize {
     var count: usize = 0;
     for (servers, 0..) |server, server_index| {
         if (server_index < 3) continue;
-        for (server.state.content) |card| {
+        for (server.content.items) |card| {
             if (card.agenda_points == null) continue;
             if (card.advancement_requirement == null) continue;
             if (card.advancement_counter < card.advancement_requirement.?) continue;
@@ -3548,41 +3845,41 @@ fn countScoreableAgendas(servers: []const state.ServerSlot) usize {
     return count;
 }
 
-fn countInstalledCards(servers: []const state.ServerSlot) usize {
+fn countInstalledCards(servers: []const MutableServer) usize {
     var count: usize = 0;
     for (servers) |server| {
-        count += server.state.ices.len;
-        count += server.state.content.len;
+        count += server.ices.items.len;
+        count += server.content.items.len;
     }
     return count;
 }
 
 fn runnerOpeningActionsForState(
     allocator: std.mem.Allocator,
-    runner: state.PlayerState,
-    corp_servers: []const state.ServerSlot,
+    g: *const Game,
 ) ![]const state.LegalAction {
-    if (runner.click == 0) return endTurnActions(allocator, .runner);
+    if (g.runner_click == 0) return endTurnActions(allocator, .runner);
 
-    const runnable_servers = try runnableServers(allocator, corp_servers);
+    const runnable = try runnableServers(allocator, g.corp_servers.items);
 
     var playable_hand_count: usize = 0;
-    for (runner.hand) |card| {
-        if (isRunnerCardPlayableFromHand(runner, card)) playable_hand_count += 1;
+    for (g.runner_hand.items) |card| {
+        if (isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card)) playable_hand_count += 1;
     }
-    const resource_ability_count = countRunnerInstalledAbilityActions(runner.rig_resources);
-    const hardware_ability_count = countRunnerInstalledAbilityActions(runner.rig_hardware);
+    const resource_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_resources.items);
+    const hardware_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_hardware.items);
     const installed_ability_count = resource_ability_count + hardware_ability_count;
 
-    var count: usize = playable_hand_count + runnable_servers.len + installed_ability_count;
-    if (runner.click >= 1) count += 1;
-    if (runner.click >= 1 and runner.deck.len > 0) count += 1;
-    if (runner.click >= 1 and runnable_servers.len > 0) count += 1;
+    var count: usize = playable_hand_count + runnable.len + installed_ability_count;
+    if (g.runner_click >= 1) count += 1;
+    if (g.runner_click >= 1 and g.runner_deck.items.len > 0) count += 1;
+    if (g.runner_click >= 1 and runnable.len > 0) count += 1;
+    if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) count += 1;
 
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
-    for (runner.hand, 0..) |card, idx| {
-        if (!isRunnerCardPlayableFromHand(runner, card)) continue;
+    for (g.runner_hand.items, 0..) |card, idx| {
+        if (!isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card)) continue;
         actions[next] = .{
             .kind = .play_from_hand,
             .side = .runner,
@@ -3591,7 +3888,7 @@ fn runnerOpeningActionsForState(
         };
         next += 1;
     }
-    for (runnable_servers) |server_name| {
+    for (runnable) |server_name| {
         actions[next] = .{
             .kind = .run,
             .side = .runner,
@@ -3599,7 +3896,7 @@ fn runnerOpeningActionsForState(
         };
         next += 1;
     }
-    for (runner.rig_resources, 0..) |card, idx| {
+    for (g.runner_rig_resources.items, 0..) |card, idx| {
         if (!hasRunnerInstalledAbilityAction(card)) continue;
         actions[next] = .{
             .kind = .use_installed_ability,
@@ -3611,7 +3908,7 @@ fn runnerOpeningActionsForState(
         };
         next += 1;
     }
-    for (runner.rig_hardware, 0..) |card, idx| {
+    for (g.runner_rig_hardware.items, 0..) |card, idx| {
         if (!hasRunnerInstalledAbilityAction(card)) continue;
         actions[next] = .{
             .kind = .use_installed_ability,
@@ -3624,16 +3921,21 @@ fn runnerOpeningActionsForState(
         next += 1;
     }
 
-    if (runner.click >= 1) {
+    if (g.runner_click >= 1) {
         actions[next] = try basicAbilityAction(allocator, .runner, .gain_credit, "Gain 1 [Credits]");
         next += 1;
     }
-    if (runner.click >= 1 and runner.deck.len > 0) {
+    if (g.runner_click >= 1 and g.runner_deck.items.len > 0) {
         actions[next] = try basicAbilityAction(allocator, .runner, .draw_card, "Draw 1 card");
         next += 1;
     }
-    if (runner.click >= 1 and runnable_servers.len > 0) {
+    if (g.runner_click >= 1 and runnable.len > 0) {
         actions[next] = try basicAbilityAction(allocator, .runner, .run_any_server, "Run any server");
+        next += 1;
+    }
+    if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) {
+        actions[next] = try basicAbilityAction(allocator, .runner, .remove_tag, "Remove 1 tag");
+        next += 1;
     }
 
     return actions;
@@ -3671,6 +3973,11 @@ fn hasRunnerInstalledAbilityAction(card: state.CardInstance) bool {
     if (card.installed_ability.kind == .none) return false;
     if (card.ability_used_this_turn and card.installed_ability.once_per_turn) return false;
 
+    // For run_central, also check hosted credits
+    if (card.installed_ability.kind == .run_central) {
+        return card.installed_ability.click_cost > 0 and card.credit_counter >= card.installed_ability.take_credits_amount;
+    }
+
     // For abilities that require clicks, check click cost
     if (card.installed_ability.click_cost > 0) {
         return true;
@@ -3700,10 +4007,10 @@ fn countRunnerInstalledAbilityActions(cards: []const state.CardInstance) usize {
     return count;
 }
 
-fn countCorpInstalledAbilityActions(servers: []const state.ServerSlot) usize {
+fn countCorpInstalledAbilityActions(servers: []const MutableServer) usize {
     var count: usize = 0;
     for (servers) |server| {
-        for (server.state.content) |card| {
+        for (server.content.items) |card| {
             if (hasCorpInstalledAbilityAction(card)) count += 1;
         }
     }
@@ -3732,23 +4039,6 @@ fn buildDeck(
 
     shuffleInPlace(state.CardInstance, rng_state, cards);
     return cards;
-}
-
-fn emptyCorpServers(allocator: std.mem.Allocator) ![]const state.ServerSlot {
-    const servers = try allocator.alloc(state.ServerSlot, 3);
-    servers[0] = .{
-        .name = try allocator.dupe(u8, "hq"),
-        .state = .{ .ices = &.{}, .content = &.{} },
-    };
-    servers[1] = .{
-        .name = try allocator.dupe(u8, "rnd"),
-        .state = .{ .ices = &.{}, .content = &.{} },
-    };
-    servers[2] = .{
-        .name = try allocator.dupe(u8, "archives"),
-        .state = .{ .ices = &.{}, .content = &.{} },
-    };
-    return servers;
 }
 
 fn initCardList(
@@ -3791,40 +4081,6 @@ fn deepCloneCard(allocator: std.mem.Allocator, card: state.CardInstance) !state.
     return cloned;
 }
 
-fn syncOwnedViews(game: *Game) !void {
-    const allocator = game.arena.allocator();
-
-    game.snapshot.state.corp.hand = game.corp_hand.items;
-    game.snapshot.state.corp.deck = game.corp_deck.items;
-    game.snapshot.state.corp.discard = game.corp_discard.items;
-    game.snapshot.state.corp.scored = game.corp_scored.items;
-    game.snapshot.state.runner.hand = game.runner_hand.items;
-    game.snapshot.state.runner.deck = game.runner_deck.items;
-    game.snapshot.state.runner.discard = game.runner_discard.items;
-    game.snapshot.state.runner.scored = game.runner_scored.items;
-    game.snapshot.state.runner.rig_hardware = game.runner_rig_hardware.items;
-    game.snapshot.state.runner.rig_program = game.runner_rig_program.items;
-    game.snapshot.state.runner.rig_resources = game.runner_rig_resources.items;
-
-    const servers = try allocator.alloc(state.ServerSlot, game.corp_servers.items.len);
-    for (game.corp_servers.items, 0..) |server, idx| {
-        const ice_slice = server.ices.items;
-        const content_slice = server.content.items;
-        const ice_copy = try allocator.alloc(state.CardInstance, ice_slice.len);
-        const content_copy = try allocator.alloc(state.CardInstance, content_slice.len);
-        for (ice_slice, 0..) |card, i| ice_copy[i] = try deepCloneCard(allocator, card);
-        for (content_slice, 0..) |card, i| content_copy[i] = try deepCloneCard(allocator, card);
-        servers[idx] = .{
-            .name = server.name,
-            .state = .{
-                .ices = ice_copy,
-                .content = content_copy,
-            },
-        };
-    }
-    game.snapshot.state.corp.servers = servers;
-}
-
 fn cloneCards(
     allocator: std.mem.Allocator,
     cards: []const state.CardInstance,
@@ -3863,15 +4119,6 @@ fn stringChoice(text: []const u8) state.PromptChoice {
     };
 }
 
-fn cardReferenceFor(card: state.CardInstance) state.CardReference {
-    return .{
-        .title = card.title,
-        .printed_title = card.printed_title,
-        .code = card.code,
-        .side = card.side,
-    };
-}
-
 fn makeCardInstance(
     allocator: std.mem.Allocator,
     spec: CardSpec,
@@ -3898,6 +4145,7 @@ fn makeCardInstance(
         .install = spec.install,
         .runner_install = spec.runner_install,
         .installed_ability = spec.installed_ability,
+        .pump_ability = spec.pump_ability,
         .subroutines = spec.subroutines,
         .advancement_counter = 0,
         .credit_counter = 0,
@@ -3952,7 +4200,6 @@ fn appendRunnerInstalledCard(
         .resource => try game.runner_rig_resources.append(game.backing_allocator, card),
         else => return error.UnsupportedRunnerInstall,
     }
-    try syncOwnedViews(game);
 }
 
 fn resetInstalledAbilityUsage(game: *Game) void {
@@ -3977,20 +4224,13 @@ fn drawCard(game: *Game, side: state.Side) !void {
     if (deck.items.len == 0) {
         // Deck-out: if corp can't draw at start of turn, they lose
         if (side == .corp) {
-            game.snapshot.state.game_over = true;
-            game.snapshot.state.winner = .runner;
-            game.snapshot.state.run = null;
-            game.snapshot.state.corp.prompt_state = null;
-            game.snapshot.state.runner.prompt_state = null;
-            game.snapshot.legal_actions = &.{};
-            game.snapshot.decision_side = .runner;
+            setGameOver(game, .runner);
             return error.EmptyDeck;
         }
         return error.EmptyDeck;
     }
     const drawn = deck.orderedRemove(0);
     try handList(game, side).append(game.backing_allocator, drawn);
-    try syncOwnedViews(game);
 }
 
 fn drawCards(game: *Game, side: state.Side, amount: u8) !void {
@@ -4005,22 +4245,20 @@ fn trashRandomRunnerHandCards(
     amount: u8,
 ) !void {
     var remaining = amount;
-    var rng_state = fromOracleSeed(game.snapshot.state.rng_seed orelse return error.MissingRngSeed);
+    var rng_state = fromOracleSeed(game.rng_seed orelse return error.MissingRngSeed);
     while (remaining > 0 and game.runner_hand.items.len > 0) : (remaining -= 1) {
         const idx = randBelow(&rng_state, game.runner_hand.items.len);
         const trashed = game.runner_hand.orderedRemove(idx);
         try game.runner_discard.append(game.backing_allocator, trashed);
     }
-    game.snapshot.state.rng_seed = oracleSeed(rng_state);
-    try syncOwnedViews(game);
+    game.rng_seed = oracleSeed(rng_state);
 }
 
 fn shuffleDeck(game: *Game, side: state.Side) !void {
     const deck = deckList(game, side);
-    var rng_state = fromOracleSeed(game.snapshot.state.rng_seed orelse return error.MissingRngSeed);
+    var rng_state = fromOracleSeed(game.rng_seed orelse return error.MissingRngSeed);
     shuffleInPlace(state.CardInstance, &rng_state, deck.items);
-    game.snapshot.state.rng_seed = oracleSeed(rng_state);
-    try syncOwnedViews(game);
+    game.rng_seed = oracleSeed(rng_state);
 }
 
 fn replaceCardList(
@@ -4040,7 +4278,6 @@ fn removeCardFromHand(
     const hand = handList(game, side);
     if (index >= hand.items.len) return error.InvalidCardIndex;
     const removed = hand.orderedRemove(index);
-    try syncOwnedViews(game);
     return removed;
 }
 
@@ -4050,23 +4287,26 @@ fn appendDiscardCard(
     card: state.CardInstance,
 ) !void {
     try discardList(game, side).append(game.backing_allocator, card);
-    try syncOwnedViews(game);
 }
 
 fn spendClicks(
-    player: *state.PlayerState,
+    game: *Game,
+    side: state.Side,
     amount: u8,
 ) !void {
-    if (player.click < amount) return error.InsufficientClicks;
-    player.click -= amount;
+    const click = switch (side) { .corp => &game.corp_click, .runner => &game.runner_click };
+    if (click.* < amount) return error.InsufficientClicks;
+    click.* -= amount;
 }
 
 fn spendCredits(
-    player: *state.PlayerState,
+    game: *Game,
+    side: state.Side,
     amount: u16,
 ) !void {
-    if (player.credit < amount) return error.InsufficientCredits;
-    player.credit -= amount;
+    const credit = switch (side) { .corp => &game.corp_credit, .runner => &game.runner_credit };
+    if (credit.* < amount) return error.InsufficientCredits;
+    credit.* -= amount;
 }
 
 fn parseKeepState(text: []const u8) state.KeepState {
@@ -4076,27 +4316,72 @@ fn parseKeepState(text: []const u8) state.KeepState {
 }
 
 fn isCorpCardPlayableFromHand(
-    corp: *const state.PlayerState,
+    click: u8,
+    credit: u16,
     card: state.CardInstance,
 ) bool {
-    if (corp.click < 1) return false;
+    if (click < 1) return false;
     const card_type = card.card_type orelse return false;
     if (std.mem.eql(u8, card_type, "Operation")) {
-        return corp.credit >= (card.cost orelse 0);
+        return credit >= (card.cost orelse 0);
     }
 
     return card.install.kind != .none;
 }
 
 fn isRunnerCardPlayableFromHand(
-    runner: state.PlayerState,
+    click: u8,
+    credit: u16,
     card: state.CardInstance,
 ) bool {
-    if (runner.click < 1) return false;
-    if (card.runner_install.kind != .none) return runner.credit >= (card.cost orelse 0);
+    if (click < 1) return false;
+    if (card.runner_install.kind != .none) return credit >= (card.cost orelse 0);
     const card_type = card.card_type orelse return false;
     if (!std.mem.eql(u8, card_type, "Event")) return false;
-    return runner.credit >= (card.cost orelse 0);
+    return credit >= (card.cost orelse 0);
+}
+
+fn iceInstallChoices(
+    allocator: std.mem.Allocator,
+    game: *const Game,
+) ![]const state.PromptChoice {
+    // ICE can be installed on any central or "New remote"
+    // Filter out servers where the install cost exceeds available credits
+    // Order must match oracle: Archives, HQ, New remote, R&D
+    const entries = [_]struct { name: []const u8, index: ?usize }{
+        .{ .name = "Archives", .index = 2 },
+        .{ .name = "HQ", .index = 0 },
+        .{ .name = "New remote", .index = null }, // always cost 0
+        .{ .name = "R&D", .index = 1 },
+    };
+    var count: usize = 0;
+    for (entries) |entry| {
+        if (entry.index) |idx| {
+            if (idx < game.corp_servers.items.len) {
+                const ice_count: u16 = @intCast(game.corp_servers.items[idx].ices.items.len);
+                if (game.corp_credit >= ice_count) count += 1;
+            }
+        } else {
+            count += 1; // New remote always affordable
+        }
+    }
+    const choices = try allocator.alloc(state.PromptChoice, count);
+    var next: usize = 0;
+    for (entries) |entry| {
+        if (entry.index) |idx| {
+            if (idx < game.corp_servers.items.len) {
+                const ice_count: u16 = @intCast(game.corp_servers.items[idx].ices.items.len);
+                if (game.corp_credit >= ice_count) {
+                    choices[next] = stringChoice(entry.name);
+                    next += 1;
+                }
+            }
+        } else {
+            choices[next] = stringChoice(entry.name);
+            next += 1;
+        }
+    }
+    return choices;
 }
 
 fn installChoicesForCard(
@@ -4141,7 +4426,7 @@ fn promptChoiceActions(
 fn runTargetChoicesFor(
     allocator: std.mem.Allocator,
     kind: state.RunTargetKind,
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
 ) ![]const state.PromptChoice {
     const names: []const []const u8 = switch (kind) {
         .any_runnable => try runnableServers(allocator, servers),
@@ -4153,33 +4438,6 @@ fn runTargetChoicesFor(
         choices[idx] = stringChoice(name);
     }
     return choices;
-}
-
-fn removeCardAt(
-    allocator: std.mem.Allocator,
-    cards: []const state.CardInstance,
-    index: u8,
-) ![]const state.CardInstance {
-    const idx: usize = index;
-    if (idx >= cards.len) return error.InvalidCardIndex;
-    const copy = try allocator.alloc(state.CardInstance, cards.len - 1);
-    @memcpy(copy[0..idx], cards[0..idx]);
-    @memcpy(copy[idx..], cards[idx + 1 ..]);
-    return copy;
-}
-
-fn replaceCardAt(
-    allocator: std.mem.Allocator,
-    cards: []const state.CardInstance,
-    index: u8,
-    next_card: state.CardInstance,
-) ![]const state.CardInstance {
-    const idx: usize = index;
-    if (idx >= cards.len) return error.InvalidCardIndex;
-    const copy = try allocator.alloc(state.CardInstance, cards.len);
-    @memcpy(copy, cards);
-    copy[idx] = next_card;
-    return copy;
 }
 
 fn installCard(
@@ -4209,38 +4467,19 @@ fn installCard(
         } else {
             try server.content.append(allocator, card);
         }
-        try syncOwnedViews(game);
         return;
     }
 
     var server = MutableServer{
-        .name = try std.fmt.allocPrint(game.arena.allocator(), "remote{}", .{nextRemoteIndex(game.corp_servers.items.len)}),
+        .name = try std.fmt.allocPrint(game.arena.allocator(), "remote{}", .{game.next_remote_number}),
     };
+    game.next_remote_number += 1;
     if (installs_in_ice) {
         try server.ices.append(allocator, card);
     } else {
         try server.content.append(allocator, card);
     }
     try game.corp_servers.append(allocator, server);
-    try syncOwnedViews(game);
-}
-
-fn installedServerState(
-    allocator: std.mem.Allocator,
-    server: state.ServerState,
-    card: state.CardInstance,
-    installs_in_ice: bool,
-) !state.ServerState {
-    return if (installs_in_ice)
-        .{
-            .ices = try appendCard(allocator, server.ices, card),
-            .content = server.content,
-        }
-    else
-        .{
-            .ices = server.ices,
-            .content = try appendCard(allocator, server.content, card),
-        };
 }
 
 fn removeServerContentCard(
@@ -4253,7 +4492,7 @@ fn removeServerContentCard(
 
 fn runnableServers(
     allocator: std.mem.Allocator,
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
 ) ![]const []const u8 {
     const remote_count = if (servers.len <= 3) 0 else servers.len - 3;
     const names = try allocator.alloc([]const u8, 3 + remote_count);
@@ -4270,11 +4509,11 @@ fn runnableServers(
 
 const ServerLookup = struct {
     index: usize,
-    slot: state.ServerSlot,
+    slot: MutableServer,
 };
 
 fn findServerByRunPath(
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
     run_server: []const []const u8,
 ) !ServerLookup {
     if (run_server.len == 0) return error.UnsupportedServer;
@@ -4296,7 +4535,7 @@ fn findServerByRunPath(
 }
 
 fn findServerIndexByName(
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
     name: []const u8,
 ) !usize {
     for (servers, 0..) |server, idx| {
@@ -4325,7 +4564,7 @@ fn canonicalRunServer(
 }
 
 fn findServerIndexByDisplayName(
-    servers: []const state.ServerSlot,
+    servers: []const MutableServer,
     display_name: []const u8,
 ) !usize {
     if (std.mem.eql(u8, display_name, "HQ")) return findServerIndexByName(servers, "hq");
@@ -4344,48 +4583,6 @@ fn isCentralRunServer(run_server: []const []const u8) bool {
     return std.mem.eql(u8, run_server[0], "hq") or
         std.mem.eql(u8, run_server[0], "rnd") or
         std.mem.eql(u8, run_server[0], "archives");
-}
-
-fn replaceServerAt(
-    allocator: std.mem.Allocator,
-    servers: []const state.ServerSlot,
-    index: usize,
-    next_state: state.ServerState,
-) ![]const state.ServerSlot {
-    const next_servers = try allocator.alloc(state.ServerSlot, servers.len);
-    @memcpy(next_servers, servers);
-    next_servers[index] = .{
-        .name = servers[index].name,
-        .state = next_state,
-    };
-    return next_servers;
-}
-
-fn removeServerAt(
-    allocator: std.mem.Allocator,
-    servers: []const state.ServerSlot,
-    index: usize,
-) ![]const state.ServerSlot {
-    if (index >= servers.len) return error.UnknownServer;
-    const next_servers = try allocator.alloc(state.ServerSlot, servers.len - 1);
-    @memcpy(next_servers[0..index], servers[0..index]);
-    @memcpy(next_servers[index..], servers[index + 1 ..]);
-    return next_servers;
-}
-
-fn appendCard(
-    allocator: std.mem.Allocator,
-    cards: []const state.CardInstance,
-    card: state.CardInstance,
-) ![]const state.CardInstance {
-    const next_cards = try allocator.alloc(state.CardInstance, cards.len + 1);
-    @memcpy(next_cards[0..cards.len], cards);
-    next_cards[cards.len] = card;
-    return next_cards;
-}
-
-fn nextRemoteIndex(server_count: usize) usize {
-    return if (server_count <= 3) 1 else (server_count - 2);
 }
 
 fn otherSide(side: state.Side) state.Side {
@@ -4428,8 +4625,8 @@ test "action index stepping matches corp opening flow" {
     try std.testing.expectEqual(@as(usize, 10), legalActionCount(&generated));
 
     try applyActionByIndex(&generated, 0);
-    try std.testing.expectEqual(@as(u16, 9), generated.snapshot.state.corp.credit);
-    try std.testing.expectEqual(@as(u8, 2), generated.snapshot.state.corp.click);
+    try std.testing.expectEqual(@as(u16, 9), generated.corp_credit);
+    try std.testing.expectEqual(@as(u8, 2), generated.corp_click);
     try std.testing.expectEqual(@as(usize, 8), legalActionCount(&generated));
 
     var install_generated = try createInitialSnapshot(
@@ -4446,9 +4643,9 @@ test "action index stepping matches corp opening flow" {
     try std.testing.expectEqual(@as(usize, 4), legalActionCount(&install_generated));
 
     try applyActionByIndex(&install_generated, 0);
-    try std.testing.expectEqual(@as(u8, 2), install_generated.snapshot.state.corp.click);
+    try std.testing.expectEqual(@as(u8, 2), install_generated.corp_click);
     try std.testing.expectEqual(@as(usize, 8), legalActionCount(&install_generated));
-    try expectInstalledIceTitle(install_generated.snapshot.state.corp.servers, "Brân 1.0");
+    try expectInstalledIceTitle(install_generated.corp_servers.items, "Brân 1.0");
 }
 
 test "intermediate matchup snapshot initializes" {
@@ -4459,11 +4656,11 @@ test "intermediate matchup snapshot initializes" {
     );
     defer generated.deinit();
 
-    try std.testing.expectEqualStrings("system-gateway", generated.snapshot.state.format);
-    try std.testing.expectEqual(@as(u8, 7), generated.snapshot.state.corp.agenda_point_req);
-    try std.testing.expectEqual(@as(u8, 7), generated.snapshot.state.runner.agenda_point_req);
-    try std.testing.expectEqual(@as(usize, 39), generated.snapshot.state.corp.deck.len);
-    try std.testing.expectEqual(@as(usize, 35), generated.snapshot.state.runner.deck.len);
+    try std.testing.expectEqualStrings("system-gateway", generated.format);
+    try std.testing.expectEqual(@as(u8, 7), generated.corp_agenda_point_req);
+    try std.testing.expectEqual(@as(u8, 7), generated.runner_agenda_point_req);
+    try std.testing.expectEqual(@as(usize, 39), generated.corp_deck.items.len);
+    try std.testing.expectEqual(@as(usize, 35), generated.runner_deck.items.len);
     try std.testing.expectEqual(state.Side.corp, currentPlayer(&generated));
 }
 
@@ -4481,22 +4678,22 @@ test "runner telework contract install and hosted-credit ability" {
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
-    const install_action = findActionByTitle(generated.snapshot.legal_actions, .play_from_hand, "Telework Contract") orelse return error.MissingAction;
+    const install_action = findActionByTitle(generated.legal_actions, .play_from_hand, "Telework Contract") orelse return error.MissingAction;
     try applyAction(&generated, install_action);
 
-    try std.testing.expectEqual(@as(usize, 1), generated.snapshot.state.runner.rig_resources.len);
-    try std.testing.expectEqualStrings("Telework Contract", generated.snapshot.state.runner.rig_resources[0].title);
-    try std.testing.expectEqual(@as(u16, 9), generated.snapshot.state.runner.rig_resources[0].credit_counter);
-    try std.testing.expectEqual(@as(u16, 4), generated.snapshot.state.runner.credit);
-    try std.testing.expectEqual(@as(u8, 3), generated.snapshot.state.runner.click);
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_resources.items.len);
+    try std.testing.expectEqualStrings("Telework Contract", generated.runner_rig_resources.items[0].title);
+    try std.testing.expectEqual(@as(u16, 9), generated.runner_rig_resources.items[0].credit_counter);
+    try std.testing.expectEqual(@as(u16, 4), generated.runner_credit);
+    try std.testing.expectEqual(@as(u8, 3), generated.runner_click);
 
-    const use_action = findInstalledAbilityAction(generated.snapshot.legal_actions, "Telework Contract") orelse return error.MissingAction;
+    const use_action = findInstalledAbilityAction(generated.legal_actions, "Telework Contract") orelse return error.MissingAction;
     try applyAction(&generated, use_action);
 
-    try std.testing.expectEqual(@as(u16, 7), generated.snapshot.state.runner.credit);
-    try std.testing.expectEqual(@as(u8, 2), generated.snapshot.state.runner.click);
-    try std.testing.expectEqual(@as(u16, 6), generated.snapshot.state.runner.rig_resources[0].credit_counter);
-    try std.testing.expect(findInstalledAbilityAction(generated.snapshot.legal_actions, "Telework Contract") == null);
+    try std.testing.expectEqual(@as(u16, 7), generated.runner_credit);
+    try std.testing.expectEqual(@as(u8, 2), generated.runner_click);
+    try std.testing.expectEqual(@as(u16, 6), generated.runner_rig_resources.items[0].credit_counter);
+    try std.testing.expect(findInstalledAbilityAction(generated.legal_actions, "Telework Contract") == null);
 }
 
 test "send a message steal triggers corp rez choice when unrezzed ice exists" {
@@ -4511,7 +4708,7 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
 
-    const ice_install = findFirstCorpIceInstallPlay(generated.snapshot.legal_actions, generated.snapshot.state.corp.hand) orelse return error.MissingAction;
+    const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
     const ice_title = ice_install.card_title orelse return error.MissingAction;
     try applyAction(&generated, ice_install);
     try applyAction(&generated, .{
@@ -4521,29 +4718,29 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
         .choice = stringChoice("New remote"),
     });
 
-    try applyAction(&generated, findActionByTitle(generated.snapshot.legal_actions, .play_from_hand, "Send a Message") orelse return error.MissingAction);
+    try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Send a Message") orelse return error.MissingAction);
     try applyAction(&generated, .{
         .kind = .prompt_choice,
         .side = .corp,
         .prompt_type = prompt_install_destination,
         .choice = stringChoice("New remote"),
     });
-    generated.snapshot.state.corp.credit = 20;
+    generated.corp_credit = 20;
     try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 2") orelse return error.MissingAction);
+    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 2") orelse return error.MissingAction);
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
-    try applyAction(&generated, findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Steal") orelse return error.MissingAction);
+    try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Steal") orelse return error.MissingAction);
 
-    const rez_choice = findPromptChoiceAction(generated.snapshot.legal_actions, .corp, ice_title) orelse return error.MissingAction;
+    const rez_choice = findPromptChoiceAction(generated.legal_actions, .corp, ice_title) orelse return error.MissingAction;
     try applyAction(&generated, rez_choice);
 
-    try std.testing.expect(iceIsRezzed(generated.snapshot.state.corp.servers, ice_title));
+    try std.testing.expect(iceIsRezzed(generated.corp_servers.items, ice_title));
 }
 
 test "run ice windows can prompt corp rez on approached ice when enabled" {
@@ -4557,7 +4754,7 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
 
-    const ice_install = findFirstCorpIceInstallPlay(generated.snapshot.legal_actions, generated.snapshot.state.corp.hand) orelse return error.MissingAction;
+    const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
     const ice_title = ice_install.card_title orelse return error.MissingAction;
     try applyAction(&generated, ice_install);
     try applyAction(&generated, .{
@@ -4566,31 +4763,31 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
         .prompt_type = prompt_install_destination,
         .choice = stringChoice("New remote"),
     });
-    generated.snapshot.state.corp.credit = 20;
-    while (findBasicAbilityAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    generated.corp_credit = 20;
+    while (findBasicAbilityAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try applyAction(&generated, gain_action);
     }
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    const run_action = findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction;
+    const run_action = findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction;
     try applyAction(&generated, run_action);
 
     var found_rez_prompt = false;
     var guard: usize = 0;
-    while (guard < 12 and generated.snapshot.state.run != null) : (guard += 1) {
-        if (generated.snapshot.decision_side == .corp) {
-            if (findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Rez approached ice")) |rez_action| {
+    while (guard < 12 and generated.run != null) : (guard += 1) {
+        if (generated.decision_side == .corp) {
+            if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice")) |rez_action| {
                 try applyAction(&generated, rez_action);
                 found_rez_prompt = true;
                 break;
             }
         }
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse return error.MissingAction;
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse return error.MissingAction;
         try applyAction(&generated, continue_action);
     }
     try std.testing.expect(found_rez_prompt);
 
-    try std.testing.expect(iceIsRezzed(generated.snapshot.state.corp.servers, ice_title));
+    try std.testing.expect(iceIsRezzed(generated.corp_servers.items, ice_title));
 }
 
 test "corp installed credit ability on regolith pays out and trashes when empty" {
@@ -4610,22 +4807,22 @@ test "corp installed credit ability on regolith pays out and trashes when empty"
     regolith.rezzed = true;
     try installCard(&generated, regolith, "New remote");
 
-    generated.snapshot.state.corp.click = 6;
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated.snapshot.state.corp);
-    const credit_before = generated.snapshot.state.corp.credit;
+    generated.corp_click = 6;
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    const credit_before = generated.corp_credit;
 
     var use_count: usize = 0;
     while (use_count < 5) : (use_count += 1) {
-        const action = findInstalledAbilityAction(generated.snapshot.legal_actions, "Regolith Mining License") orelse return error.MissingAction;
+        const action = findInstalledAbilityAction(generated.legal_actions, "Regolith Mining License") orelse return error.MissingAction;
         try applyAction(&generated, action);
     }
 
-    try std.testing.expectEqual(@as(u16, credit_before + 15), generated.snapshot.state.corp.credit);
-    try std.testing.expect(findInstalledAbilityAction(generated.snapshot.legal_actions, "Regolith Mining License") == null);
+    try std.testing.expectEqual(@as(u16, credit_before + 15), generated.corp_credit);
+    try std.testing.expect(findInstalledAbilityAction(generated.legal_actions, "Regolith Mining License") == null);
 
     var found_discard = false;
-    for (generated.snapshot.state.corp.discard) |card| {
+    for (generated.corp_discard.items) |card| {
         if (std.mem.eql(u8, card.title, "Regolith Mining License")) {
             found_discard = true;
             break;
@@ -4650,11 +4847,11 @@ test "offworld office on-score grants credits" {
     offworld.advancement_counter = 3;
     try installCard(&generated, offworld, "New remote");
 
-    generated.snapshot.decision_side = .corp;
-    generated.snapshot.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated.snapshot.state.corp);
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
 
-    const credit_before = generated.snapshot.state.corp.credit;
-    const score_action = findBasicAbilityAction(generated.snapshot.legal_actions, .corp, .score_agenda) orelse return error.MissingAction;
+    const credit_before = generated.corp_credit;
+    const score_action = findBasicAbilityAction(generated.legal_actions, .corp, .score_agenda) orelse return error.MissingAction;
     try applyAction(&generated, score_action);
     try applyAction(&generated, .{
         .kind = .prompt_choice,
@@ -4663,8 +4860,8 @@ test "offworld office on-score grants credits" {
         .choice = stringChoice("remote1|c|0"),
     });
 
-    try std.testing.expectEqual(@as(u8, 2), generated.snapshot.state.corp.agenda_point);
-    try std.testing.expectEqual(@as(u16, credit_before + 7), generated.snapshot.state.corp.credit);
+    try std.testing.expectEqual(@as(u8, 2), generated.corp_agenda_point);
+    try std.testing.expectEqual(@as(u16, credit_before + 7), generated.corp_credit);
 }
 
 test "urtica cipher access applies net damage when corp can pay" {
@@ -4682,31 +4879,61 @@ test "urtica cipher access applies net damage when corp can pay" {
     var urtica = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30045));
     urtica.advancement_counter = 2;
     try installCard(&generated, urtica, "New remote");
-    generated.snapshot.state.corp.credit = 20;
+    generated.corp_credit = 20;
 
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    const hand_before = generated.snapshot.state.runner.hand.len;
-    const discard_before = generated.snapshot.state.runner.discard.len;
-    const corp_credit_before = generated.snapshot.state.corp.credit;
+    const hand_before = generated.runner_hand.items.len;
+    const discard_before = generated.runner_discard.items.len;
+    const corp_credit_before = generated.corp_credit;
 
-    try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction);
+    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
     var guard: usize = 0;
-    while (guard < 16 and generated.snapshot.state.run != null) : (guard += 1) {
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse break;
+    while (guard < 32 and generated.run != null and !generated.game_over) : (guard += 1) {
+        // Handle corp net-damage-on-access prompt (shown after corp continues in success phase)
+        if (generated.decision_side == .corp) {
+            if (generated.corp_prompt_state) |ps| {
+                if (std.mem.eql(u8, ps.prompt_type, "net-damage-on-access")) {
+                    // Find any pay action starting with "Pay"
+                    var found_pay: ?state.LegalAction = null;
+                    for (generated.legal_actions) |action| {
+                        if (action.kind == .prompt_choice and action.side == .corp) {
+                            if (action.choice) |choice| {
+                                if (choice.text) |text| {
+                                    if (std.mem.startsWith(u8, text, "Pay ")) {
+                                        found_pay = action;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (found_pay) |pay_action| {
+                        try applyAction(&generated, pay_action);
+                        continue;
+                    }
+                }
+            }
+        }
+        // Handle runner access choices (trash / no action)
+        if (findPromptChoiceAction(generated.legal_actions, .runner, "No action")) |no_action| {
+            try applyAction(&generated, no_action);
+            continue;
+        }
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
 
     const expected_damage: usize = @min(hand_before, @as(usize, 4));
-    try std.testing.expectEqual(hand_before - expected_damage, generated.snapshot.state.runner.hand.len);
-    try std.testing.expectEqual(discard_before + expected_damage, generated.snapshot.state.runner.discard.len);
-    try std.testing.expectEqual(corp_credit_before - 2, generated.snapshot.state.corp.credit);
+    try std.testing.expectEqual(hand_before - expected_damage, generated.runner_hand.items.len);
+    try std.testing.expectEqual(discard_before + expected_damage, generated.runner_discard.items.len);
+    try std.testing.expectEqual(corp_credit_before - 2, generated.corp_credit);
 }
 
-fn expectInstalledIceTitle(servers: []const state.ServerSlot, title: []const u8) !void {
+fn expectInstalledIceTitle(servers: []const MutableServer, title: []const u8) !void {
     var match_count: usize = 0;
     for (servers) |server| {
-        for (server.state.ices) |ice| {
+        for (server.ices.items) |ice| {
             if (std.mem.eql(u8, ice.title, title)) match_count += 1;
         }
     }
@@ -4715,26 +4942,32 @@ fn expectInstalledIceTitle(servers: []const state.ServerSlot, title: []const u8)
 
 fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
     // Spend remaining clicks before ending turn (unit test convenience)
-    const player = switch (side) {
-        .corp => &generated.snapshot.state.corp,
-        .runner => &generated.snapshot.state.runner,
-    };
-    while (player.click > 0) {
-        player.click -= 1;
-        player.credit += 1;
+    switch (side) {
+        .corp => {
+            while (generated.corp_click > 0) {
+                generated.corp_click -= 1;
+                generated.corp_credit += 1;
+            }
+        },
+        .runner => {
+            while (generated.runner_click > 0) {
+                generated.runner_click -= 1;
+                generated.runner_credit += 1;
+            }
+        },
     }
     try applyAction(generated, .{ .kind = .end_turn, .side = side });
     // Handle discard prompts
     const player_ps = switch (side) {
-        .corp => generated.snapshot.state.corp.prompt_state,
-        .runner => generated.snapshot.state.runner.prompt_state,
+        .corp => generated.corp_prompt_state,
+        .runner => generated.runner_prompt_state,
     };
     if (player_ps) |ps| {
         if (std.mem.eql(u8, ps.prompt_type, prompt_discard)) {
             while (true) {
                 const pp = switch (side) {
-                    .corp => generated.snapshot.state.corp.prompt_state,
-                    .runner => generated.snapshot.state.runner.prompt_state,
+                    .corp => generated.corp_prompt_state,
+                    .runner => generated.runner_prompt_state,
                 };
                 if (pp == null) break;
                 if (!std.mem.eql(u8, pp.?.prompt_type, prompt_discard)) break;
@@ -4811,18 +5044,18 @@ fn findFirstRunAction(actions: []const state.LegalAction, side: state.Side) ?sta
     return null;
 }
 
-fn findRemoteWithIce(servers: []const state.ServerSlot) ?[]const u8 {
+fn findRemoteWithIce(servers: []const MutableServer) ?[]const u8 {
     for (servers) |server| {
         if (!std.mem.startsWith(u8, server.name, "remote")) continue;
-        if (server.state.ices.len == 0) continue;
+        if (server.ices.items.len == 0) continue;
         return server.name;
     }
     return null;
 }
 
-fn iceIsRezzed(servers: []const state.ServerSlot, title: []const u8) bool {
+fn iceIsRezzed(servers: []const MutableServer, title: []const u8) bool {
     for (servers) |server| {
-        for (server.state.ices) |ice| {
+        for (server.ices.items) |ice| {
             if (std.mem.eql(u8, ice.title, title) and ice.rezzed) return true;
         }
     }
@@ -4844,13 +5077,13 @@ test "flatline terminal condition when brain damage equals hand size" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
     // Set up flatline condition: brain damage >= hand size
-    generated.snapshot.state.runner.brain_damage = 5;
-    const hand_size = generated.snapshot.state.runner.hand.len;
-    generated.snapshot.state.runner.brain_damage = @intCast(hand_size);
+    generated.runner_brain_damage = 5;
+    const hand_size = generated.runner_hand.items.len;
+    generated.runner_brain_damage = @intCast(hand_size);
 
     updateTerminalState(&generated);
-    try std.testing.expect(generated.snapshot.state.game_over);
-    try std.testing.expectEqual(state.Side.corp, generated.snapshot.state.winner);
+    try std.testing.expect(generated.game_over);
+    try std.testing.expectEqual(state.Side.corp, generated.winner);
 }
 
 test "jack out is available after passing ice" {
@@ -4865,7 +5098,7 @@ test "jack out is available after passing ice" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
 
     // Install unrezzed ICE on a remote
-    const ice_install = findFirstCorpIceInstallPlay(generated.snapshot.legal_actions, generated.snapshot.state.corp.hand) orelse return error.MissingAction;
+    const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
     try applyAction(&generated, ice_install);
     try applyAction(&generated, .{
         .kind = .prompt_choice,
@@ -4879,22 +5112,22 @@ test "jack out is available after passing ice" {
 
     // Runner starts turn and runs the remote
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction);
+    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
 
     // Progress: initiation -> approach-ice -> movement (no rez, no encounter since ice is unrezzed)
     var guard: usize = 0;
     var found_jack_out = false;
-    while (guard < 30 and generated.snapshot.state.run != null) : (guard += 1) {
+    while (guard < 30 and generated.run != null) : (guard += 1) {
         // Debug: print current phase
         // std.debug.print("Phase: {s}, Side: {any}, Actions: {d}\n", .{
-        //     generated.snapshot.state.run.?.phase,
-        //     generated.snapshot.decision_side,
-        //     generated.snapshot.legal_actions.len
+        //     generated.run.?.phase,
+        //     generated.decision_side,
+        //     generated.legal_actions.len
         // });
 
         // Check for jack_out action when it's runner's turn
-        if (generated.snapshot.decision_side == .runner) {
-            for (generated.snapshot.legal_actions) |action| {
+        if (generated.decision_side == .runner) {
+            for (generated.legal_actions) |action| {
                 if (action.kind == .jack_out) {
                     found_jack_out = true;
                     break;
@@ -4904,13 +5137,13 @@ test "jack out is available after passing ice" {
         }
 
         // Handle rez window - corp should decline
-        if (findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "No rez")) |no_rez| {
+        if (findPromptChoiceAction(generated.legal_actions, .corp, "No rez")) |no_rez| {
             try applyAction(&generated, no_rez);
             continue;
         }
 
         // Continue through the run
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse break;
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
 
@@ -4933,25 +5166,25 @@ test "ICE subroutine end the run fires" {
     tithe.rezzed = true;
     try installCard(&generated, tithe, "New remote");
 
-    generated.snapshot.state.corp.credit = 20;
+    generated.corp_credit = 20;
     try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    const hand_before = generated.snapshot.state.runner.hand.len;
+    const hand_before = generated.runner_hand.items.len;
 
-    try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction);
+    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
 
     // Progress through the run - ICE should fire and ETR
     var guard: usize = 0;
-    while (guard < 20 and generated.snapshot.state.run != null) : (guard += 1) {
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse break;
+    while (guard < 20 and generated.run != null) : (guard += 1) {
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
 
     // Run should have ended (ETR fired)
-    try std.testing.expect(generated.snapshot.state.run == null);
+    try std.testing.expect(generated.run == null);
     // Net damage should have been dealt (1 card from Tithe's first subroutine)
-    try std.testing.expectEqual(hand_before - 1, generated.snapshot.state.runner.hand.len);
+    try std.testing.expectEqual(hand_before - 1, generated.runner_hand.items.len);
 }
 
 test "ICE net damage subroutine applies damage" {
@@ -4970,23 +5203,23 @@ test "ICE net damage subroutine applies damage" {
     karuna.rezzed = true;
     try installCard(&generated, karuna, "New remote");
 
-    generated.snapshot.state.corp.credit = 20;
+    generated.corp_credit = 20;
     try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    const hand_before = generated.snapshot.state.runner.hand.len;
+    const hand_before = generated.runner_hand.items.len;
 
-    try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction);
+    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
 
     // Progress through the run
     var guard: usize = 0;
-    while (guard < 20 and generated.snapshot.state.run != null) : (guard += 1) {
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse break;
+    while (guard < 20 and generated.run != null) : (guard += 1) {
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
 
     // Karunā should have dealt 4 net damage (2 + 2)
-    try std.testing.expectEqual(@as(usize, @max(0, hand_before - 4)), generated.snapshot.state.runner.hand.len);
+    try std.testing.expectEqual(@as(usize, @max(0, hand_before - 4)), generated.runner_hand.items.len);
 }
 
 test "runner loses credits subroutine" {
@@ -5005,23 +5238,23 @@ test "runner loses credits subroutine" {
     whitespace.rezzed = true;
     try installCard(&generated, whitespace, "New remote");
 
-    generated.snapshot.state.corp.credit = 20;
+    generated.corp_credit = 20;
     try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    const credit_before = generated.snapshot.state.runner.credit;
+    const credit_before = generated.runner_credit;
 
-    try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction);
+    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
 
     // Progress through the run
     var guard: usize = 0;
-    while (guard < 20 and generated.snapshot.state.run != null) : (guard += 1) {
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse break;
+    while (guard < 20 and generated.run != null) : (guard += 1) {
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
 
     // Whitespace should have reduced runner credits by 4 (2 + 2)
-    try std.testing.expectEqual(@as(u16, @max(0, credit_before - 4)), generated.snapshot.state.runner.credit);
+    try std.testing.expectEqual(@as(u16, @max(0, credit_before - 4)), generated.runner_credit);
 }
 
 test "tread lightly run rez cost bonus is applied during corp rez window" {
@@ -5036,7 +5269,7 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
 
     // Install unrezzed ICE on a remote
-    const ice_install = findFirstCorpIceInstallPlay(generated.snapshot.legal_actions, generated.snapshot.state.corp.hand) orelse return error.MissingAction;
+    const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
     const ice_title = ice_install.card_title orelse return error.MissingAction;
     try applyAction(&generated, ice_install);
     try applyAction(&generated, .{
@@ -5046,38 +5279,38 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
         .choice = stringChoice("New remote"),
     });
 
-    generated.snapshot.state.corp.credit = 20;
+    generated.corp_credit = 20;
     try endTurnAndDiscard(&generated, .corp);
 
     // Runner plays Tread Lightly which sets rez cost bonus to 3
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    try applyAction(&generated, findActionByTitle(generated.snapshot.legal_actions, .play_from_hand, "Tread Lightly") orelse return error.MissingAction);
+    try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Tread Lightly") orelse return error.MissingAction);
 
     // Tread Lightly prompts for run target
-    try applyAction(&generated, findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1") orelse return error.MissingAction);
+    try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Server 1") orelse return error.MissingAction);
 
     // Verify rez cost bonus is set
-    try std.testing.expectEqual(@as(u16, 3), generated.snapshot.state.run.?.rez_cost_bonus);
+    try std.testing.expectEqual(@as(u16, 3), generated.run.?.rez_cost_bonus);
 
     // Run through to approach-ice phase
     var guard: usize = 0;
     var found_rez_prompt = false;
-    while (guard < 20 and generated.snapshot.state.run != null) : (guard += 1) {
+    while (guard < 20 and generated.run != null) : (guard += 1) {
         // Look for rez window prompt
-        if (findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Rez approached ice")) |rez_action| {
+        if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice")) |rez_action| {
             found_rez_prompt = true;
             // Corp has 20 credits, should be able to rez regardless of ice cost
-            try std.testing.expect(generated.snapshot.state.corp.credit >= 4);
+            try std.testing.expect(generated.corp_credit >= 4);
             try applyAction(&generated, rez_action);
             break;
         }
-        const continue_action = findActionByKind(generated.snapshot.legal_actions, .@"continue", generated.snapshot.decision_side) orelse break;
+        const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
 
     try std.testing.expect(found_rez_prompt);
     // ICE should be rezzed
-    try std.testing.expect(iceIsRezzed(generated.snapshot.state.corp.servers, ice_title));
+    try std.testing.expect(iceIsRezzed(generated.corp_servers.items, ice_title));
 }
 
 test "sure gamble gains credits without losing extra clicks" {
@@ -5095,15 +5328,15 @@ test "sure gamble gains credits without losing extra clicks" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
     // Runner starts turn with 4 clicks and 5 credits
-    try std.testing.expectEqual(@as(u8, 4), generated.snapshot.state.runner.click);
-    try std.testing.expectEqual(@as(u16, 5), generated.snapshot.state.runner.credit);
+    try std.testing.expectEqual(@as(u8, 4), generated.runner_click);
+    try std.testing.expectEqual(@as(u16, 5), generated.runner_credit);
 
     // Play Sure Gamble: costs 5 credits, 1 click, no lose_clicks
-    const sg_action = findActionByTitle(generated.snapshot.legal_actions, .play_from_hand, "Sure Gamble") orelse return error.MissingAction;
+    const sg_action = findActionByTitle(generated.legal_actions, .play_from_hand, "Sure Gamble") orelse return error.MissingAction;
     try applyAction(&generated, sg_action);
 
     // Should have spent only 1 click (not 2 like Creative Commission)
-    try std.testing.expectEqual(@as(u8, 3), generated.snapshot.state.runner.click);
+    try std.testing.expectEqual(@as(u8, 3), generated.runner_click);
     // Should have gained 9 credits (spent 5, gained 9, net 4 from starting 5 = 9)
-    try std.testing.expectEqual(@as(u16, 9), generated.snapshot.state.runner.credit);
+    try std.testing.expectEqual(@as(u16, 9), generated.runner_credit);
 }

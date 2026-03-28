@@ -7,9 +7,15 @@ const oracle_socket_name = "o.sock";
 const OracleServer = struct {
     child: std.process.Child,
     socket_path: []const u8,
+    pid_path: []const u8,
 
     fn init(allocator: std.mem.Allocator, repo_root: []const u8) !OracleServer {
         const socket_path = try defaultOracleSocketPath(allocator);
+        const pid_path = try defaultOraclePidPath(allocator);
+
+        // Clean up any stale socket/process from a previous crashed run
+        cleanupStaleOracle(socket_path, pid_path);
+
         const argv = [_][]const u8{
             "mise",
             "exec",
@@ -28,21 +34,29 @@ const OracleServer = struct {
         child.stderr_behavior = .Ignore;
         try child.spawn();
         try child.waitForSpawn();
+
+        // Write PID file so we can clean up dangling processes
+        writePidFile(pid_path, child.id) catch {};
+
         try waitForUnixSocket(socket_path);
         return .{
             .child = child,
             .socket_path = socket_path,
+            .pid_path = pid_path,
         };
     }
 
     fn deinit(self: *OracleServer) void {
         _ = self.child.kill() catch {};
         std.fs.deleteFileAbsolute(self.socket_path) catch {};
+        std.fs.deleteFileAbsolute(self.pid_path) catch {};
     }
 };
 
 var oracle_server_mutex: std.Thread.Mutex = .{};
 var persistent_oracle_server: ?OracleServer = null;
+// Limits concurrent fallback (one-shot) oracle processes to 1
+var fallback_semaphore: std.Thread.Mutex = .{};
 
 pub const BeginnerInitialSnapshot = struct {
     arena: std.heap.ArenaAllocator,
@@ -165,9 +179,9 @@ pub fn loadBeginnerInitialSnapshot(
 
     const allocator = arena.allocator();
     const source = try std.fs.cwd().readFileAlloc(allocator, fixture_path, 64 << 20);
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, source, .{});
+    const root_value = try std.json.parseFromSliceLeaky(std.json.Value, allocator, source, .{});
 
-    const root = parsed.value.object;
+    const root = root_value.object;
     const initial = try getRequired(.object, root, "initial");
     const oracle_state = try getRequired(.object, initial, "oracle-state");
     const legal_actions_value = try getRequired(.array, initial, "legal-actions");
@@ -227,12 +241,15 @@ pub fn replayActionsWithMatchup(
 
     const allocator = arena.allocator();
     const repo_root = try repoRootPath(allocator);
-    const parsed = blk: {
+    const root_value = blk: {
         const socket_path = try ensurePersistentOracleServer(repo_root);
         const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions, matchup) catch {
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
+            // Serialize fallback spawns to avoid multiple concurrent lein processes
+            fallback_semaphore.lock();
+            defer fallback_semaphore.unlock();
             const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, matchup);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
@@ -241,12 +258,15 @@ pub fn replayActionsWithMatchup(
             oracle_server_mutex.lock();
             defer oracle_server_mutex.unlock();
             resetPersistentOracleServerLocked();
+            // Serialize fallback spawns to avoid multiple concurrent lein processes
+            fallback_semaphore.lock();
+            defer fallback_semaphore.unlock();
             const fallback_response = try runReplayOracleOnce(allocator, repo_root, seed, actions, matchup);
             break :blk try parseReplayResponse(allocator, fallback_response);
         };
     };
 
-    const root = parsed.value.object;
+    const root = root_value.object;
     const oracle_state = try getRequired(.object, root, "oracle-state");
     const legal_actions_value = try getRequired(.array, root, "legal-actions");
 
@@ -265,6 +285,13 @@ pub fn freeSummary(allocator: std.mem.Allocator, summary: *FixtureSummary) void 
     allocator.free(summary.matchup);
     allocator.free(summary.decision_side);
     summary.* = undefined;
+}
+
+/// Shut down the persistent oracle server if running. Call this on test suite exit.
+pub fn shutdownPersistentOracle() void {
+    oracle_server_mutex.lock();
+    defer oracle_server_mutex.unlock();
+    resetPersistentOracleServerLocked();
 }
 
 fn ensurePersistentOracleServer(repo_root: []const u8) ![]const u8 {
@@ -313,6 +340,9 @@ fn runReplayOracleSocket(
     return response.toOwnedSlice(allocator);
 }
 
+// Timeout for one-shot fallback oracle processes (2 minutes)
+const fallback_timeout_ns: u64 = 120 * std.time.ns_per_s;
+
 fn runReplayOracleOnce(
     allocator: std.mem.Allocator,
     repo_root: []const u8,
@@ -347,8 +377,23 @@ fn runReplayOracleOnce(
     try child.waitForSpawn();
 
     const stdout_file = child.stdout orelse return error.ReplayOracleFailed;
+
+    // Spawn a watchdog thread that kills the process after the timeout
+    const pid = child.id;
+    const watchdog = std.Thread.spawn(.{}, watchdogKill, .{ pid, fallback_timeout_ns }) catch null;
+    defer if (watchdog) |w| w.detach();
+
     const response = try stdout_file.readToEndAlloc(allocator, 64 << 20);
-    _ = try child.wait();
+    const term = try child.wait();
+
+    // If killed by signal, the watchdog likely fired
+    switch (term) {
+        .Signal => {
+            allocator.free(response);
+            return error.ReplayOracleTimedOut;
+        },
+        else => {},
+    }
     return response;
 }
 
@@ -391,8 +436,8 @@ fn extractJsonObject(response: []const u8) ![]const u8 {
 fn parseReplayResponse(
     allocator: std.mem.Allocator,
     response: []const u8,
-) !std.json.Parsed(std.json.Value) {
-    return std.json.parseFromSlice(std.json.Value, allocator, try extractJsonObject(response), .{});
+) !std.json.Value {
+    return std.json.parseFromSliceLeaky(std.json.Value, allocator, try extractJsonObject(response), .{});
 }
 
 fn repoRootPath(allocator: std.mem.Allocator) ![]const u8 {
@@ -407,6 +452,43 @@ fn defaultOracleSocketPath(allocator: std.mem.Allocator) ![]const u8 {
         else => return err,
     };
     return try std.fs.path.join(allocator, &.{ dir, oracle_socket_name });
+}
+
+fn defaultOraclePidPath(allocator: std.mem.Allocator) ![]const u8 {
+    const home = try std.process.getEnvVarOwned(allocator, "HOME");
+    const dir = try std.fs.path.join(allocator, &.{ home, oracle_dir_name });
+    return try std.fs.path.join(allocator, &.{ dir, "oracle.pid" });
+}
+
+fn writePidFile(pid_path: []const u8, pid: std.process.Child.Id) !void {
+    var buf: [20]u8 = undefined;
+    const pid_str = std.fmt.bufPrint(&buf, "{d}", .{pid}) catch return;
+    std.fs.cwd().writeFile(.{ .sub_path = pid_path, .data = pid_str }) catch {};
+}
+
+fn cleanupStaleOracle(socket_path: []const u8, pid_path: []const u8) void {
+    // Try to kill any leftover process from a previous run
+    if (std.fs.cwd().readFileAlloc(std.heap.page_allocator, pid_path, 20) catch null) |pid_str| {
+        defer std.heap.page_allocator.free(pid_str);
+        const pid = std.fmt.parseInt(std.process.Child.Id, pid_str, 10) catch {
+            // Invalid PID file, just clean up files
+            std.fs.deleteFileAbsolute(pid_path) catch {};
+            std.fs.deleteFileAbsolute(socket_path) catch {};
+            return;
+        };
+        // Send SIGKILL to the stale process
+        std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+        // Give it a moment to die
+        std.Thread.sleep(100 * std.time.ns_per_ms);
+    }
+    // Remove stale socket and PID files
+    std.fs.deleteFileAbsolute(socket_path) catch {};
+    std.fs.deleteFileAbsolute(pid_path) catch {};
+}
+
+fn watchdogKill(pid: std.process.Child.Id, timeout_ns: u64) void {
+    std.Thread.sleep(timeout_ns);
+    std.posix.kill(pid, std.posix.SIG.KILL) catch {};
 }
 
 fn waitForUnixSocket(socket_path: []const u8) !void {

@@ -21,33 +21,33 @@ test "generated beginner setup matches oracle fixture for seed 5" {
     );
     defer generated.deinit();
 
-    try std.testing.expectEqual(oracle.snapshot.state.seed, generated.snapshot.state.seed);
-    try std.testing.expectEqual(oracle.snapshot.state.rng_seed.?, generated.snapshot.state.rng_seed.?);
-    try std.testing.expectEqual(oracle.snapshot.state.active_player, generated.snapshot.state.active_player);
-    try std.testing.expectEqual(oracle.snapshot.state.turn, generated.snapshot.state.turn);
-    try std.testing.expectEqual(oracle.snapshot.state.end_turn, generated.snapshot.state.end_turn);
+    try std.testing.expectEqual(oracle.snapshot.state.seed, generated.seed);
+    try std.testing.expectEqual(oracle.snapshot.state.rng_seed.?, generated.rng_seed.?);
+    try std.testing.expectEqual(oracle.snapshot.state.active_player, generated.active_player);
+    try std.testing.expectEqual(oracle.snapshot.state.turn, generated.turn);
+    try std.testing.expectEqual(oracle.snapshot.state.end_turn, generated.end_turn);
 
-    try std.testing.expectEqualStrings(oracle.snapshot.state.corp.identity.title, generated.snapshot.state.corp.identity.title);
-    try std.testing.expectEqualStrings(oracle.snapshot.state.runner.identity.title, generated.snapshot.state.runner.identity.title);
-    try std.testing.expectEqualStrings(oracle.snapshot.state.corp.basic_action_card.title, generated.snapshot.state.corp.basic_action_card.title);
-    try std.testing.expectEqualStrings(oracle.snapshot.state.runner.basic_action_card.title, generated.snapshot.state.runner.basic_action_card.title);
+    try std.testing.expectEqualStrings(oracle.snapshot.state.corp.identity.title, generated.corp_identity.title);
+    try std.testing.expectEqualStrings(oracle.snapshot.state.runner.identity.title, generated.runner_identity.title);
+    try std.testing.expectEqualStrings(oracle.snapshot.state.corp.basic_action_card.title, generated.corp_basic_action_card.title);
+    try std.testing.expectEqualStrings(oracle.snapshot.state.runner.basic_action_card.title, generated.runner_basic_action_card.title);
 
-    try std.testing.expectEqual(oracle.snapshot.state.corp.click_per_turn, generated.snapshot.state.corp.click_per_turn);
-    try std.testing.expectEqual(oracle.snapshot.state.runner.click_per_turn, generated.snapshot.state.runner.click_per_turn);
-    try std.testing.expectEqual(oracle.snapshot.state.corp.credit, generated.snapshot.state.corp.credit);
-    try std.testing.expectEqual(oracle.snapshot.state.runner.credit, generated.snapshot.state.runner.credit);
-    try std.testing.expectEqual(oracle.snapshot.state.corp.hand_size.total, generated.snapshot.state.corp.hand_size.total);
-    try std.testing.expectEqual(oracle.snapshot.state.runner.hand_size.total, generated.snapshot.state.runner.hand_size.total);
+    try std.testing.expectEqual(oracle.snapshot.state.corp.click_per_turn, generated.corp_click_per_turn);
+    try std.testing.expectEqual(oracle.snapshot.state.runner.click_per_turn, generated.runner_click_per_turn);
+    try std.testing.expectEqual(oracle.snapshot.state.corp.credit, generated.corp_credit);
+    try std.testing.expectEqual(oracle.snapshot.state.runner.credit, generated.runner_credit);
+    try std.testing.expectEqual(oracle.snapshot.state.corp.hand_size.total, generated.corp_hand_size.total);
+    try std.testing.expectEqual(oracle.snapshot.state.runner.hand_size.total, generated.runner_hand_size.total);
 
-    try std.testing.expectEqual(oracle.snapshot.decision_side, generated.snapshot.decision_side);
-    try std.testing.expectEqual(oracle.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
-    try std.testing.expectEqualStrings(oracle.snapshot.legal_actions[0].choice.?.text.?, generated.snapshot.legal_actions[0].choice.?.text.?);
-    try std.testing.expectEqualStrings(oracle.snapshot.legal_actions[1].choice.?.text.?, generated.snapshot.legal_actions[1].choice.?.text.?);
+    try std.testing.expectEqual(oracle.snapshot.decision_side, generated.decision_side);
+    try std.testing.expectEqual(oracle.snapshot.legal_actions.len, generated.legal_actions.len);
+    try std.testing.expectEqualStrings(oracle.snapshot.legal_actions[0].choice.?.text.?, generated.legal_actions[0].choice.?.text.?);
+    try std.testing.expectEqualStrings(oracle.snapshot.legal_actions[1].choice.?.text.?, generated.legal_actions[1].choice.?.text.?);
 
-    try expectSameTitles(oracle.snapshot.state.corp.hand, generated.snapshot.state.corp.hand);
-    try expectSameTitles(oracle.snapshot.state.corp.deck, generated.snapshot.state.corp.deck);
-    try expectSameTitles(oracle.snapshot.state.runner.hand, generated.snapshot.state.runner.hand);
-    try expectSameTitles(oracle.snapshot.state.runner.deck, generated.snapshot.state.runner.deck);
+    try expectSameTitles(oracle.snapshot.state.corp.hand, generated.corp_hand.items);
+    try expectSameTitles(oracle.snapshot.state.corp.deck, generated.corp_deck.items);
+    try expectSameTitles(oracle.snapshot.state.runner.hand, generated.runner_hand.items);
+    try expectSameTitles(oracle.snapshot.state.runner.deck, generated.runner_deck.items);
 }
 
 fn expectSameTitles(expected: []const state.CardInstance, actual: []const state.CardInstance) !void {
@@ -80,7 +80,7 @@ test "corp mulligan transitions match oracle fixture" {
     );
     defer keep_state.deinit();
     try flow.applyMulliganChoice(&keep_state, .corp, .keep);
-    try expectTransitionMatches(oracle.keep, keep_state.snapshot);
+    try expectTransitionMatches(oracle.keep, try keep_state.toSnapshot());
 
     var mulligan_state = try generator.createInitialSnapshot(
         allocator,
@@ -89,7 +89,7 @@ test "corp mulligan transitions match oracle fixture" {
     );
     defer mulligan_state.deinit();
     try flow.applyMulliganChoice(&mulligan_state, .corp, .mulligan);
-    try expectTransitionMatches(oracle.mulligan, mulligan_state.snapshot);
+    try expectTransitionMatches(oracle.mulligan, try mulligan_state.toSnapshot());
 }
 
 fn expectTransitionMatches(expected: fixture.TransitionExpectation, actual: state.GameSnapshot) !void {
@@ -152,7 +152,7 @@ test "runner mulligan transitions match oracle fixture" {
     defer corp_keep_runner_keep.deinit();
     try flow.applyMulliganChoice(&corp_keep_runner_keep, .corp, .keep);
     try flow.applyMulliganChoice(&corp_keep_runner_keep, .runner, .keep);
-    try expectTransitionMatches(oracle.runner_after_corp_keep.keep, corp_keep_runner_keep.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_keep.keep, try corp_keep_runner_keep.toSnapshot());
 
     var corp_keep_runner_mulligan = try generator.createInitialSnapshot(
         allocator,
@@ -162,7 +162,7 @@ test "runner mulligan transitions match oracle fixture" {
     defer corp_keep_runner_mulligan.deinit();
     try flow.applyMulliganChoice(&corp_keep_runner_mulligan, .corp, .keep);
     try flow.applyMulliganChoice(&corp_keep_runner_mulligan, .runner, .mulligan);
-    try expectTransitionMatches(oracle.runner_after_corp_keep.mulligan, corp_keep_runner_mulligan.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_keep.mulligan, try corp_keep_runner_mulligan.toSnapshot());
 
     var corp_mulligan_runner_keep = try generator.createInitialSnapshot(
         allocator,
@@ -172,7 +172,7 @@ test "runner mulligan transitions match oracle fixture" {
     defer corp_mulligan_runner_keep.deinit();
     try flow.applyMulliganChoice(&corp_mulligan_runner_keep, .corp, .mulligan);
     try flow.applyMulliganChoice(&corp_mulligan_runner_keep, .runner, .keep);
-    try expectTransitionMatches(oracle.runner_after_corp_mulligan.keep, corp_mulligan_runner_keep.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_mulligan.keep, try corp_mulligan_runner_keep.toSnapshot());
 
     var corp_mulligan_runner_mulligan = try generator.createInitialSnapshot(
         allocator,
@@ -182,7 +182,7 @@ test "runner mulligan transitions match oracle fixture" {
     defer corp_mulligan_runner_mulligan.deinit();
     try flow.applyMulliganChoice(&corp_mulligan_runner_mulligan, .corp, .mulligan);
     try flow.applyMulliganChoice(&corp_mulligan_runner_mulligan, .runner, .mulligan);
-    try expectTransitionMatches(oracle.runner_after_corp_mulligan.mulligan, corp_mulligan_runner_mulligan.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_mulligan.mulligan, try corp_mulligan_runner_mulligan.toSnapshot());
 }
 
 test "corp start-turn transitions match oracle fixture" {
@@ -202,7 +202,7 @@ test "corp start-turn transitions match oracle fixture" {
     try flow.applyMulliganChoice(&corp_keep_runner_keep, .corp, .keep);
     try flow.applyMulliganChoice(&corp_keep_runner_keep, .runner, .keep);
     try flow.applyStartTurn(&corp_keep_runner_keep, .corp);
-    try expectTransitionMatches(oracle.runner_after_corp_keep.keep_start_turn.transition, corp_keep_runner_keep.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_keep.keep_start_turn.transition, try corp_keep_runner_keep.toSnapshot());
 
     var corp_keep_runner_mulligan = try generator.createInitialSnapshot(
         allocator,
@@ -213,7 +213,7 @@ test "corp start-turn transitions match oracle fixture" {
     try flow.applyMulliganChoice(&corp_keep_runner_mulligan, .corp, .keep);
     try flow.applyMulliganChoice(&corp_keep_runner_mulligan, .runner, .mulligan);
     try flow.applyStartTurn(&corp_keep_runner_mulligan, .corp);
-    try expectTransitionMatches(oracle.runner_after_corp_keep.mulligan_start_turn.transition, corp_keep_runner_mulligan.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_keep.mulligan_start_turn.transition, try corp_keep_runner_mulligan.toSnapshot());
 
     var corp_mulligan_runner_keep = try generator.createInitialSnapshot(
         allocator,
@@ -224,7 +224,7 @@ test "corp start-turn transitions match oracle fixture" {
     try flow.applyMulliganChoice(&corp_mulligan_runner_keep, .corp, .mulligan);
     try flow.applyMulliganChoice(&corp_mulligan_runner_keep, .runner, .keep);
     try flow.applyStartTurn(&corp_mulligan_runner_keep, .corp);
-    try expectTransitionMatches(oracle.runner_after_corp_mulligan.keep_start_turn.transition, corp_mulligan_runner_keep.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_mulligan.keep_start_turn.transition, try corp_mulligan_runner_keep.toSnapshot());
 
     var corp_mulligan_runner_mulligan = try generator.createInitialSnapshot(
         allocator,
@@ -235,7 +235,7 @@ test "corp start-turn transitions match oracle fixture" {
     try flow.applyMulliganChoice(&corp_mulligan_runner_mulligan, .corp, .mulligan);
     try flow.applyMulliganChoice(&corp_mulligan_runner_mulligan, .runner, .mulligan);
     try flow.applyStartTurn(&corp_mulligan_runner_mulligan, .corp);
-    try expectTransitionMatches(oracle.runner_after_corp_mulligan.mulligan_start_turn.transition, corp_mulligan_runner_mulligan.snapshot);
+    try expectTransitionMatches(oracle.runner_after_corp_mulligan.mulligan_start_turn.transition, try corp_mulligan_runner_mulligan.toSnapshot());
 }
 
 test "corp basic action transitions match oracle fixture" {
@@ -253,9 +253,9 @@ test "corp basic action transitions match oracle fixture" {
     );
     defer start_state.deinit();
 
-    try flow.applyAction(&start_state, start_state.snapshot.legal_actions[0]);
-    try flow.applyAction(&start_state, start_state.snapshot.legal_actions[0]);
-    try flow.applyAction(&start_state, start_state.snapshot.legal_actions[0]);
+    try flow.applyAction(&start_state, start_state.legal_actions[0]);
+    try flow.applyAction(&start_state, start_state.legal_actions[0]);
+    try flow.applyAction(&start_state, start_state.legal_actions[0]);
 
     const start_turn_oracle = oracle.runner_after_corp_keep.keep_start_turn;
 
@@ -265,11 +265,11 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer gain_credit.deinit();
-    try flow.applyAction(&gain_credit, gain_credit.snapshot.legal_actions[0]);
-    try flow.applyAction(&gain_credit, gain_credit.snapshot.legal_actions[0]);
-    try flow.applyAction(&gain_credit, gain_credit.snapshot.legal_actions[0]);
-    try flow.applyAction(&gain_credit, gain_credit.snapshot.legal_actions[try findBasicActionIndex(gain_credit.snapshot.legal_actions, .gain_credit)]);
-    try expectTransitionMatches(start_turn_oracle.basic_actions.gain_credit, gain_credit.snapshot);
+    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]);
+    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]);
+    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]);
+    try flow.applyAction(&gain_credit, gain_credit.legal_actions[try findBasicActionIndex(gain_credit.legal_actions, .gain_credit)]);
+    try expectTransitionMatches(start_turn_oracle.basic_actions.gain_credit, try gain_credit.toSnapshot());
 
     var draw_card = try generator.createInitialSnapshot(
         allocator,
@@ -277,11 +277,11 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer draw_card.deinit();
-    try flow.applyAction(&draw_card, draw_card.snapshot.legal_actions[0]);
-    try flow.applyAction(&draw_card, draw_card.snapshot.legal_actions[0]);
-    try flow.applyAction(&draw_card, draw_card.snapshot.legal_actions[0]);
-    try flow.applyAction(&draw_card, draw_card.snapshot.legal_actions[try findBasicActionIndex(draw_card.snapshot.legal_actions, .draw_card)]);
-    try expectTransitionMatches(start_turn_oracle.basic_actions.draw_card, draw_card.snapshot);
+    try flow.applyAction(&draw_card, draw_card.legal_actions[0]);
+    try flow.applyAction(&draw_card, draw_card.legal_actions[0]);
+    try flow.applyAction(&draw_card, draw_card.legal_actions[0]);
+    try flow.applyAction(&draw_card, draw_card.legal_actions[try findBasicActionIndex(draw_card.legal_actions, .draw_card)]);
+    try expectTransitionMatches(start_turn_oracle.basic_actions.draw_card, try draw_card.toSnapshot());
 
     var advance_card = try generator.createInitialSnapshot(
         allocator,
@@ -289,11 +289,11 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer advance_card.deinit();
-    try flow.applyAction(&advance_card, advance_card.snapshot.legal_actions[0]);
-    try flow.applyAction(&advance_card, advance_card.snapshot.legal_actions[0]);
-    try flow.applyAction(&advance_card, advance_card.snapshot.legal_actions[0]);
-    try flow.applyAction(&advance_card, advance_card.snapshot.legal_actions[try findBasicActionIndex(advance_card.snapshot.legal_actions, .advance_installed)]);
-    try expectTransitionMatches(start_turn_oracle.basic_actions.advance_card, advance_card.snapshot);
+    try flow.applyAction(&advance_card, advance_card.legal_actions[0]);
+    try flow.applyAction(&advance_card, advance_card.legal_actions[0]);
+    try flow.applyAction(&advance_card, advance_card.legal_actions[0]);
+    try flow.applyAction(&advance_card, advance_card.legal_actions[try findBasicActionIndex(advance_card.legal_actions, .advance_installed)]);
+    try expectTransitionMatches(start_turn_oracle.basic_actions.advance_card, try advance_card.toSnapshot());
 
     var purge_viruses = try generator.createInitialSnapshot(
         allocator,
@@ -301,11 +301,11 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer purge_viruses.deinit();
-    try flow.applyAction(&purge_viruses, purge_viruses.snapshot.legal_actions[0]);
-    try flow.applyAction(&purge_viruses, purge_viruses.snapshot.legal_actions[0]);
-    try flow.applyAction(&purge_viruses, purge_viruses.snapshot.legal_actions[0]);
-    try flow.applyAction(&purge_viruses, purge_viruses.snapshot.legal_actions[try findBasicActionIndex(purge_viruses.snapshot.legal_actions, .purge_viruses)]);
-    try expectTransitionMatches(start_turn_oracle.basic_actions.purge_viruses, purge_viruses.snapshot);
+    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]);
+    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]);
+    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]);
+    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[try findBasicActionIndex(purge_viruses.legal_actions, .purge_viruses)]);
+    try expectTransitionMatches(start_turn_oracle.basic_actions.purge_viruses, try purge_viruses.toSnapshot());
 }
 
 test "corp play-from-hand transitions match oracle fixture" {
@@ -324,11 +324,11 @@ test "corp play-from-hand transitions match oracle fixture" {
         1,
     );
     defer hedge_fund.deinit();
-    try flow.applyAction(&hedge_fund, hedge_fund.snapshot.legal_actions[0]);
-    try flow.applyAction(&hedge_fund, hedge_fund.snapshot.legal_actions[0]);
-    try flow.applyAction(&hedge_fund, hedge_fund.snapshot.legal_actions[0]);
-    try flow.applyAction(&hedge_fund, hedge_fund.snapshot.legal_actions[try findCardPlayActionIndex(hedge_fund.snapshot.legal_actions, "Hedge Fund")]);
-    try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Hedge Fund")).result, hedge_fund.snapshot);
+    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]);
+    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]);
+    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]);
+    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[try findCardPlayActionIndex(hedge_fund.legal_actions, "Hedge Fund")]);
+    try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Hedge Fund")).result, try hedge_fund.toSnapshot());
 
     var bran = try generator.createInitialSnapshot(
         allocator,
@@ -336,11 +336,11 @@ test "corp play-from-hand transitions match oracle fixture" {
         1,
     );
     defer bran.deinit();
-    try flow.applyAction(&bran, bran.snapshot.legal_actions[0]);
-    try flow.applyAction(&bran, bran.snapshot.legal_actions[0]);
-    try flow.applyAction(&bran, bran.snapshot.legal_actions[0]);
-    try flow.applyAction(&bran, bran.snapshot.legal_actions[try findCardPlayActionIndex(bran.snapshot.legal_actions, "Brân 1.0")]);
-    try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Brân 1.0")).result, bran.snapshot);
+    try flow.applyAction(&bran, bran.legal_actions[0]);
+    try flow.applyAction(&bran, bran.legal_actions[0]);
+    try flow.applyAction(&bran, bran.legal_actions[0]);
+    try flow.applyAction(&bran, bran.legal_actions[try findCardPlayActionIndex(bran.legal_actions, "Brân 1.0")]);
+    try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Brân 1.0")).result, try bran.toSnapshot());
 
     var regolith = try generator.createInitialSnapshot(
         allocator,
@@ -348,11 +348,11 @@ test "corp play-from-hand transitions match oracle fixture" {
         1,
     );
     defer regolith.deinit();
-    try flow.applyAction(&regolith, regolith.snapshot.legal_actions[0]);
-    try flow.applyAction(&regolith, regolith.snapshot.legal_actions[0]);
-    try flow.applyAction(&regolith, regolith.snapshot.legal_actions[0]);
-    try flow.applyAction(&regolith, regolith.snapshot.legal_actions[try findCardPlayActionIndex(regolith.snapshot.legal_actions, "Regolith Mining License")]);
-    try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Regolith Mining License")).result, regolith.snapshot);
+    try flow.applyAction(&regolith, regolith.legal_actions[0]);
+    try flow.applyAction(&regolith, regolith.legal_actions[0]);
+    try flow.applyAction(&regolith, regolith.legal_actions[0]);
+    try flow.applyAction(&regolith, regolith.legal_actions[try findCardPlayActionIndex(regolith.legal_actions, "Regolith Mining License")]);
+    try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Regolith Mining License")).result, try regolith.toSnapshot());
 
     const mull_keep = oracle.runner_after_corp_mulligan.keep_start_turn;
     var seamless_launch = try generator.createInitialSnapshot(
@@ -364,8 +364,8 @@ test "corp play-from-hand transitions match oracle fixture" {
     try flow.applyMulliganChoice(&seamless_launch, .corp, .mulligan);
     try flow.applyMulliganChoice(&seamless_launch, .runner, .keep);
     try flow.applyStartTurn(&seamless_launch, .corp);
-    try flow.applyAction(&seamless_launch, seamless_launch.snapshot.legal_actions[try findCardPlayActionIndex(seamless_launch.snapshot.legal_actions, "Seamless Launch")]);
-    try expectTransitionMatches((try findCardPlayExpectation(mull_keep.play_from_hand, "Seamless Launch")).result, seamless_launch.snapshot);
+    try flow.applyAction(&seamless_launch, seamless_launch.legal_actions[try findCardPlayActionIndex(seamless_launch.legal_actions, "Seamless Launch")]);
+    try expectTransitionMatches((try findCardPlayExpectation(mull_keep.play_from_hand, "Seamless Launch")).result, try seamless_launch.toSnapshot());
 }
 
 test "corp install prompt resolutions match oracle fixture" {
@@ -384,13 +384,13 @@ test "corp install prompt resolutions match oracle fixture" {
         1,
     );
     defer bran_archives.deinit();
-    try flow.applyAction(&bran_archives, bran_archives.snapshot.legal_actions[0]);
-    try flow.applyAction(&bran_archives, bran_archives.snapshot.legal_actions[0]);
-    try flow.applyAction(&bran_archives, bran_archives.snapshot.legal_actions[0]);
-    try flow.applyAction(&bran_archives, bran_archives.snapshot.legal_actions[try findCardPlayActionIndex(bran_archives.snapshot.legal_actions, "Brân 1.0")]);
+    try flow.applyAction(&bran_archives, bran_archives.legal_actions[0]);
+    try flow.applyAction(&bran_archives, bran_archives.legal_actions[0]);
+    try flow.applyAction(&bran_archives, bran_archives.legal_actions[0]);
+    try flow.applyAction(&bran_archives, bran_archives.legal_actions[try findCardPlayActionIndex(bran_archives.legal_actions, "Brân 1.0")]);
     const bran_expectation = try findCardPlayExpectation(keep_keep.play_from_hand, "Brân 1.0");
-    try flow.applyAction(&bran_archives, bran_archives.snapshot.legal_actions[try findPromptChoiceActionIndex(bran_archives.snapshot.legal_actions, "Archives")]);
-    try expectTransitionMatches((try findPromptChoiceExpectation(bran_expectation.prompt_choices, "Archives")).result, bran_archives.snapshot);
+    try flow.applyAction(&bran_archives, bran_archives.legal_actions[try findPromptChoiceActionIndex(bran_archives.legal_actions, "Archives")]);
+    try expectTransitionMatches((try findPromptChoiceExpectation(bran_expectation.prompt_choices, "Archives")).result, try bran_archives.toSnapshot());
 
     var regolith_remote = try generator.createInitialSnapshot(
         allocator,
@@ -398,13 +398,13 @@ test "corp install prompt resolutions match oracle fixture" {
         1,
     );
     defer regolith_remote.deinit();
-    try flow.applyAction(&regolith_remote, regolith_remote.snapshot.legal_actions[0]);
-    try flow.applyAction(&regolith_remote, regolith_remote.snapshot.legal_actions[0]);
-    try flow.applyAction(&regolith_remote, regolith_remote.snapshot.legal_actions[0]);
-    try flow.applyAction(&regolith_remote, regolith_remote.snapshot.legal_actions[try findCardPlayActionIndex(regolith_remote.snapshot.legal_actions, "Regolith Mining License")]);
+    try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[0]);
+    try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[0]);
+    try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[0]);
+    try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[try findCardPlayActionIndex(regolith_remote.legal_actions, "Regolith Mining License")]);
     const regolith_expectation = try findCardPlayExpectation(keep_keep.play_from_hand, "Regolith Mining License");
-    try flow.applyAction(&regolith_remote, regolith_remote.snapshot.legal_actions[try findPromptChoiceActionIndex(regolith_remote.snapshot.legal_actions, "New remote")]);
-    try expectTransitionMatches((try findPromptChoiceExpectation(regolith_expectation.prompt_choices, "New remote")).result, regolith_remote.snapshot);
+    try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[try findPromptChoiceActionIndex(regolith_remote.legal_actions, "New remote")]);
+    try expectTransitionMatches((try findPromptChoiceExpectation(regolith_expectation.prompt_choices, "New remote")).result, try regolith_remote.toSnapshot());
 
     var palisade_hq = try generator.createInitialSnapshot(
         allocator,
@@ -412,13 +412,13 @@ test "corp install prompt resolutions match oracle fixture" {
         1,
     );
     defer palisade_hq.deinit();
-    try flow.applyAction(&palisade_hq, palisade_hq.snapshot.legal_actions[0]);
-    try flow.applyAction(&palisade_hq, palisade_hq.snapshot.legal_actions[0]);
-    try flow.applyAction(&palisade_hq, palisade_hq.snapshot.legal_actions[0]);
-    try flow.applyAction(&palisade_hq, palisade_hq.snapshot.legal_actions[try findCardPlayActionIndex(palisade_hq.snapshot.legal_actions, "Palisade")]);
+    try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[0]);
+    try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[0]);
+    try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[0]);
+    try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[try findCardPlayActionIndex(palisade_hq.legal_actions, "Palisade")]);
     const palisade_expectation = try findCardPlayExpectation(keep_keep.play_from_hand, "Palisade");
-    try flow.applyAction(&palisade_hq, palisade_hq.snapshot.legal_actions[try findPromptChoiceActionIndex(palisade_hq.snapshot.legal_actions, "HQ")]);
-    try expectTransitionMatches((try findPromptChoiceExpectation(palisade_expectation.prompt_choices, "HQ")).result, palisade_hq.snapshot);
+    try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[try findPromptChoiceActionIndex(palisade_hq.legal_actions, "HQ")]);
+    try expectTransitionMatches((try findPromptChoiceExpectation(palisade_expectation.prompt_choices, "HQ")).result, try palisade_hq.toSnapshot());
 }
 
 fn expectActions(expected: []const fixture.ActionExpectation, actual: []const state.LegalAction) !void {
@@ -490,11 +490,22 @@ fn findPromptChoiceActionIndex(
 
 fn expectServers(expected: []const state.ServerSlot, actual: []const state.ServerSlot) !void {
     try std.testing.expectEqual(expected.len, actual.len);
-    for (expected, actual) |lhs, rhs| {
+    for (expected) |lhs| {
         if (lhs.state.ices.len == 0 and lhs.state.content.len == 0) continue;
+        const rhs = findServerSlotByName(actual, lhs.name) orelse {
+            std.debug.print("Missing server: {s}\n", .{lhs.name});
+            return error.TestExpectedEqual;
+        };
         try expectTitleSuffix(lhs.state.ices, rhs.state.ices);
         try expectTitleSuffix(lhs.state.content, rhs.state.content);
     }
+}
+
+fn findServerSlotByName(servers: []const state.ServerSlot, name: []const u8) ?state.ServerSlot {
+    for (servers) |s| {
+        if (std.mem.eql(u8, s.name, name)) return s;
+    }
+    return null;
 }
 
 fn expectOptionalString(expected: ?[]const u8, actual: ?[]const u8) !void {
@@ -527,14 +538,14 @@ test "corp first-play end-turn scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstPlayFromHand(generated.snapshot.legal_actions, .corp));
-    if (findFirstKindAction(generated.snapshot.legal_actions, .prompt_choice, .corp)) |prompt_action| {
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstPlayFromHand(generated.legal_actions, .corp));
+    if (findFirstKindAction(generated.legal_actions, .prompt_choice, .corp)) |prompt_action| {
         try takeAction(allocator, &actions, &generated, prompt_action);
     }
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
     }
     try takeAction(allocator, &actions, &generated, .{
@@ -546,20 +557,20 @@ test "corp first-play end-turn scenario matches live replay oracle" {
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    if (replay.snapshot.decision_side != generated.snapshot.decision_side) {
+    if (replay.snapshot.decision_side != generated.decision_side) {
         std.debug.panic(
             "replay_side={any} actual_side={any} replay_kind={any} replay_prompt={s} actual_kind={any} actual_prompt={s}",
             .{
                 replay.snapshot.decision_side,
-                generated.snapshot.decision_side,
+                generated.decision_side,
                 if (replay.snapshot.legal_actions.len > 0) replay.snapshot.legal_actions[0].kind else .run,
                 if (replay.snapshot.legal_actions.len > 0) (replay.snapshot.legal_actions[0].prompt_type orelse "") else "",
-                if (generated.snapshot.legal_actions.len > 0) generated.snapshot.legal_actions[0].kind else .run,
-                if (generated.snapshot.legal_actions.len > 0) (generated.snapshot.legal_actions[0].prompt_type orelse "") else "",
+                if (generated.legal_actions.len > 0) generated.legal_actions[0].kind else .run,
+                if (generated.legal_actions.len > 0) (generated.legal_actions[0].prompt_type orelse "") else "",
             },
         );
     }
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner start-turn scenario matches live replay oracle" {
@@ -569,25 +580,25 @@ test "corp first install runner start-turn scenario matches live replay oracle" 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
     }
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner gain-credit scenario matches live replay oracle" {
@@ -597,26 +608,26 @@ test "corp first install runner gain-credit scenario matches live replay oracle"
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
     }
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .runner, .gain_credit) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .gain_credit) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner draw-card scenario matches live replay oracle" {
@@ -626,26 +637,26 @@ test "corp first install runner draw-card scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
     }
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner sure-gamble scenario matches live replay oracle" {
@@ -655,26 +666,26 @@ test "corp first install runner sure-gamble scenario matches live replay oracle"
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
     }
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Sure Gamble"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Sure Gamble"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner run-server-1 scenario matches live replay oracle" {
@@ -684,26 +695,26 @@ test "corp first install runner run-server-1 scenario matches live replay oracle
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
     }
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner run-server-1 continue scenario matches live replay oracle" {
@@ -713,22 +724,22 @@ test "corp first install runner run-server-1 continue scenario matches live repl
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner run-server-1 approach-ice scenario matches live replay oracle" {
@@ -738,26 +749,26 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
     // Initiation: both sides pass
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     // Approach-ice: corp continue triggers rez window, decline
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "No rez"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "No rez"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "corp first install runner run-server-1 movement-complete scenario matches live replay oracle" {
@@ -767,32 +778,32 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
     // Initiation: both sides pass
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     // Approach-ice: corp continue triggers rez window, decline
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "No rez"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "No rez"));
     // Approach-ice: runner passes → advance (unrezzed ice, skip encounter) → movement
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     // Movement phase: runner gets first priority (jack-out opportunity)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     // Then corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "send-a-message access-success scenario matches live replay oracle" {
@@ -802,27 +813,27 @@ test "send-a-message access-success scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Send a Message"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "send-a-message steal scenario matches live replay oracle" {
@@ -832,29 +843,29 @@ test "send-a-message steal scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Send a Message"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Steal"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "send-a-message cleanup-done scenario matches live replay oracle" {
@@ -864,30 +875,30 @@ test "send-a-message cleanup-done scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Send a Message"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Steal"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Done"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner tread-lightly prompt scenario matches live replay oracle" {
@@ -897,20 +908,20 @@ test "runner tread-lightly prompt scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Tread Lightly"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Tread Lightly"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner tread-lightly server-choice scenario matches live replay oracle" {
@@ -920,21 +931,21 @@ test "runner tread-lightly server-choice scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Tread Lightly"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Tread Lightly"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner jailbreak prompt scenario matches live replay oracle" {
@@ -944,20 +955,20 @@ test "runner jailbreak prompt scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Jailbreak"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner jailbreak hq-choice scenario matches live replay oracle" {
@@ -967,21 +978,21 @@ test "runner jailbreak hq-choice scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "HQ"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Jailbreak"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "HQ"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner overclock prompt scenario matches live replay oracle" {
@@ -991,20 +1002,20 @@ test "runner overclock prompt scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Overclock"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner overclock server-choice scenario matches live replay oracle" {
@@ -1014,21 +1025,21 @@ test "runner overclock server-choice scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Overclock"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner overclock run credits are attached and cleared through run flow" {
@@ -1036,42 +1047,42 @@ test "runner overclock run credits are attached and cleared through run flow" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
 
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Send a Message"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try flow.applyAction(&generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Overclock"));
 
-    try std.testing.expectEqual(@as(u16, 4), generated.snapshot.state.runner.credit);
-    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 4), generated.runner_credit);
+    try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
-    const run_after_choice = generated.snapshot.state.run orelse return error.MissingRun;
+    const run_after_choice = generated.run orelse return error.MissingRun;
     try std.testing.expectEqual(@as(u16, 5), run_after_choice.temporary_run_credits);
-    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
-    const run_after_success = generated.snapshot.state.run orelse return error.MissingRun;
+    const run_after_success = generated.run orelse return error.MissingRun;
     try std.testing.expectEqual(@as(u16, 5), run_after_success.temporary_run_credits);
-    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Steal"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Done"));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
-    try std.testing.expect(generated.snapshot.state.run == null);
-    try std.testing.expectEqual(@as(u16, 0), generated.snapshot.state.runner.run_credit);
+    try std.testing.expect(generated.run == null);
+    try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 }
 
 test "runner overclock successful-run scenario matches live replay oracle" {
@@ -1081,28 +1092,28 @@ test "runner overclock successful-run scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Send a Message"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Overclock"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner overclock cleanup-done scenario matches live replay oracle" {
@@ -1112,31 +1123,31 @@ test "runner overclock cleanup-done scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Send a Message"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Steal"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Done"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Overclock"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner jailbreak successful-run effect is attached to run flow" {
@@ -1144,18 +1155,18 @@ test "runner jailbreak successful-run effect is attached to run flow" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
 
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try flow.applyAction(&generated, gain_action);
     }
     {
-        try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+        try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .end_turn, .corp));
         while (true) {
-            const ps = generated.snapshot.state.corp.prompt_state orelse break;
+            const ps = generated.corp_prompt_state orelse break;
             if (!std.mem.eql(u8, ps.prompt_type, "discard")) break;
             if (ps.choices.len == 0) break;
             const title = if (ps.choices[0].card) |c| c.title else null;
@@ -1163,24 +1174,24 @@ test "runner jailbreak successful-run effect is attached to run flow" {
             try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
         }
     }
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
-    const hand_before_play = generated.snapshot.state.runner.hand.len;
-    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "HQ"));
+    const hand_before_play = generated.runner_hand.items.len;
+    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Jailbreak"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "HQ"));
 
-    const run_after_choice = generated.snapshot.state.run orelse return error.MissingRun;
+    const run_after_choice = generated.run orelse return error.MissingRun;
     try std.testing.expectEqual(@as(u16, 0), run_after_choice.rez_cost_bonus);
     try std.testing.expectEqual(state.RunSuccessEffectKind.draw_cards, run_after_choice.successful_run_effect);
     try std.testing.expectEqual(@as(u8, 1), run_after_choice.successful_run_draw_cards);
     try std.testing.expectEqual(@as(u8, 1), run_after_choice.access_bonus);
 
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
-    try std.testing.expectEqual(hand_before_play, generated.snapshot.state.runner.hand.len);
+    try std.testing.expectEqual(hand_before_play, generated.runner_hand.items.len);
 }
 
 test "runner jailbreak successful-run scenario matches live replay oracle" {
@@ -1190,25 +1201,25 @@ test "runner jailbreak successful-run scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "HQ"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Jailbreak"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "HQ"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner tread-lightly run modifier is attached to run state" {
@@ -1216,18 +1227,18 @@ test "runner tread-lightly run modifier is attached to run state" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
 
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try flow.applyAction(&generated, gain_action);
     }
     {
-        try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+        try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .end_turn, .corp));
         while (true) {
-            const ps = generated.snapshot.state.corp.prompt_state orelse break;
+            const ps = generated.corp_prompt_state orelse break;
             if (!std.mem.eql(u8, ps.prompt_type, "discard")) break;
             if (ps.choices.len == 0) break;
             const title = if (ps.choices[0].card) |c| c.title else null;
@@ -1235,11 +1246,11 @@ test "runner tread-lightly run modifier is attached to run state" {
             try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
         }
     }
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Tread Lightly"));
-    try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
+    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Tread Lightly"));
+    try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
-    const run = generated.snapshot.state.run orelse return error.MissingRun;
+    const run = generated.run orelse return error.MissingRun;
     try std.testing.expectEqual(@as(u16, 3), run.rez_cost_bonus);
 }
 
@@ -1250,20 +1261,20 @@ test "runner creative-commission scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Creative Commission"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Creative Commission"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner vrcation scenario matches live replay oracle" {
@@ -1273,20 +1284,20 @@ test "runner vrcation scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "VRcation"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "VRcation"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner telework contract install scenario matches live replay oracle" {
@@ -1296,18 +1307,18 @@ test "runner telework contract install scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Telework Contract"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Telework Contract"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "runner telework contract ability scenario matches live replay oracle" {
@@ -1317,19 +1328,19 @@ test "runner telework contract ability scenario matches live replay oracle" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Telework Contract"));
-    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.snapshot.legal_actions, "Telework Contract"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Telework Contract"));
+    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Telework Contract"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "manegarm skunkworks parity test" {
@@ -1339,34 +1350,34 @@ test "manegarm skunkworks parity test" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Manegarm Skunkworks"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
-    try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("other", generated.snapshot.state.runner.prompt_state.?.prompt_type);
-    try std.testing.expectEqual(@as(usize, 3), generated.snapshot.state.runner.prompt_state.?.choices.len);
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("other", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(@as(usize, 3), generated.runner_prompt_state.?.choices.len);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "End the run"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "End the run"));
 
-    try std.testing.expect(generated.snapshot.state.run == null);
+    try std.testing.expect(generated.run == null);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
 
-    try std.testing.expectEqual(replay.snapshot.decision_side, generated.snapshot.decision_side);
-    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
+    try std.testing.expectEqual(replay.snapshot.decision_side, generated.decision_side);
+    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.legal_actions.len);
 }
 
 test "manegarm skunkworks spend clicks parity test" {
@@ -1376,36 +1387,36 @@ test "manegarm skunkworks spend clicks parity test" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Manegarm Skunkworks"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
-    try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("other", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("other", generated.runner_prompt_state.?.prompt_type);
 
-    const runner_clicks_before = generated.snapshot.state.runner.click;
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Spend [Click][Click]"));
+    const runner_clicks_before = generated.runner_click;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Spend [Click][Click]"));
 
-    try std.testing.expectEqual(@as(u8, runner_clicks_before - 2), generated.snapshot.state.runner.click);
-    try std.testing.expect(generated.snapshot.state.run == null);
-    try std.testing.expect(generated.snapshot.state.runner_successful_run_this_turn);
+    try std.testing.expectEqual(@as(u8, runner_clicks_before - 2), generated.runner_click);
+    try std.testing.expect(generated.run == null);
+    try std.testing.expect(generated.runner_successful_run_this_turn);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
 
-    try std.testing.expectEqual(replay.snapshot.decision_side, generated.snapshot.decision_side);
-    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
+    try std.testing.expectEqual(replay.snapshot.decision_side, generated.decision_side);
+    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.legal_actions.len);
 }
 
 test "manegarm skunkworks pay credits parity test" {
@@ -1415,36 +1426,36 @@ test "manegarm skunkworks pay credits parity test" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Manegarm Skunkworks"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
-    try std.testing.expect(generated.snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("other", generated.snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("other", generated.runner_prompt_state.?.prompt_type);
 
-    const runner_credits_before = generated.snapshot.state.runner.credit;
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Pay 5 [Credits]"));
+    const runner_credits_before = generated.runner_credit;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Pay 5 [Credits]"));
 
-    try std.testing.expectEqual(@as(u16, runner_credits_before - 5), generated.snapshot.state.runner.credit);
-    try std.testing.expect(generated.snapshot.state.run == null);
-    try std.testing.expect(generated.snapshot.state.runner_successful_run_this_turn);
+    try std.testing.expectEqual(@as(u16, runner_credits_before - 5), generated.runner_credit);
+    try std.testing.expect(generated.run == null);
+    try std.testing.expect(generated.runner_successful_run_this_turn);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
 
-    try std.testing.expectEqual(replay.snapshot.decision_side, generated.snapshot.decision_side);
-    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.snapshot.legal_actions.len);
+    try std.testing.expectEqual(replay.snapshot.decision_side, generated.decision_side);
+    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.legal_actions.len);
 }
 
 test "government subsidy parity test" {
@@ -1458,28 +1469,28 @@ test "government subsidy parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp plays Hedge Fund (cost 5, gain 9), then gains 2 credits
     // Playing a card keeps hand at 5, avoiding discard at end of turn
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Hedge Fund"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Hedge Fund"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner gains credits
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp plays Government Subsidy (costs 10, gains 15)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Government Subsidy"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Government Subsidy"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 4, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "regolith mining license install parity test" {
@@ -1491,19 +1502,19 @@ test "regolith mining license install parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Regolith Mining License on a remote
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Regolith Mining License"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Regolith Mining License"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 16, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "nico campaign install parity test" {
@@ -1515,19 +1526,19 @@ test "nico campaign install parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Nico Campaign on a remote
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Nico Campaign"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Nico Campaign"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "offworld office install and advance parity test" {
@@ -1539,23 +1550,23 @@ test "offworld office install and advance parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Offworld Office in a remote, then advances it
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Offworld Office"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Offworld Office"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     // Advance Offworld once (costs 1 click + 1 credit)
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
     // Advance prompt uses server|zone|index format: "remote1|c|0" for first content in first remote
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 8, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "pennyshaver install parity test" {
@@ -1567,22 +1578,22 @@ test "pennyshaver install parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Pennyshaver
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Pennyshaver"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Pennyshaver"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 23, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "smartware distributor install and ability parity test" {
@@ -1594,23 +1605,23 @@ test "smartware distributor install and ability parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Smartware Distributor and uses place_credits ability
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Smartware Distributor"));
-    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.snapshot.legal_actions, "Smartware Distributor"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Smartware Distributor"));
+    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Smartware Distributor"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 14, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "predictive planogram parity test" {
@@ -1622,18 +1633,18 @@ test "predictive planogram parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp plays Predictive Planogram
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Predictive Planogram"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Predictive Planogram"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 4, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "mutual favor parity test" {
@@ -1650,36 +1661,36 @@ test "mutual favor parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Verify parity before runner plays Mutual Favor
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const pre_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(pre_actions);
     var pre_replay = try fixture.replayActionsWithMatchup(allocator, 7, pre_actions, "system-gateway-intermediate");
     defer pre_replay.deinit();
-    try expectSnapshotMatches(pre_replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(pre_replay.snapshot, try generated.toSnapshot());
 
     // Now play Mutual Favor and verify Zig engine state is correct
-    const runner_hand_before = generated.snapshot.state.runner.hand.len;
-    const runner_deck_before = generated.snapshot.state.runner.deck.len;
-    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Mutual Favor"));
+    const runner_hand_before = generated.runner_hand.items.len;
+    const runner_deck_before = generated.runner_deck.items.len;
+    try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Mutual Favor"));
 
     // Mutual Favor: costs 0, uses 1 click, plays from hand (-1), searches for icebreaker (+1)
     // Net hand change: 0 (played 1, gained 1 icebreaker from deck)
-    try std.testing.expectEqual(runner_hand_before, generated.snapshot.state.runner.hand.len);
-    try std.testing.expectEqual(runner_deck_before - 1, generated.snapshot.state.runner.deck.len);
-    try std.testing.expectEqual(@as(u8, 3), generated.snapshot.state.runner.click);
-    try std.testing.expectEqual(@as(u16, 5), generated.snapshot.state.runner.credit);
+    try std.testing.expectEqual(runner_hand_before, generated.runner_hand.items.len);
+    try std.testing.expectEqual(runner_deck_before - 1, generated.runner_deck.items.len);
+    try std.testing.expectEqual(@as(u8, 3), generated.runner_click);
+    try std.testing.expectEqual(@as(u16, 5), generated.runner_credit);
 
     // The last card in hand should be an icebreaker
-    const last_card = generated.snapshot.state.runner.hand[generated.snapshot.state.runner.hand.len - 1];
+    const last_card = generated.runner_hand.items[generated.runner_hand.items.len - 1];
     var is_icebreaker = false;
     for (last_card.subtypes) |st| {
         if (std.mem.eql(u8, st, "Icebreaker")) is_icebreaker = true;
@@ -1695,22 +1706,22 @@ test "wildcat strike parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner plays Wildcat Strike, corp makes a choice
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Wildcat Strike"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Wildcat Strike"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 18, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "icebreaker encounter parity test" {
@@ -1722,37 +1733,37 @@ test "icebreaker encounter parity test" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Karuna (ICE) on a remote
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Mayfly (icebreaker), then gains credits
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Mayfly"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Mayfly"));
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp gains credits
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 2: runner runs on Server 1 (which has the ICE)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
     // Corp gets chance to rez ICE
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     // Runner approaches ICE
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 20, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 // Corp installs Brân 1.0 and runner encounters it parity test
@@ -1764,28 +1775,28 @@ test "corp installs bran ice runner encounters it parity test" {
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
 
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Brân 1.0"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Brân 1.0"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     try takeAction(allocator, &actions, &generated, .{
         .kind = .end_turn,
         .side = .corp,
     });
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 5, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 fn findMatchingAction(
@@ -2026,29 +2037,29 @@ fn endTurnAndDiscard(
     // If active player would need to discard after drawing, play/install a card first
     {
         const hand_len = switch (side) {
-            .corp => generated.snapshot.state.corp.hand.len,
-            .runner => generated.snapshot.state.runner.hand.len,
+            .corp => generated.corp_hand.items.len,
+            .runner => generated.runner_hand.items.len,
         };
         const hand_size = switch (side) {
-            .corp => generated.snapshot.state.corp.hand_size.total,
-            .runner => generated.snapshot.state.runner.hand_size.total,
+            .corp => generated.corp_hand_size.total,
+            .runner => generated.runner_hand_size.total,
         };
         if (hand_len > hand_size) {
             // Try to play any card from hand (install or operation) to reduce hand size
-            if (findFirstCorpInstallPlay(generated.snapshot.legal_actions) catch null) |install_action| {
+            if (findFirstCorpInstallPlay(generated.legal_actions) catch null) |install_action| {
                 try takeAction(allocator, actions, generated, install_action);
-                if (generated.snapshot.state.corp.prompt_state) |ps| {
+                if (generated.corp_prompt_state) |ps| {
                     if (std.mem.eql(u8, ps.prompt_type, "install-destination")) {
-                        try takeAction(allocator, actions, generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+                        try takeAction(allocator, actions, generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
                     }
                 }
             } else {
                 // All cards are operations — play the cheapest one
-                if (findFirstPlayFromHand(generated.snapshot.legal_actions, side) catch null) |play_action| {
+                if (findFirstPlayFromHand(generated.legal_actions, side) catch null) |play_action| {
                     try takeAction(allocator, actions, generated, play_action);
                     // Resolve any operation-specific prompts
-                    while (generated.snapshot.state.corp.prompt_state != null) {
-                        const cp = generated.snapshot.state.corp.prompt_state.?;
+                    while (generated.corp_prompt_state != null) {
+                        const cp = generated.corp_prompt_state.?;
                         if (cp.choices.len > 0) {
                             const choice_text = if (cp.choices[0].text) |t| t else break;
                             try takeAction(allocator, actions, generated, .{
@@ -2064,15 +2075,15 @@ fn endTurnAndDiscard(
         }
     }
     // Spend remaining clicks
-    while (findBasicAction(generated.snapshot.legal_actions, side, .gain_credit)) |gain_action| {
+    while (findBasicAction(generated.legal_actions, side, .gain_credit)) |gain_action| {
         try takeAction(allocator, actions, generated, gain_action);
     }
-    try takeAction(allocator, actions, generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, side));
+    try takeAction(allocator, actions, generated, try findActionByKind(generated.legal_actions, .end_turn, side));
     // Resolve discard prompts without recording (Clojure auto-resolves discard)
     while (true) {
         const ps = switch (side) {
-            .corp => generated.snapshot.state.corp.prompt_state,
-            .runner => generated.snapshot.state.runner.prompt_state,
+            .corp => generated.corp_prompt_state,
+            .runner => generated.runner_prompt_state,
         };
         const prompt = ps orelse break;
         if (!std.mem.eql(u8, prompt.prompt_type, "discard")) break;
@@ -2178,36 +2189,36 @@ test "verbal plasticity draws extra card on first click draw" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1 runner: install Verbal Plasticity then draw
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Verbal Plasticity"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Verbal Plasticity"));
 
-    const hand_before = generated.snapshot.state.runner.hand.len;
-    const deck_before = generated.snapshot.state.runner.deck.len;
+    const hand_before = generated.runner_hand.items.len;
+    const deck_before = generated.runner_deck.items.len;
     // Click draw - should draw 2 cards (1 normal + 1 Verbal Plasticity)
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
-    try std.testing.expectEqual(hand_before + 2, generated.snapshot.state.runner.hand.len);
-    try std.testing.expectEqual(deck_before - 2, generated.snapshot.state.runner.deck.len);
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
+    try std.testing.expectEqual(hand_before + 2, generated.runner_hand.items.len);
+    try std.testing.expectEqual(deck_before - 2, generated.runner_deck.items.len);
 
     // Second click draw - should only draw 1 card (Verbal Plasticity already triggered)
-    const hand_before2 = generated.snapshot.state.runner.hand.len;
-    const deck_before2 = generated.snapshot.state.runner.deck.len;
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
-    try std.testing.expectEqual(hand_before2 + 1, generated.snapshot.state.runner.hand.len);
-    try std.testing.expectEqual(deck_before2 - 1, generated.snapshot.state.runner.deck.len);
+    const hand_before2 = generated.runner_hand.items.len;
+    const deck_before2 = generated.runner_deck.items.len;
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
+    try std.testing.expectEqual(hand_before2 + 1, generated.runner_hand.items.len);
+    try std.testing.expectEqual(deck_before2 - 1, generated.runner_deck.items.len);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 13, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "docklands pass grants extra hq access" {
@@ -2219,42 +2230,42 @@ test "docklands pass grants extra hq access" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1 runner: install Docklands Pass then run HQ
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Docklands Pass"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Docklands Pass"));
     // Verify Docklands Pass is installed
-    try std.testing.expectEqual(@as(usize, 1), generated.snapshot.state.runner.rig_hardware.len);
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items.len);
 
     // Run HQ (no ice installed) - just verify the pre-access state matches oracle
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "HQ"));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
 
     // Verify parity before access (run initiation state)
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 
     // Continue through run to access phase
     {
         var iters: u32 = 0;
         while (iters < 20) : (iters += 1) {
-            if (findFirstKindAction(generated.snapshot.legal_actions, .@"continue", .corp)) |cont| {
+            if (findFirstKindAction(generated.legal_actions, .@"continue", .corp)) |cont| {
                 try flow.applyAction(&generated, cont);
-            } else if (findFirstKindAction(generated.snapshot.legal_actions, .@"continue", .runner)) |cont| {
+            } else if (findFirstKindAction(generated.legal_actions, .@"continue", .runner)) |cont| {
                 try flow.applyAction(&generated, cont);
             } else break;
         }
     }
     // Verify the Docklands Pass bonus was applied
-    try std.testing.expect(generated.snapshot.state.turn_events.runner_hq_breaches > 0);
+    try std.testing.expect(generated.turn_events.runner_hq_breaches > 0);
 }
 
 test "orbital superiority gives tag when runner not tagged" {
@@ -2266,51 +2277,51 @@ test "orbital superiority gives tag when runner not tagged" {
     defer actions.deinit(allocator);
 
     // Mulligan phase
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Corp needs to install Orbital Superiority, advance it to 4, and score it.
     // This takes multiple turns. Let's install it first.
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
     // Install Orbital Superiority in a remote
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Orbital Superiority"));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Orbital Superiority"));
     // Choose install destination
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     // Advance it twice (click 2 and 3)
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
     // Choose target - find the advance prompt
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Runner passes turn 1
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp advances twice more and scores
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
     // Score it
-    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .score_agenda) orelse return error.MissingAction);
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .score_agenda) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
 
     // Runner should now have 1 tag (not tagged before scoring)
-    try std.testing.expect(!generated.snapshot.state.game_over);
-    const tag = generated.snapshot.state.runner.tag.?;
+    try std.testing.expect(!generated.game_over);
+    const tag = generated.runner_tag.?;
     try std.testing.expectEqual(@as(u8, 1), tag.total);
     try std.testing.expect(tag.is_tagged);
     // Corp should have 2 agenda points
-    try std.testing.expectEqual(@as(u8, 2), generated.snapshot.state.corp.agenda_point);
+    try std.testing.expectEqual(@as(u8, 2), generated.corp_agenda_point);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 fn findBioroidBreakAction(actions: []const state.LegalAction, card_title: []const u8, subroutine_index: u8) !state.LegalAction {
@@ -2319,8 +2330,147 @@ fn findBioroidBreakAction(actions: []const state.LegalAction, card_title: []cons
         if (legal_action.card_title == null or !std.mem.eql(u8, legal_action.card_title.?, card_title)) continue;
         if (legal_action.choice == null or legal_action.choice.?.number == null) continue;
         if (legal_action.choice.?.number.? != subroutine_index) continue;
-        // Check if this is a bioroid break (runner ability)
         if (legal_action.side == .runner) return legal_action;
     }
     return error.MissingAction;
+}
+
+test "e2e beginner game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 1;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var step: u32 = 0;
+    const max_steps: u32 = 500;
+    var last_turn: u16 = 0;
+
+    while (step < max_steps) : (step += 1) {
+        if (generated.game_over) break;
+        if (generated.legal_actions.len == 0) break;
+
+        // Resolve discard prompts locally (NOT recorded — oracle auto-resolves)
+        if (try resolveOneDiscardPrompt(&generated)) continue;
+
+        // Check oracle parity at turn boundaries
+        if (generated.turn != last_turn and generated.turn > 0) {
+            const scenario_actions = try actions.toOwnedSlice(allocator);
+            defer allocator.free(scenario_actions);
+            var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== PARITY DIVERGENCE at turn {d} (step {d}) ===\n", .{ generated.turn, step });
+                std.debug.print("  corp: credit oracle={d} zig={d}, click oracle={d} zig={d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit oracle={d} zig={d}, click oracle={d} zig={d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                return err;
+            };
+            for (scenario_actions) |a| try actions.append(allocator, a);
+            last_turn = generated.turn;
+        }
+
+        const action = pickE2eAction(&generated);
+        try takeAction(allocator, &actions, &generated, action);
+    }
+
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
+}
+
+fn resolveOneDiscardPrompt(gen: *generator.Game) !bool {
+    for ([_]state.Side{ .corp, .runner }) |side| {
+        const ps = switch (side) {
+            .corp => gen.corp_prompt_state,
+            .runner => gen.runner_prompt_state,
+        };
+        const prompt = ps orelse continue;
+        if (!std.mem.eql(u8, prompt.prompt_type, "discard")) continue;
+        if (prompt.choices.len == 0) continue;
+        const title = if (prompt.choices[0].card) |c| c.title else continue;
+        try flow.applyAction(gen, .{
+            .kind = .prompt_choice,
+            .side = side,
+            .prompt_type = "discard",
+            .choice = .{ .kind = .card, .text = title },
+        });
+        return true;
+    }
+    return false;
+}
+
+fn pickE2eAction(gen: *generator.Game) state.LegalAction {
+    const actions = gen.legal_actions;
+    const side = gen.decision_side;
+
+    // Mulligan: keep
+    for (actions) |a| {
+        if (a.kind != .prompt_choice) continue;
+        if (a.choice) |c| {
+            if (c.text) |t| {
+                if (std.mem.eql(u8, t, "Keep")) return a;
+            }
+        }
+    }
+
+    // Access prompt: "No action" to skip trashing
+    for (actions) |a| {
+        if (a.kind != .prompt_choice) continue;
+        if (a.choice) |c| {
+            if (c.text) |t| {
+                if (std.mem.eql(u8, t, "No action")) return a;
+            }
+        }
+    }
+
+    // Steal agenda if available
+    for (actions) |a| {
+        if (a.kind != .prompt_choice) continue;
+        if (a.choice) |c| {
+            if (c.text) |t| {
+                if (std.mem.eql(u8, t, "Steal")) return a;
+            }
+        }
+    }
+
+    // Any remaining prompt: pick first
+    for (actions) |a| {
+        if (a.kind == .prompt_choice) return a;
+    }
+
+    // Continue actions (run phases)
+    if (findFirstKindAction(actions, .@"continue", .corp)) |a| return a;
+    if (findFirstKindAction(actions, .@"continue", .runner)) |a| return a;
+
+    // Start turn
+    if (findFirstKindAction(actions, .start_turn, side)) |a| return a;
+
+    // Play/install a card if hand exceeds hand_size
+    {
+        const hand_len = switch (side) {
+            .corp => gen.corp_hand.items.len,
+            .runner => gen.runner_hand.items.len,
+        };
+        const hand_size = switch (side) {
+            .corp => gen.corp_hand_size.total,
+            .runner => gen.runner_hand_size.total,
+        };
+        if (hand_len > hand_size) {
+            if (side == .corp) {
+                if (findFirstCorpInstallPlay(actions) catch null) |a| return a;
+            }
+            if (findFirstPlayFromHand(actions, side) catch null) |a| return a;
+        }
+    }
+
+    // Gain credits (safe default)
+    if (findBasicAction(actions, side, .gain_credit)) |a| return a;
+
+    // End turn
+    if (findFirstKindAction(actions, .end_turn, side)) |a| return a;
+
+    // Fallback: first available action
+    return actions[0];
 }
