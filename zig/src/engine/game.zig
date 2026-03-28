@@ -634,6 +634,7 @@ const prompt_run_any_server_basic = "run-any-server-basic";
 const prompt_run_central = "run-central";
 const prompt_hq_access = "hq-access";
 const prompt_rez_window = "rez-window";
+const prompt_discard = "discard";
 
 fn lookupCardSpec(card: state.CardInstance) ?CardSpec {
     if (card.code) |code| return lookupCardSpecByCode(code);
@@ -816,8 +817,9 @@ pub fn applyAction(
     switch (action.kind) {
         .prompt_choice => {
             const choice = action.choice orelse return error.MissingChoice;
-            if (choice.kind != .string or choice.text == null) return error.UnsupportedChoice;
-            try applyPromptChoice(generated, action.side, choice.text.?);
+            const text = choice.text orelse if (choice.card) |c| c.title else null;
+            if (text == null) return error.UnsupportedChoice;
+            try applyPromptChoice(generated, action.side, text.?);
         },
         .@"continue" => try applyContinue(generated, action.side),
         .start_turn => try applyStartTurn(generated, action.side),
@@ -950,8 +952,88 @@ pub fn applyEndTurn(
     if (generated.snapshot.state.end_turn) return error.TurnAlreadyEnded;
     if (generated.snapshot.state.active_player != side) return error.NotActivePlayer;
 
+    const hand_len = handList(generated, side).items.len;
+    const hand_size = switch (side) {
+        .corp => generated.snapshot.state.corp.hand_size.total,
+        .runner => generated.snapshot.state.runner.hand_size.total,
+    };
+
+    if (hand_len > hand_size) {
+        // Must discard down to hand size
+        try beginDiscardPrompt(generated, side, hand_len - hand_size);
+        return;
+    }
+
+    try finishEndTurn(generated, side);
+}
+
+fn beginDiscardPrompt(generated: *Game, side: state.Side, discard_count: usize) !void {
+    const allocator = generated.arena.allocator();
+    const hand = handList(generated, side).items;
+    const choices = try allocator.alloc(state.PromptChoice, hand.len);
+    for (hand, 0..) |card, idx| {
+        choices[idx] = .{
+            .kind = .card,
+            .card = .{
+                .title = card.title,
+                .code = card.code,
+                .index = @intCast(idx),
+            },
+        };
+    }
+
+    const player = switch (side) {
+        .corp => &generated.snapshot.state.corp,
+        .runner => &generated.snapshot.state.runner,
+    };
+    player.prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, prompt_discard),
+        .choices = choices,
+        .source_card = null,
+        .min_choices = @intCast(discard_count),
+    };
+    generated.snapshot.decision_side = side;
+    generated.snapshot.legal_actions = try promptChoiceActions(allocator, side, player.prompt_state.?);
+}
+
+fn applyDiscardChoice(generated: *Game, side: state.Side, choice_text: []const u8) !void {
+    // choice_text is the card title — find it in hand and discard it
+    const hand = handList(generated, side);
+    var found: ?usize = null;
+    for (hand.items, 0..) |card, idx| {
+        if (std.mem.eql(u8, card.title, choice_text)) {
+            found = idx;
+            break;
+        }
+    }
+    const idx = found orelse return error.UnsupportedChoice;
+    const discarded = hand.orderedRemove(idx);
+    try appendDiscardCard(generated, side, discarded);
+    try syncOwnedViews(generated);
+
+    // Check if more discards needed
+    const hand_len = hand.items.len;
+    const hand_size = switch (side) {
+        .corp => generated.snapshot.state.corp.hand_size.total,
+        .runner => generated.snapshot.state.runner.hand_size.total,
+    };
+
+    if (hand_len > hand_size) {
+        try beginDiscardPrompt(generated, side, hand_len - hand_size);
+        return;
+    }
+
+    try finishEndTurn(generated, side);
+}
+
+fn finishEndTurn(generated: *Game, side: state.Side) !void {
     const next_side = otherSide(side);
     generated.snapshot.state.end_turn = true;
+    // Clear any discard prompt
+    switch (side) {
+        .corp => generated.snapshot.state.corp.prompt_state = null,
+        .runner => generated.snapshot.state.runner.prompt_state = null,
+    }
     generated.snapshot.decision_side = next_side;
     generated.snapshot.legal_actions = try startTurnActions(generated.arena.allocator(), next_side);
 }
@@ -1048,6 +1130,11 @@ fn applyPromptChoice(
 
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_run_target) and prompt.source_card != null) {
         try applyRunnerRunTargetChoice(generated, prompt.source_card.?, choice_text);
+        return;
+    }
+
+    if (std.mem.eql(u8, prompt.prompt_type, prompt_discard)) {
+        try applyDiscardChoice(generated, side, choice_text);
         return;
     }
 
@@ -4333,7 +4420,7 @@ test "runner telework contract install and hosted-credit ability" {
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
     const install_action = findActionByTitle(generated.snapshot.legal_actions, .play_from_hand, "Telework Contract") orelse return error.MissingAction;
@@ -4384,7 +4471,7 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
         .choice = stringChoice("New remote"),
     });
     generated.snapshot.state.corp.credit = 20;
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     try applyAction(&generated, findRunAction(generated.snapshot.legal_actions, "Server 2") orelse return error.MissingAction);
@@ -4425,7 +4512,7 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
     while (findBasicAbilityAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
         try applyAction(&generated, gain_action);
     }
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const run_action = findRunAction(generated.snapshot.legal_actions, "Server 1") orelse return error.MissingAction;
     try applyAction(&generated, run_action);
@@ -4539,7 +4626,7 @@ test "urtica cipher access applies net damage when corp can pay" {
     try installCard(&generated, urtica, "New remote");
     generated.snapshot.state.corp.credit = 20;
 
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const hand_before = generated.snapshot.state.runner.hand.len;
     const discard_before = generated.snapshot.state.runner.discard.len;
@@ -4566,6 +4653,41 @@ fn expectInstalledIceTitle(servers: []const state.ServerSlot, title: []const u8)
         }
     }
     try std.testing.expectEqual(@as(usize, 1), match_count);
+}
+
+fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
+    // Spend remaining clicks before ending turn (unit test convenience)
+    const player = switch (side) {
+        .corp => &generated.snapshot.state.corp,
+        .runner => &generated.snapshot.state.runner,
+    };
+    while (player.click > 0) {
+        player.click -= 1;
+        player.credit += 1;
+    }
+    try applyAction(generated, .{ .kind = .end_turn, .side = side });
+    // Handle discard prompts
+    const player_ps = switch (side) {
+        .corp => generated.snapshot.state.corp.prompt_state,
+        .runner => generated.snapshot.state.runner.prompt_state,
+    };
+    if (player_ps) |ps| {
+        if (std.mem.eql(u8, ps.prompt_type, prompt_discard)) {
+            while (true) {
+                const pp = switch (side) {
+                    .corp => generated.snapshot.state.corp.prompt_state,
+                    .runner => generated.snapshot.state.runner.prompt_state,
+                };
+                if (pp == null) break;
+                if (!std.mem.eql(u8, pp.?.prompt_type, prompt_discard)) break;
+                if (pp.?.choices.len == 0) break;
+                // Discard first available card
+                const choice = pp.?.choices[0];
+                const title = choice.card.?.title orelse break;
+                try applyAction(generated, .{ .kind = .prompt_choice, .side = side, .prompt_type = prompt_discard, .choice = .{ .kind = .card, .text = title } });
+            }
+        }
+    }
 }
 
 fn findActionByTitle(actions: []const state.LegalAction, kind: state.ActionKind, title: []const u8) ?state.LegalAction {
@@ -4660,7 +4782,7 @@ test "flatline terminal condition when brain damage equals hand size" {
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
     // Set up flatline condition: brain damage >= hand size
@@ -4695,7 +4817,7 @@ test "jack out is available after passing ice" {
     });
 
     // End turn (ice remains unrezzed)
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
 
     // Runner starts turn and runs the remote
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -4754,7 +4876,7 @@ test "ICE subroutine end the run fires" {
     try installCard(&generated, tithe, "New remote");
 
     generated.snapshot.state.corp.credit = 20;
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const hand_before = generated.snapshot.state.runner.hand.len;
@@ -4791,7 +4913,7 @@ test "ICE net damage subroutine applies damage" {
     try installCard(&generated, karuna, "New remote");
 
     generated.snapshot.state.corp.credit = 20;
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const hand_before = generated.snapshot.state.runner.hand.len;
@@ -4826,7 +4948,7 @@ test "runner loses credits subroutine" {
     try installCard(&generated, whitespace, "New remote");
 
     generated.snapshot.state.corp.credit = 20;
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const credit_before = generated.snapshot.state.runner.credit;
@@ -4867,7 +4989,7 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
     });
 
     generated.snapshot.state.corp.credit = 20;
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
 
     // Runner plays Tread Lightly which sets rez cost bonus to 3
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -4911,7 +5033,7 @@ test "sure gamble gains credits without losing extra clicks" {
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
-    try applyAction(&generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
     // Runner starts turn with 4 clicks and 5 credits

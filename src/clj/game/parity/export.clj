@@ -728,6 +728,13 @@
       (let [card (resolve-card state (:card-locator action))]
         (main/handle-action state side "advance" {:card card}))
 
+      :select
+      (let [card-title (:card-title action)
+            hand (get-in @state [side :hand])
+            card (some #(when (= card-title (:title %)) %) hand)]
+        (when card
+          (main/handle-action state side "select" {:card card})))
+
       (throw (ex-info "Unsupported parity action" {:action action})))))
 
 (defn- transient-hide-action?

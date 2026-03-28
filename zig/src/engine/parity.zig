@@ -718,10 +718,7 @@ test "corp first install runner run-server-1 continue scenario matches live repl
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
@@ -746,10 +743,7 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
     // Initiation: both sides pass
@@ -778,10 +772,7 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
     // Initiation: both sides pass
@@ -911,10 +902,7 @@ test "runner tread-lightly prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Tread Lightly"));
 
@@ -937,10 +925,7 @@ test "runner tread-lightly server-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Tread Lightly"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
@@ -964,10 +949,7 @@ test "runner jailbreak prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
 
@@ -990,10 +972,7 @@ test "runner jailbreak hq-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "HQ"));
@@ -1017,10 +996,7 @@ test "runner overclock prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
 
@@ -1043,10 +1019,7 @@ test "runner overclock server-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Overclock"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
@@ -1179,7 +1152,17 @@ test "runner jailbreak successful-run effect is attached to run flow" {
     while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
         try flow.applyAction(&generated, gain_action);
     }
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    {
+        try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+        while (true) {
+            const ps = generated.snapshot.state.corp.prompt_state orelse break;
+            if (!std.mem.eql(u8, ps.prompt_type, "discard")) break;
+            if (ps.choices.len == 0) break;
+            const title = if (ps.choices[0].card) |c| c.title else null;
+            if (title == null) break;
+            try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+        }
+    }
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
 
     const hand_before_play = generated.snapshot.state.runner.hand.len;
@@ -1212,10 +1195,7 @@ test "runner jailbreak successful-run scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Jailbreak"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "HQ"));
@@ -1244,7 +1224,17 @@ test "runner tread-lightly run modifier is attached to run state" {
     while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
         try flow.applyAction(&generated, gain_action);
     }
-    try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    {
+        try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+        while (true) {
+            const ps = generated.snapshot.state.corp.prompt_state orelse break;
+            if (!std.mem.eql(u8, ps.prompt_type, "discard")) break;
+            if (ps.choices.len == 0) break;
+            const title = if (ps.choices[0].card) |c| c.title else null;
+            if (title == null) break;
+            try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+        }
+    }
     try flow.applyAction(&generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Tread Lightly"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Server 1"));
@@ -1265,10 +1255,7 @@ test "runner creative-commission scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Creative Commission"));
 
@@ -1291,10 +1278,7 @@ test "runner vrcation scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "VRcation"));
 
@@ -1315,10 +1299,7 @@ test "runner telework contract install scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Telework Contract"));
 
@@ -1339,10 +1320,7 @@ test "runner telework contract ability scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Telework Contract"));
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.snapshot.legal_actions, "Telework Contract"));
@@ -1366,7 +1344,7 @@ test "manegarm skunkworks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    try takeAction(allocator, &actions, &generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
@@ -1403,7 +1381,7 @@ test "manegarm skunkworks spend clicks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    try takeAction(allocator, &actions, &generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
@@ -1442,7 +1420,7 @@ test "manegarm skunkworks pay credits parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Manegarm Skunkworks"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    try takeAction(allocator, &actions, &generated, .{ .kind = .end_turn, .side = .corp });
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "Server 1"));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .@"continue", .corp));
@@ -1487,17 +1465,11 @@ test "government subsidy parity test" {
     // Playing a card keeps hand at 5, avoiding discard at end of turn
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Hedge Fund"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner gains credits
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    while (findBasicAction(generated.snapshot.legal_actions, .runner, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp plays Government Subsidy (costs 10, gains 15)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
@@ -1600,10 +1572,7 @@ test "pennyshaver install parity test" {
 
     // Turn 1: corp passes
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Pennyshaver
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -1630,10 +1599,7 @@ test "smartware distributor install and ability parity test" {
 
     // Turn 1: corp passes
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Smartware Distributor and uses place_credits ability
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -1689,10 +1655,7 @@ test "mutual favor parity test" {
 
     // Turn 1: corp passes
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Verify parity before runner plays Mutual Favor
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -1737,10 +1700,7 @@ test "wildcat strike parity test" {
 
     // Turn 1: corp passes
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner plays Wildcat Strike, corp makes a choice
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -1769,25 +1729,16 @@ test "icebreaker encounter parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.snapshot.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Mayfly (icebreaker), then gains credits
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Mayfly"));
-    while (findBasicAction(generated.snapshot.legal_actions, .runner, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp gains credits
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 2: runner runs on Server 1 (which has the ICE)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -2066,6 +2017,77 @@ fn takeAction(
     try flow.applyAction(generated, selected);
 }
 
+fn endTurnAndDiscard(
+    allocator: std.mem.Allocator,
+    actions: *std.ArrayList(state.LegalAction),
+    generated: *generator.Game,
+    side: state.Side,
+) !void {
+    // If active player would need to discard after drawing, play/install a card first
+    {
+        const hand_len = switch (side) {
+            .corp => generated.snapshot.state.corp.hand.len,
+            .runner => generated.snapshot.state.runner.hand.len,
+        };
+        const hand_size = switch (side) {
+            .corp => generated.snapshot.state.corp.hand_size.total,
+            .runner => generated.snapshot.state.runner.hand_size.total,
+        };
+        if (hand_len > hand_size) {
+            // Try to play any card from hand (install or operation) to reduce hand size
+            if (findFirstCorpInstallPlay(generated.snapshot.legal_actions) catch null) |install_action| {
+                try takeAction(allocator, actions, generated, install_action);
+                if (generated.snapshot.state.corp.prompt_state) |ps| {
+                    if (std.mem.eql(u8, ps.prompt_type, "install-destination")) {
+                        try takeAction(allocator, actions, generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+                    }
+                }
+            } else {
+                // All cards are operations — play the cheapest one
+                if (findFirstPlayFromHand(generated.snapshot.legal_actions, side) catch null) |play_action| {
+                    try takeAction(allocator, actions, generated, play_action);
+                    // Resolve any operation-specific prompts
+                    while (generated.snapshot.state.corp.prompt_state != null) {
+                        const cp = generated.snapshot.state.corp.prompt_state.?;
+                        if (cp.choices.len > 0) {
+                            const choice_text = if (cp.choices[0].text) |t| t else break;
+                            try takeAction(allocator, actions, generated, .{
+                                .kind = .prompt_choice,
+                                .side = .corp,
+                                .prompt_type = cp.prompt_type,
+                                .choice = .{ .kind = .string, .text = choice_text },
+                            });
+                        } else break;
+                    }
+                }
+            }
+        }
+    }
+    // Spend remaining clicks
+    while (findBasicAction(generated.snapshot.legal_actions, side, .gain_credit)) |gain_action| {
+        try takeAction(allocator, actions, generated, gain_action);
+    }
+    try takeAction(allocator, actions, generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, side));
+    // Resolve discard prompts without recording (Clojure auto-resolves discard)
+    while (true) {
+        const ps = switch (side) {
+            .corp => generated.snapshot.state.corp.prompt_state,
+            .runner => generated.snapshot.state.runner.prompt_state,
+        };
+        const prompt = ps orelse break;
+        if (!std.mem.eql(u8, prompt.prompt_type, "discard")) break;
+        if (prompt.choices.len == 0) break;
+        const title = if (prompt.choices[0].card) |c| c.title else null;
+        if (title == null) break;
+        try flow.applyAction(generated, .{
+            .kind = .prompt_choice,
+            .side = side,
+            .prompt_type = "discard",
+            .choice = .{ .kind = .card, .text = title },
+        });
+    }
+}
+
 fn findActionByKind(actions: []const state.LegalAction, kind: state.ActionKind, side: state.Side) !state.LegalAction {
     return findFirstKindAction(actions, kind, side) orelse error.MissingAction;
 }
@@ -2161,10 +2183,7 @@ test "verbal plasticity draws extra card on first click draw" {
 
     // Turn 1: corp passes
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1 runner: install Verbal Plasticity then draw
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -2205,10 +2224,7 @@ test "docklands pass grants extra hq access" {
 
     // Turn 1: corp passes
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
-    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1 runner: install Docklands Pass then run HQ
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
@@ -2266,14 +2282,11 @@ test "orbital superiority gives tag when runner not tagged" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
     try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Runner passes turn 1
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
-    while (findBasicAction(generated.snapshot.legal_actions, .runner, .gain_credit)) |gain_action| {
-        try takeAction(allocator, &actions, &generated, gain_action);
-    }
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp advances twice more and scores
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));

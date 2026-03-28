@@ -199,6 +199,7 @@ pub const CardReference = struct {
     printed_title: ?[]const u8 = null,
     code: ?u32 = null,
     side: ?Side = null,
+    index: ?u8 = null,
 };
 
 pub const PromptChoice = struct {
@@ -212,6 +213,7 @@ pub const PromptState = struct {
     prompt_type: []const u8,
     choices: []const PromptChoice,
     source_card: ?CardInstance = null,
+    min_choices: u8 = 0,
 };
 
 pub const CardInstance = struct {

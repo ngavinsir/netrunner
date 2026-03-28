@@ -447,6 +447,19 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Translate discard prompt_choice into a "select" action for Clojure
+        if (std.mem.eql(u8, action.prompt_type.?, "discard")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "select", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeHandCardLocator(writer, action.side, text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Translate advance-installed prompt_choice into an "advance" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "advance-installed")) {
             try writer.writeByte('{');
@@ -497,6 +510,15 @@ fn writeCorpServerCardLocator(writer: anytype, choice_text: []const u8, leading_
     try writer.writeByte(']');
 }
 
+fn writeHandCardLocator(writer: anytype, side: state.Side, card_title: []const u8, leading_comma: bool) !void {
+    // Send card-title for the select action — Clojure resolves by title
+    if (leading_comma) try writer.writeByte(',');
+    try writeJsonString(writer, "card-title");
+    try writer.writeByte(':');
+    try writeJsonString(writer, card_title);
+    _ = side;
+}
+
 fn writeRunnerRigResourceLocatorJsonField(
     writer: anytype,
     key: []const u8,
@@ -540,6 +562,7 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
+    if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     return prompt_type;
 }
 
