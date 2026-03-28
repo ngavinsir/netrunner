@@ -373,7 +373,7 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     .{ .title = "VRcation", .side = .runner, .code = 30021, .card_type = "Event", .cost = 1, .runner_play = .{ .kind = .gain_credits, .draw_cards = 4, .lose_clicks = 1 } },
-    .{ .title = "Docklands Pass", .side = .runner, .code = 30013, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware } },
+    .{ .title = "Docklands Pass", .side = .runner, .code = 30013, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .hq_access_bonus = 1 } },
     .{ .title = "Pennyshaver", .side = .runner, .code = 30014, .card_type = "Hardware", .cost = 3, .runner_install = .{ .kind = .hardware }, .installed_ability = .{
         .kind = .take_credits,
         .click_cost = 1,
@@ -402,7 +402,7 @@ pub const all_cards = [_]CardSpec{
         .trash_on_empty = true,
         .once_per_turn = true,
     } },
-    .{ .title = "Verbal Plasticity", .side = .runner, .code = 30034, .card_type = "Resource", .cost = 3, .runner_install = .{ .kind = .resource } },
+    .{ .title = "Verbal Plasticity", .side = .runner, .code = 30034, .card_type = "Resource", .cost = 3, .runner_install = .{ .kind = .resource }, .installed_ability = .{ .click_draw_bonus = 1 } },
     .{ .title = "Carmen", .side = .runner, .code = 30015, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer" }, .cost = 5, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .credit_cost = 1,
@@ -1136,12 +1136,11 @@ fn applyRunnerBasicActionAbility(
         },
         .draw_card => {
             try spendClicks(runner, 1);
-            // Verbal Plasticity: first click draw each turn, draw 1 additional card
-            if (generated.snapshot.state.turn_events.runner_click_draws == 0 and runner_has_installed_resource(generated, 30034)) {
-                try drawCards(generated, .runner, 2);
-            } else {
-                try drawCard(generated, .runner);
+            var draw_amount: u8 = 1;
+            if (generated.snapshot.state.turn_events.runner_click_draws == 0) {
+                draw_amount += runner_installed_click_draw_bonus(generated);
             }
+            try drawCards(generated, .runner, draw_amount);
             generated.snapshot.state.turn_events.runner_click_draws += 1;
         },
         .run_any_server => {
@@ -1472,18 +1471,26 @@ fn runner_had_successful_run_last_turn(generated: *const Game) bool {
     return generated.snapshot.state.runner_successful_run_last_turn;
 }
 
-fn runner_has_installed_hardware(generated: *const Game, card_code: u32) bool {
-    for (generated.runner_rig_hardware.items) |card| {
-        if (card.code == card_code) return true;
+fn runner_installed_click_draw_bonus(generated: *const Game) u8 {
+    var bonus: u8 = 0;
+    for (generated.runner_rig_resources.items) |card| {
+        bonus += card.installed_ability.click_draw_bonus;
     }
-    return false;
+    for (generated.runner_rig_hardware.items) |card| {
+        bonus += card.installed_ability.click_draw_bonus;
+    }
+    return bonus;
 }
 
-fn runner_has_installed_resource(generated: *const Game, card_code: u32) bool {
-    for (generated.runner_rig_resources.items) |card| {
-        if (card.code == card_code) return true;
+fn runner_installed_hq_access_bonus(generated: *const Game) u8 {
+    var bonus: u8 = 0;
+    for (generated.runner_rig_hardware.items) |card| {
+        bonus += card.installed_ability.hq_access_bonus;
     }
-    return false;
+    for (generated.runner_rig_resources.items) |card| {
+        bonus += card.installed_ability.hq_access_bonus;
+    }
+    return bonus;
 }
 
 
@@ -2941,11 +2948,8 @@ fn prepareNextAccess(generated: *Game) !bool {
     const run = &generated.snapshot.state.run.?;
     if (run.accesses_remaining == 0) {
         var bonus: u8 = run.access_bonus;
-        // Docklands Pass: first HQ breach each turn, +1 access
         if (std.mem.eql(u8, run.server[0], "hq") and generated.snapshot.state.turn_events.runner_hq_breaches == 0) {
-            if (runner_has_installed_hardware(generated, 30013)) {
-                bonus += 1;
-            }
+            bonus += runner_installed_hq_access_bonus(generated);
             generated.snapshot.state.turn_events.runner_hq_breaches += 1;
         }
         run.accesses_remaining = 1 + bonus;

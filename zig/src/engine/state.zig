@@ -190,6 +190,8 @@ pub const InstalledAbilitySpec = struct {
     trash_on_empty: bool = false,
     once_per_turn: bool = false,
     trashes_after_break: bool = false,
+    click_draw_bonus: u8 = 0,
+    hq_access_bonus: u8 = 0,
 };
 
 pub const CardReference = struct {
