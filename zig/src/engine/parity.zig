@@ -2147,6 +2147,159 @@ fn containsTitle(titles: []const []const u8, title: []const u8) bool {
 }
 
 // Find bioroid break action during ICE encounter
+test "verbal plasticity draws extra card on first click draw" {
+    const allocator = std.testing.allocator;
+    // Seed 13 beginner: Runner hand has Verbal Plasticity
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 13);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+        try takeAction(allocator, &actions, &generated, gain_action);
+    }
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+
+    // Turn 1 runner: install Verbal Plasticity then draw
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Verbal Plasticity"));
+
+    const hand_before = generated.snapshot.state.runner.hand.len;
+    const deck_before = generated.snapshot.state.runner.deck.len;
+    // Click draw - should draw 2 cards (1 normal + 1 Verbal Plasticity)
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
+    try std.testing.expectEqual(hand_before + 2, generated.snapshot.state.runner.hand.len);
+    try std.testing.expectEqual(deck_before - 2, generated.snapshot.state.runner.deck.len);
+
+    // Second click draw - should only draw 1 card (Verbal Plasticity already triggered)
+    const hand_before2 = generated.snapshot.state.runner.hand.len;
+    const deck_before2 = generated.snapshot.state.runner.deck.len;
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
+    try std.testing.expectEqual(hand_before2 + 1, generated.snapshot.state.runner.hand.len);
+    try std.testing.expectEqual(deck_before2 - 1, generated.snapshot.state.runner.deck.len);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 13, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+}
+
+test "docklands pass grants extra hq access" {
+    const allocator = std.testing.allocator;
+    // Seed 2 beginner: Runner hand has Docklands Pass
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    while (findBasicAction(generated.snapshot.legal_actions, .corp, .gain_credit)) |gain_action| {
+        try takeAction(allocator, &actions, &generated, gain_action);
+    }
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+
+    // Turn 1 runner: install Docklands Pass then run HQ
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .runner, "Docklands Pass"));
+    // Verify Docklands Pass is installed
+    try std.testing.expectEqual(@as(usize, 1), generated.snapshot.state.runner.rig_hardware.len);
+
+    // Run HQ (no ice installed) - just verify the pre-access state matches oracle
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.snapshot.legal_actions, "HQ"));
+
+    // Verify parity before access (run initiation state)
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 2, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+
+    // Continue through run to access phase
+    {
+        var iters: u32 = 0;
+        while (iters < 20) : (iters += 1) {
+            if (findFirstKindAction(generated.snapshot.legal_actions, .@"continue", .corp)) |cont| {
+                try flow.applyAction(&generated, cont);
+            } else if (findFirstKindAction(generated.snapshot.legal_actions, .@"continue", .runner)) |cont| {
+                try flow.applyAction(&generated, cont);
+            } else break;
+        }
+    }
+    // Verify the Docklands Pass bonus was applied
+    try std.testing.expect(generated.snapshot.state.runner_breached_hq_this_turn);
+}
+
+test "orbital superiority gives tag when runner not tagged" {
+    const allocator = std.testing.allocator;
+    // Seed 6 intermediate: Corp hand has Orbital Superiority
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 6);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .runner, "Keep"));
+
+    // Corp needs to install Orbital Superiority, advance it to 4, and score it.
+    // This takes multiple turns. Let's install it first.
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    // Install Orbital Superiority in a remote
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.snapshot.legal_actions, .corp, "Orbital Superiority"));
+    // Choose install destination
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "New remote"));
+    // Advance it twice (click 2 and 3)
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    // Choose target - find the advance prompt
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .corp));
+
+    // Runner passes turn 1
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .runner));
+    while (findBasicAction(generated.snapshot.legal_actions, .runner, .gain_credit)) |gain_action| {
+        try takeAction(allocator, &actions, &generated, gain_action);
+    }
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .end_turn, .runner));
+
+    // Turn 2: corp advances twice more and scores
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.snapshot.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+    // Score it
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.snapshot.legal_actions, .corp, .score_agenda) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.snapshot.legal_actions, .corp, "remote1|c|0"));
+
+    // Runner should now have 1 tag (not tagged before scoring)
+    try std.testing.expect(!generated.snapshot.state.game_over);
+    const tag = generated.snapshot.state.runner.tag.?;
+    try std.testing.expectEqual(@as(u8, 1), tag.total);
+    try std.testing.expect(tag.is_tagged);
+    // Corp should have 2 agenda points
+    try std.testing.expectEqual(@as(u8, 2), generated.snapshot.state.corp.agenda_point);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, generated.snapshot);
+}
+
 fn findBioroidBreakAction(actions: []const state.LegalAction, card_title: []const u8, subroutine_index: u8) !state.LegalAction {
     for (actions) |legal_action| {
         if (legal_action.kind != .use_subroutine) continue;

@@ -720,6 +720,14 @@
       (main/handle-action state side "subroutine" {:card (resolve-card state (:card-locator action))
                                                    :subroutine (:subroutine-index action)})
 
+      :score
+      (let [card (resolve-card state (:card-locator action))]
+        (main/handle-action state side "score" {:card card}))
+
+      :advance
+      (let [card (resolve-card state (:card-locator action))]
+        (main/handle-action state side "advance" {:card card}))
+
       (throw (ex-info "Unsupported parity action" {:action action})))))
 
 (defn- transient-hide-action?

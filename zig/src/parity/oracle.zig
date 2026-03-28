@@ -372,6 +372,7 @@ fn buildReplayRequestJson(
     try writer.writeAll(",\"actions\":[");
     var wrote_action = false;
     for (actions) |action| {
+        if (shouldSkipAction(action)) continue;
         if (wrote_action) try writer.writeByte(',');
         try writeActionJson(&writer, action);
         wrote_action = true;
@@ -421,7 +422,46 @@ fn waitForUnixSocket(socket_path: []const u8) !void {
     return error.ReplayOracleFailed;
 }
 
+fn shouldSkipAction(action: state.LegalAction) bool {
+    // Skip score_agenda and advance_installed basic actions — in Clojure these are
+    // single commands with card context, not two-step prompt flows.
+    // The subsequent prompt_choice is translated to the proper action.
+    if (action.basic_action) |ba| {
+        if (ba == .score_agenda or ba == .advance_installed) return true;
+    }
+    return false;
+}
+
 fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
+    // Translate score-agenda prompt_choice into a "score" action for Clojure
+    if (action.kind == .prompt_choice and action.prompt_type != null) {
+        if (std.mem.eql(u8, action.prompt_type.?, "score-agenda")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "score", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeCorpServerCardLocator(writer, text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Translate advance-installed prompt_choice into an "advance" action for Clojure
+        if (std.mem.eql(u8, action.prompt_type.?, "advance-installed")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "advance", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeCorpServerCardLocator(writer, text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+    }
+
     try writer.writeByte('{');
     try writeJsonFieldString(writer, "kind", actionKindName(action.kind), false);
     try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -435,6 +475,26 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
     if (oracleAbilityIndex(action)) |ability_index| try writeJsonFieldInteger(writer, "ability-index", ability_index, true);
     if (action.label) |label| try writeJsonFieldString(writer, "label", label, true);
     try writer.writeByte('}');
+}
+
+fn writeCorpServerCardLocator(writer: anytype, choice_text: []const u8, leading_comma: bool) !void {
+    // Parse "remote1|c|0" into ["corp", "servers", "remote1", "content", 0]
+    var iter = std.mem.splitScalar(u8, choice_text, '|');
+    const server_name = iter.next() orelse return;
+    const zone = iter.next() orelse return;
+    const index_text = iter.next() orelse return;
+    const zone_name = if (std.mem.eql(u8, zone, "c")) "content" else "ices";
+
+    if (leading_comma) try writer.writeByte(',');
+    try writeJsonString(writer, "card-locator");
+    try writer.writeByte(':');
+    try writer.writeAll("[\"corp\",\"servers\",");
+    try writeJsonString(writer, server_name);
+    try writer.writeByte(',');
+    try writeJsonString(writer, zone_name);
+    try writer.writeByte(',');
+    try writer.writeAll(index_text);
+    try writer.writeByte(']');
 }
 
 fn writeRunnerRigResourceLocatorJsonField(

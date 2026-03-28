@@ -39,6 +39,7 @@ pub const CardSpec = struct {
     card_subroutine_handler: ?CardSubroutineHandler = null,
     on_play: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
+    on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
 };
 
 pub const SideSpec = struct {
@@ -59,7 +60,24 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
     .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
     .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 2, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
-    .{ .title = "Orbital Superiority", .side = .corp, .code = 30068, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Orbital Superiority", .side = .corp, .code = 30068, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+                var runner = &g.snapshot.state.runner;
+                if (is_runner_tagged(runner.*)) {
+                    try trashRandomRunnerHandCards(g, 4);
+                    updateTerminalState(g);
+                } else {
+                    if (runner.tag == null) {
+                        runner.tag = .{ .base = 0, .total = 1, .is_tagged = true };
+                    } else {
+                        runner.tag.?.total += 1;
+                        runner.tag.?.is_tagged = true;
+                    }
+                }
+            }
+        }.score,
+    },
     .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
         .kind = .take_credits,
         .click_cost = 1,
@@ -910,6 +928,8 @@ pub fn applyStartTurn(
         .runner => {
             var runner = &generated.snapshot.state.runner;
             runner.click = runner.click_per_turn;
+            generated.snapshot.state.runner_breached_hq_this_turn = false;
+            generated.snapshot.state.runner_used_click_draw_this_turn = false;
             resetInstalledAbilityUsage(generated);
 
             generated.snapshot.state.active_player = .runner;
@@ -1117,7 +1137,13 @@ fn applyRunnerBasicActionAbility(
         },
         .draw_card => {
             try spendClicks(runner, 1);
-            try drawCard(generated, .runner);
+            // Verbal Plasticity: first click draw each turn, draw 1 additional card
+            if (!generated.snapshot.state.runner_used_click_draw_this_turn and runner_has_installed_resource(generated, 30034)) {
+                try drawCards(generated, .runner, 2);
+            } else {
+                try drawCard(generated, .runner);
+            }
+            generated.snapshot.state.runner_used_click_draw_this_turn = true;
         },
         .run_any_server => {
             try beginRunAnyServerPrompt(generated);
@@ -1192,7 +1218,6 @@ fn applyScoreAgendaChoice(
     choice_text: []const u8,
 ) !void {
     var corp = &generated.snapshot.state.corp;
-    try spendClicks(corp, 1);
 
     const target = try parseInstalledTargetChoice(choice_text);
     if (target.is_ice) return error.UnsupportedChoice;
@@ -1214,6 +1239,13 @@ fn applyScoreAgendaChoice(
     corp.agenda_point += agenda_points;
     // On-score agenda effects
     if (lookupCardSpec(scored_agenda)) |spec| {
+        if (spec.on_score_fn) |handler| {
+            try handler(generated, scored_agenda);
+            if (generated.snapshot.state.game_over) {
+                generated.snapshot.state.corp.prompt_state = null;
+                return;
+            }
+        }
         switch (spec.on_score.kind) {
             .gain_credits => {
                 generated.snapshot.state.corp.credit += spec.on_score.amount;
@@ -1439,6 +1471,20 @@ fn is_runner_tagged(runner: state.PlayerState) bool {
 
 fn runner_had_successful_run_last_turn(generated: *const Game) bool {
     return generated.snapshot.state.runner_successful_run_last_turn;
+}
+
+fn runner_has_installed_hardware(generated: *const Game, card_code: u32) bool {
+    for (generated.runner_rig_hardware.items) |card| {
+        if (card.code == card_code) return true;
+    }
+    return false;
+}
+
+fn runner_has_installed_resource(generated: *const Game, card_code: u32) bool {
+    for (generated.runner_rig_resources.items) |card| {
+        if (card.code == card_code) return true;
+    }
+    return false;
 }
 
 
@@ -2895,7 +2941,15 @@ fn advanceMovementPhase(generated: *Game) !void {
 fn prepareNextAccess(generated: *Game) !bool {
     const run = &generated.snapshot.state.run.?;
     if (run.accesses_remaining == 0) {
-        run.accesses_remaining = 1 + run.access_bonus;
+        var bonus: u8 = run.access_bonus;
+        // Docklands Pass: first HQ breach each turn, +1 access
+        if (std.mem.eql(u8, run.server[0], "hq") and !generated.snapshot.state.runner_breached_hq_this_turn) {
+            if (runner_has_installed_hardware(generated, 30013)) {
+                bonus += 1;
+            }
+            generated.snapshot.state.runner_breached_hq_this_turn = true;
+        }
+        run.accesses_remaining = 1 + bonus;
     }
 
     if (run.accesses_remaining == 0) return false;
