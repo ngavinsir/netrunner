@@ -201,7 +201,7 @@ test "corp start-turn transitions match oracle fixture" {
     defer corp_keep_runner_keep.deinit();
     try flow.applyMulliganChoice(&corp_keep_runner_keep, .corp, .keep);
     try flow.applyMulliganChoice(&corp_keep_runner_keep, .runner, .keep);
-    try flow.applyStartTurn(&corp_keep_runner_keep, .corp);
+    try generator.corpStartTurnFull(&corp_keep_runner_keep);
     try expectTransitionMatches(oracle.runner_after_corp_keep.keep_start_turn.transition, try corp_keep_runner_keep.toSnapshot());
 
     var corp_keep_runner_mulligan = try generator.createInitialSnapshot(
@@ -212,7 +212,7 @@ test "corp start-turn transitions match oracle fixture" {
     defer corp_keep_runner_mulligan.deinit();
     try flow.applyMulliganChoice(&corp_keep_runner_mulligan, .corp, .keep);
     try flow.applyMulliganChoice(&corp_keep_runner_mulligan, .runner, .mulligan);
-    try flow.applyStartTurn(&corp_keep_runner_mulligan, .corp);
+    try generator.corpStartTurnFull(&corp_keep_runner_mulligan);
     try expectTransitionMatches(oracle.runner_after_corp_keep.mulligan_start_turn.transition, try corp_keep_runner_mulligan.toSnapshot());
 
     var corp_mulligan_runner_keep = try generator.createInitialSnapshot(
@@ -223,7 +223,7 @@ test "corp start-turn transitions match oracle fixture" {
     defer corp_mulligan_runner_keep.deinit();
     try flow.applyMulliganChoice(&corp_mulligan_runner_keep, .corp, .mulligan);
     try flow.applyMulliganChoice(&corp_mulligan_runner_keep, .runner, .keep);
-    try flow.applyStartTurn(&corp_mulligan_runner_keep, .corp);
+    try generator.corpStartTurnFull(&corp_mulligan_runner_keep);
     try expectTransitionMatches(oracle.runner_after_corp_mulligan.keep_start_turn.transition, try corp_mulligan_runner_keep.toSnapshot());
 
     var corp_mulligan_runner_mulligan = try generator.createInitialSnapshot(
@@ -234,7 +234,7 @@ test "corp start-turn transitions match oracle fixture" {
     defer corp_mulligan_runner_mulligan.deinit();
     try flow.applyMulliganChoice(&corp_mulligan_runner_mulligan, .corp, .mulligan);
     try flow.applyMulliganChoice(&corp_mulligan_runner_mulligan, .runner, .mulligan);
-    try flow.applyStartTurn(&corp_mulligan_runner_mulligan, .corp);
+    try generator.corpStartTurnFull(&corp_mulligan_runner_mulligan);
     try expectTransitionMatches(oracle.runner_after_corp_mulligan.mulligan_start_turn.transition, try corp_mulligan_runner_mulligan.toSnapshot());
 }
 
@@ -253,9 +253,11 @@ test "corp basic action transitions match oracle fixture" {
     );
     defer start_state.deinit();
 
-    try flow.applyAction(&start_state, start_state.legal_actions[0]);
-    try flow.applyAction(&start_state, start_state.legal_actions[0]);
-    try flow.applyAction(&start_state, start_state.legal_actions[0]);
+    try flow.applyAction(&start_state, start_state.legal_actions[0]); // Keep corp
+    try flow.applyAction(&start_state, start_state.legal_actions[0]); // Keep runner
+    try flow.applyAction(&start_state, start_state.legal_actions[0]); // start_turn
+    try flow.applyAction(&start_state, start_state.legal_actions[0]); // phase-12 corp continue
+    try flow.applyAction(&start_state, start_state.legal_actions[0]); // phase-12 runner continue
 
     const start_turn_oracle = oracle.runner_after_corp_keep.keep_start_turn;
 
@@ -265,9 +267,9 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer gain_credit.deinit();
-    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]);
-    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]);
-    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]);
+    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]); // Keep corp
+    try flow.applyAction(&gain_credit, gain_credit.legal_actions[0]); // Keep runner
+    try generator.corpStartTurnFull(&gain_credit);
     try flow.applyAction(&gain_credit, gain_credit.legal_actions[try findBasicActionIndex(gain_credit.legal_actions, .gain_credit)]);
     try expectTransitionMatches(start_turn_oracle.basic_actions.gain_credit, try gain_credit.toSnapshot());
 
@@ -277,9 +279,9 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer draw_card.deinit();
-    try flow.applyAction(&draw_card, draw_card.legal_actions[0]);
-    try flow.applyAction(&draw_card, draw_card.legal_actions[0]);
-    try flow.applyAction(&draw_card, draw_card.legal_actions[0]);
+    try flow.applyAction(&draw_card, draw_card.legal_actions[0]); // Keep corp
+    try flow.applyAction(&draw_card, draw_card.legal_actions[0]); // Keep runner
+    try generator.corpStartTurnFull(&draw_card);
     try flow.applyAction(&draw_card, draw_card.legal_actions[try findBasicActionIndex(draw_card.legal_actions, .draw_card)]);
     try expectTransitionMatches(start_turn_oracle.basic_actions.draw_card, try draw_card.toSnapshot());
 
@@ -289,9 +291,9 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer advance_card.deinit();
-    try flow.applyAction(&advance_card, advance_card.legal_actions[0]);
-    try flow.applyAction(&advance_card, advance_card.legal_actions[0]);
-    try flow.applyAction(&advance_card, advance_card.legal_actions[0]);
+    try flow.applyAction(&advance_card, advance_card.legal_actions[0]); // Keep corp
+    try flow.applyAction(&advance_card, advance_card.legal_actions[0]); // Keep runner
+    try generator.corpStartTurnFull(&advance_card);
     try flow.applyAction(&advance_card, advance_card.legal_actions[try findBasicActionIndex(advance_card.legal_actions, .advance_installed)]);
     try expectTransitionMatches(start_turn_oracle.basic_actions.advance_card, try advance_card.toSnapshot());
 
@@ -301,9 +303,9 @@ test "corp basic action transitions match oracle fixture" {
         1,
     );
     defer purge_viruses.deinit();
-    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]);
-    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]);
-    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]);
+    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]); // Keep corp
+    try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[0]); // Keep runner
+    try generator.corpStartTurnFull(&purge_viruses);
     try flow.applyAction(&purge_viruses, purge_viruses.legal_actions[try findBasicActionIndex(purge_viruses.legal_actions, .purge_viruses)]);
     try expectTransitionMatches(start_turn_oracle.basic_actions.purge_viruses, try purge_viruses.toSnapshot());
 }
@@ -324,9 +326,9 @@ test "corp play-from-hand transitions match oracle fixture" {
         1,
     );
     defer hedge_fund.deinit();
-    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]);
-    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]);
-    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]);
+    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]); // Keep corp
+    try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[0]); // Keep runner
+    try generator.corpStartTurnFull(&hedge_fund);
     try flow.applyAction(&hedge_fund, hedge_fund.legal_actions[try findCardPlayActionIndex(hedge_fund.legal_actions, "Hedge Fund")]);
     try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Hedge Fund")).result, try hedge_fund.toSnapshot());
 
@@ -336,9 +338,9 @@ test "corp play-from-hand transitions match oracle fixture" {
         1,
     );
     defer bran.deinit();
-    try flow.applyAction(&bran, bran.legal_actions[0]);
-    try flow.applyAction(&bran, bran.legal_actions[0]);
-    try flow.applyAction(&bran, bran.legal_actions[0]);
+    try flow.applyAction(&bran, bran.legal_actions[0]); // Keep corp
+    try flow.applyAction(&bran, bran.legal_actions[0]); // Keep runner
+    try generator.corpStartTurnFull(&bran);
     try flow.applyAction(&bran, bran.legal_actions[try findCardPlayActionIndex(bran.legal_actions, "Brân 1.0")]);
     try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Brân 1.0")).result, try bran.toSnapshot());
 
@@ -350,7 +352,7 @@ test "corp play-from-hand transitions match oracle fixture" {
     defer regolith.deinit();
     try flow.applyAction(&regolith, regolith.legal_actions[0]);
     try flow.applyAction(&regolith, regolith.legal_actions[0]);
-    try flow.applyAction(&regolith, regolith.legal_actions[0]);
+    try generator.corpStartTurnFull(&regolith);
     try flow.applyAction(&regolith, regolith.legal_actions[try findCardPlayActionIndex(regolith.legal_actions, "Regolith Mining License")]);
     try expectTransitionMatches((try findCardPlayExpectation(keep_keep.play_from_hand, "Regolith Mining License")).result, try regolith.toSnapshot());
 
@@ -363,7 +365,7 @@ test "corp play-from-hand transitions match oracle fixture" {
     defer seamless_launch.deinit();
     try flow.applyMulliganChoice(&seamless_launch, .corp, .mulligan);
     try flow.applyMulliganChoice(&seamless_launch, .runner, .keep);
-    try flow.applyStartTurn(&seamless_launch, .corp);
+    try generator.corpStartTurnFull(&seamless_launch);
     try flow.applyAction(&seamless_launch, seamless_launch.legal_actions[try findCardPlayActionIndex(seamless_launch.legal_actions, "Seamless Launch")]);
     try expectTransitionMatches((try findCardPlayExpectation(mull_keep.play_from_hand, "Seamless Launch")).result, try seamless_launch.toSnapshot());
 }
@@ -386,7 +388,7 @@ test "corp install prompt resolutions match oracle fixture" {
     defer bran_archives.deinit();
     try flow.applyAction(&bran_archives, bran_archives.legal_actions[0]);
     try flow.applyAction(&bran_archives, bran_archives.legal_actions[0]);
-    try flow.applyAction(&bran_archives, bran_archives.legal_actions[0]);
+    try generator.corpStartTurnFull(&bran_archives);
     try flow.applyAction(&bran_archives, bran_archives.legal_actions[try findCardPlayActionIndex(bran_archives.legal_actions, "Brân 1.0")]);
     const bran_expectation = try findCardPlayExpectation(keep_keep.play_from_hand, "Brân 1.0");
     try flow.applyAction(&bran_archives, bran_archives.legal_actions[try findPromptChoiceActionIndex(bran_archives.legal_actions, "Archives")]);
@@ -400,7 +402,7 @@ test "corp install prompt resolutions match oracle fixture" {
     defer regolith_remote.deinit();
     try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[0]);
     try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[0]);
-    try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[0]);
+    try generator.corpStartTurnFull(&regolith_remote);
     try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[try findCardPlayActionIndex(regolith_remote.legal_actions, "Regolith Mining License")]);
     const regolith_expectation = try findCardPlayExpectation(keep_keep.play_from_hand, "Regolith Mining License");
     try flow.applyAction(&regolith_remote, regolith_remote.legal_actions[try findPromptChoiceActionIndex(regolith_remote.legal_actions, "New remote")]);
@@ -414,7 +416,7 @@ test "corp install prompt resolutions match oracle fixture" {
     defer palisade_hq.deinit();
     try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[0]);
     try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[0]);
-    try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[0]);
+    try generator.corpStartTurnFull(&palisade_hq);
     try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[try findCardPlayActionIndex(palisade_hq.legal_actions, "Palisade")]);
     const palisade_expectation = try findCardPlayExpectation(keep_keep.play_from_hand, "Palisade");
     try flow.applyAction(&palisade_hq, palisade_hq.legal_actions[try findPromptChoiceActionIndex(palisade_hq.legal_actions, "HQ")]);
@@ -540,7 +542,7 @@ test "corp first-play end-turn scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstPlayFromHand(generated.legal_actions, .corp));
     if (findFirstKindAction(generated.legal_actions, .prompt_choice, .corp)) |prompt_action| {
         try takeAction(allocator, &actions, &generated, prompt_action);
@@ -582,7 +584,7 @@ test "corp first install runner start-turn scenario matches live replay oracle" 
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -610,7 +612,7 @@ test "corp first install runner gain-credit scenario matches live replay oracle"
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -639,7 +641,7 @@ test "corp first install runner draw-card scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -668,7 +670,7 @@ test "corp first install runner sure-gamble scenario matches live replay oracle"
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -697,7 +699,7 @@ test "corp first install runner run-server-1 scenario matches live replay oracle
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -726,7 +728,7 @@ test "corp first install runner run-server-1 continue scenario matches live repl
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -751,7 +753,7 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -780,7 +782,7 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -815,7 +817,7 @@ test "send-a-message access-success scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
@@ -845,7 +847,7 @@ test "send-a-message steal scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
@@ -877,7 +879,7 @@ test "send-a-message cleanup-done scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
@@ -910,7 +912,7 @@ test "runner tread-lightly prompt scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -933,7 +935,7 @@ test "runner tread-lightly server-choice scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -957,7 +959,7 @@ test "runner jailbreak prompt scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -980,7 +982,7 @@ test "runner jailbreak hq-choice scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1004,7 +1006,7 @@ test "runner overclock prompt scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1027,7 +1029,7 @@ test "runner overclock server-choice scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1049,7 +1051,7 @@ test "runner overclock run credits are attached and cleared through run flow" {
 
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try generator.corpStartTurnFull(&generated);
     try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try flow.applyAction(&generated, .{
@@ -1094,7 +1096,7 @@ test "runner overclock successful-run scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
@@ -1125,7 +1127,7 @@ test "runner overclock cleanup-done scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Send a Message"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, .{
@@ -1157,7 +1159,7 @@ test "runner jailbreak successful-run effect is attached to run flow" {
 
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try generator.corpStartTurnFull(&generated);
     try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -1203,7 +1205,7 @@ test "runner jailbreak successful-run scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1229,7 +1231,7 @@ test "runner tread-lightly run modifier is attached to run state" {
 
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try generator.corpStartTurnFull(&generated);
     try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
@@ -1263,7 +1265,7 @@ test "runner creative-commission scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1286,7 +1288,7 @@ test "runner vrcation scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1309,7 +1311,7 @@ test "runner telework contract install scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Telework Contract"));
@@ -1330,7 +1332,7 @@ test "runner telework contract ability scenario matches live replay oracle" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Telework Contract"));
@@ -1352,7 +1354,7 @@ test "manegarm skunkworks parity test" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Manegarm Skunkworks"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1389,7 +1391,7 @@ test "manegarm skunkworks spend clicks parity test" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Manegarm Skunkworks"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1428,7 +1430,7 @@ test "manegarm skunkworks pay credits parity test" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Manegarm Skunkworks"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1474,7 +1476,7 @@ test "government subsidy parity test" {
 
     // Turn 1: corp plays Hedge Fund (cost 5, gain 9), then gains 2 credits
     // Playing a card keeps hand at 5, avoiding discard at end of turn
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Hedge Fund"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
@@ -1483,7 +1485,7 @@ test "government subsidy parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp plays Government Subsidy (costs 10, gains 15)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Government Subsidy"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
@@ -1506,7 +1508,7 @@ test "regolith mining license install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Regolith Mining License on a remote
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Regolith Mining License"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
@@ -1530,7 +1532,7 @@ test "nico campaign install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Nico Campaign on a remote
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Nico Campaign"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
@@ -1554,7 +1556,7 @@ test "offworld office install and advance parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Offworld Office in a remote, then advances it
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Offworld Office"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     // Advance Offworld once (costs 1 click + 1 credit)
@@ -1582,7 +1584,7 @@ test "pennyshaver install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Pennyshaver
@@ -1609,7 +1611,7 @@ test "smartware distributor install and ability parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner installs Smartware Distributor and uses place_credits ability
@@ -1637,7 +1639,7 @@ test "predictive planogram parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp plays Predictive Planogram
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Predictive Planogram"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
@@ -1665,7 +1667,7 @@ test "mutual favor parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Verify parity before runner plays Mutual Favor
@@ -1710,7 +1712,7 @@ test "wildcat strike parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1: runner plays Wildcat Strike, corp makes a choice
@@ -1737,7 +1739,7 @@ test "icebreaker encounter parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp installs Karuna (ICE) on a remote
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
@@ -1748,7 +1750,7 @@ test "icebreaker encounter parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp gains credits
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 2: runner runs on Server 1 (which has the ICE)
@@ -1777,7 +1779,7 @@ test "corp installs bran ice runner encounters it parity test" {
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
 
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Brân 1.0"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
@@ -2028,6 +2030,17 @@ fn takeAction(
     try flow.applyAction(generated, selected);
 }
 
+fn takeCorpStartTurn(
+    allocator: std.mem.Allocator,
+    actions: *std.ArrayList(state.LegalAction),
+    generated: *generator.Game,
+) !void {
+    try takeAction(allocator, actions, generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    // Phase 12: resolve locally (NOT recorded — oracle auto-resolves)
+    try flow.applyAction(generated, .{ .kind = .@"continue", .side = .corp });
+    try flow.applyAction(generated, .{ .kind = .@"continue", .side = .runner });
+}
+
 fn endTurnAndDiscard(
     allocator: std.mem.Allocator,
     actions: *std.ArrayList(state.LegalAction),
@@ -2193,7 +2206,7 @@ test "verbal plasticity draws extra card on first click draw" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1 runner: install Verbal Plasticity then draw
@@ -2234,7 +2247,7 @@ test "docklands pass grants extra hq access" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     // Turn 1: corp passes
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     // Turn 1 runner: install Docklands Pass then run HQ
@@ -2282,7 +2295,7 @@ test "orbital superiority gives tag when runner not tagged" {
 
     // Corp needs to install Orbital Superiority, advance it to 4, and score it.
     // This takes multiple turns. Let's install it first.
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     // Install Orbital Superiority in a remote
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Orbital Superiority"));
     // Choose install destination
@@ -2300,7 +2313,7 @@ test "orbital superiority gives tag when runner not tagged" {
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
     // Turn 2: corp advances twice more and scores
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote1|c|0"));
     try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
@@ -2354,6 +2367,13 @@ test "e2e beginner game plays to completion with oracle parity" {
 
         // Resolve discard prompts locally (NOT recorded — oracle auto-resolves)
         if (try resolveOneDiscardPrompt(&generated)) continue;
+
+        // Resolve corp phase-12 locally (NOT recorded — oracle auto-resolves)
+        if (generated.corp_phase_12) {
+            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
+            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
+            continue;
+        }
 
         // Check oracle parity at turn boundaries
         if (generated.turn != last_turn and generated.turn > 0) {
@@ -2423,6 +2443,24 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     if (findFirstKindAction(actions, .start_turn, side)) |a| return a;
 
     // Play/install a card if hand exceeds hand_size
+    {
+        const hand_len = switch (side) {
+            .corp => gen.corp_hand.items.len,
+            .runner => gen.runner_hand.items.len,
+        };
+        const hand_size = switch (side) {
+            .corp => gen.corp_hand_size.total,
+            .runner => gen.runner_hand_size.total,
+        };
+        if (hand_len > hand_size) {
+            if (side == .corp) {
+                if (findFirstCorpInstallPlay(actions) catch null) |a| return a;
+            }
+            if (findFirstPlayFromHand(actions, side) catch null) |a| return a;
+        }
+    }
+
+    // Play/install a card if hand exceeds hand_size (original safe heuristic)
     {
         const hand_len = switch (side) {
             .corp => gen.corp_hand.items.len,

@@ -630,6 +630,7 @@ pub const Game = struct {
     game_over: bool = false,
     winner: ?state.Side = null,
     pending_install: ?state.PendingInstall = null,
+    corp_phase_12: bool = false,
 
     // Corp scalars
     corp_identity: state.CardInstance = undefined,
@@ -1045,28 +1046,13 @@ pub fn applyStartTurn(
 
     switch (side) {
         .corp => {
-            // Corp must draw at start of turn — empty deck means runner wins
-            if (generated.corp_deck.items.len == 0) {
-                setGameOver(generated, .runner);
-                return;
-            }
-            try drawCard(generated, .corp);
-            generated.corp_click = generated.corp_click_per_turn;
-            generated.runner_successful_run_last_turn = generated.runner_successful_run_this_turn;
-            generated.runner_successful_run_this_turn = false;
-
-            // Clear installed_this_turn flags for all corp cards
-            clearInstalledThisTurnFlags(generated);
-
-            // Auto-trigger start-of-turn abilities (Nico Campaign)
-            try applyCorpStartOfTurnAbilities(generated);
-            if (generated.game_over) return;
-
+            // Enter corp phase 12 — both players must pass before main phase
             generated.active_player = .corp;
             generated.turn += 1;
             generated.end_turn = false;
+            generated.corp_phase_12 = true;
             generated.decision_side = .corp;
-            generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
+            generated.legal_actions = try continueActions(allocator, .corp);
         },
         .runner => {
             generated.runner_click = generated.runner_click_per_turn;
@@ -1440,8 +1426,12 @@ const InstalledTarget = struct {
 
 fn beginAdvanceInstalledPrompt(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    const choices = try advanceableCardChoices(allocator, generated.corp_servers.items);
-    if (choices.len == 0) return error.UnsupportedAbility;
+    const choices = try installedCardChoices(allocator, generated.corp_servers.items);
+    if (choices.len == 0) {
+        generated.decision_side = .corp;
+        generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
+        return;
+    }
 
     generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, prompt_advance_installed),
@@ -2974,6 +2964,22 @@ fn applyContinue(
     side: state.Side,
 ) !void {
     const allocator = generated.arena.allocator();
+
+    // Corp phase 12: both sides pass priority before main phase
+    if (generated.corp_phase_12) {
+        if (side == .corp) {
+            // Corp passed, now runner passes
+            generated.decision_side = .runner;
+            generated.legal_actions = try continueActions(allocator, .runner);
+            return;
+        }
+        if (side == .runner) {
+            // Both passed — end phase 12, enter main corp turn
+            try endCorpPhase12(generated);
+            return;
+        }
+    }
+
     const run = &generated.run;
     if (run.* == null) return error.NoRunInProgress;
     if (generated.decision_side != side) return error.NotCurrentDecision;
@@ -4366,6 +4372,16 @@ fn countScoreableAgendas(servers: []const MutableServer) usize {
     return count;
 }
 
+fn countAdvanceableCards(servers: []const MutableServer) usize {
+    var count: usize = 0;
+    for (servers) |server| {
+        for (server.content.items) |card| {
+            if (isAdvanceable(card)) count += 1;
+        }
+    }
+    return count;
+}
+
 fn countInstalledCards(servers: []const MutableServer) usize {
     var count: usize = 0;
     for (servers) |server| {
@@ -4803,6 +4819,31 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
             i += 1;
         }
     }
+}
+
+fn endCorpPhase12(generated: *Game) !void {
+    const allocator = generated.arena.allocator();
+    generated.corp_phase_12 = false;
+
+    // Corp must draw at start of turn — empty deck means runner wins
+    if (generated.corp_deck.items.len == 0) {
+        setGameOver(generated, .runner);
+        return;
+    }
+    try drawCard(generated, .corp);
+    generated.corp_click = generated.corp_click_per_turn;
+    generated.runner_successful_run_last_turn = generated.runner_successful_run_this_turn;
+    generated.runner_successful_run_this_turn = false;
+
+    // Clear installed_this_turn flags for all corp cards
+    clearInstalledThisTurnFlags(generated);
+
+    // Auto-trigger start-of-turn abilities (Nico Campaign)
+    try applyCorpStartOfTurnAbilities(generated);
+    if (generated.game_over) return;
+
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
 }
 
 fn clearInstalledThisTurnFlags(game: *Game) void {
@@ -5382,7 +5423,10 @@ test "action index stepping matches corp opening flow" {
     try std.testing.expectEqual(state.Side.corp, currentPlayer(&generated));
     try std.testing.expectEqual(@as(usize, 1), legalActionCount(&generated));
 
-    try applyActionByIndex(&generated, 0);
+    try applyActionByIndex(&generated, 0); // start_turn
+    // Phase 12: corp continue, runner continue
+    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
+    try applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
     try std.testing.expectEqual(state.Side.corp, currentPlayer(&generated));
     try std.testing.expectEqual(@as(usize, 10), legalActionCount(&generated));
 
@@ -5398,10 +5442,10 @@ test "action index stepping matches corp opening flow" {
     );
     defer install_generated.deinit();
 
-    try applyActionByIndex(&install_generated, 0);
-    try applyActionByIndex(&install_generated, 0);
-    try applyActionByIndex(&install_generated, 0);
-    try applyActionByIndex(&install_generated, 1);
+    try applyActionByIndex(&install_generated, 0); // Keep corp
+    try applyActionByIndex(&install_generated, 0); // Keep runner
+    try corpStartTurnFull(&install_generated);
+    try applyActionByIndex(&install_generated, 1); // install card
     try std.testing.expectEqual(@as(usize, 4), legalActionCount(&install_generated));
 
     try applyActionByIndex(&install_generated, 0);
@@ -5436,7 +5480,7 @@ test "runner telework contract install and hosted-credit ability" {
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
@@ -5468,7 +5512,7 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
     const ice_title = ice_install.card_title orelse return error.MissingAction;
@@ -5514,7 +5558,7 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
     defer generated.deinit();
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
     const ice_title = ice_install.card_title orelse return error.MissingAction;
@@ -5562,7 +5606,7 @@ test "corp installed credit ability on regolith pays out and trashes when empty"
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     var regolith = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30071));
     regolith.credit_counter = regolith.installed_ability.initial_credit_counters;
@@ -5603,7 +5647,7 @@ test "offworld office on-score grants credits" {
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     var offworld = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30067));
     offworld.advancement_counter = 4;
@@ -5636,7 +5680,7 @@ test "urtica cipher access applies net damage when corp can pay" {
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     var urtica = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30045));
     urtica.advancement_counter = 2;
@@ -5743,6 +5787,13 @@ fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
     }
 }
 
+pub fn corpStartTurnFull(generated: *Game) !void {
+    try applyAction(generated, .{ .kind = .start_turn, .side = .corp });
+    // Phase 12: corp passes, runner passes
+    try applyAction(generated, .{ .kind = .@"continue", .side = .corp });
+    try applyAction(generated, .{ .kind = .@"continue", .side = .runner });
+}
+
 fn findActionByTitle(actions: []const state.LegalAction, kind: state.ActionKind, title: []const u8) ?state.LegalAction {
     for (actions) |action| {
         if (action.kind == kind and action.card_title != null and std.mem.eql(u8, action.card_title.?, title)) return action;
@@ -5834,7 +5885,7 @@ test "flatline terminal condition when brain damage equals hand size" {
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 
@@ -5857,7 +5908,7 @@ test "jack out is available after passing ice" {
     defer generated.deinit();
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     // Install unrezzed ICE on a remote
     const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
@@ -5921,7 +5972,7 @@ test "ICE subroutine end the run fires" {
     defer generated.deinit();
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     // Install Tithe (1 net damage, ETR) on a remote
     var tithe = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30073));
@@ -5958,7 +6009,7 @@ test "ICE net damage subroutine applies damage" {
     defer generated.deinit();
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     // Install Karunā (2 net damage, 2 net damage) on a remote
     var karuna = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30047));
@@ -6005,7 +6056,7 @@ test "runner loses credits subroutine" {
     defer generated.deinit();
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     // Install Whitespace (sub1: runner loses 3 credits, sub2: ETR if runner ≤ 6 credits)
     var whitespace = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30074));
@@ -6043,7 +6094,7 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
     defer generated.deinit();
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
 
     // Install unrezzed ICE on a remote
     const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
@@ -6100,7 +6151,7 @@ test "sure gamble gains credits without losing extra clicks" {
 
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
+    try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
 

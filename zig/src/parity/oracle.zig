@@ -516,6 +516,13 @@ fn shouldSkipAction(action: state.LegalAction) bool {
     return false;
 }
 
+fn isPhase12Continue(action: state.LegalAction) bool {
+    // Phase-12 continues are internal to the Zig engine; the Clojure oracle
+    // auto-resolves phase-12 so these must not be sent.
+    return action.kind == .@"continue" and action.prompt_type == null and
+        (action.side == .corp or action.side == .runner);
+}
+
 fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
     // Translate score-agenda prompt_choice into a "score" action for Clojure
     if (action.kind == .prompt_choice and action.prompt_type != null) {
