@@ -846,7 +846,7 @@ Important:
 - [x] Build a Clojure fixture exporter for initial states, legal actions, and transitions.
 - [x] Create a Zig test runner that consumes those fixtures.
 - [x] Port setup + turn framework before card-specific abilities.
-- [ ] Port the beginner card definitions and their required engine mechanics.
+- [x] Port the beginner card definitions and their required engine mechanics.
 - [x] Run parity tests on the beginner matchup until stable.
 - [ ] Expand from beginner to intermediate after parity is green.
 
@@ -955,7 +955,9 @@ Execution order for remaining core engine work:
 - `zig/src/parity/oracle.zig` - Clojure oracle integration
 - `zig/src/engine/parity.zig` - Parity tests
 
-### M2: Beginner Matchup Parity
+### M2: Beginner Matchup Parity [COMPLETE]
+
+**Status:** All 71 tests passing. M2 is complete.
 
 - Beginner decks initialize correctly.
 - A constrained set of games can be replayed end to end.
@@ -966,9 +968,33 @@ Execution order for remaining core engine work:
   - [x] on-encounter: lose 1 click to break 1 subroutine (bioroid break)
   - [x] Subroutine 0: "Install an ice from HQ/Archives" (prompt-based with pause/resume via `pending_subroutine`)
   - [x] Subroutines 1-2: End the run
-- [ ] Review other M1 cards for missing partial implementations
-- [ ] Implement missing card abilities and mechanics
-- [ ] Icebreaker break subroutine parity
+- [x] Review other M1 cards for missing partial implementations
+- [x] Implement missing card abilities and mechanics
+- [x] Icebreaker break subroutine parity
+
+**Card fixes applied:**
+- Fixed agenda advancement requirements: Offworld Office 3→4, Send a Message 4→5, Superconducting Hub 2→3
+- Fixed ICE strengths: Diviner 2→3, Whitespace 1→0
+- Fixed subroutines: Tithe sub2 ETR→corp gains 1 credit, Whitespace sub1 2cr→3cr, Whitespace sub2→conditional ETR if runner ≤6 credits, Diviner→single sub with conditional ETR on odd-cost trash, Karunā sub1→net damage then jack-out offer
+- Added missing subtypes: AP on Diviner/Karunā/Tithe
+- Fixed Unity break count 2→1
+- Added Mayfly pump ability (1 credit: +1 strength)
+- Implemented Unity variable pump (+X where X = installed icebreaker count)
+- Added Palisade +2 strength on remote servers
+- Superconducting Hub +2 corp hand size on score
+- Pennyshaver: place 1 credit on successful run, click ability gains 1 + all hosted credits
+- Mayfly end-of-run trash (trashes_after_break)
+- Advance prompt only shows advanceable cards (agendas, advanceable assets)
+
+**Known deferred items (not blocking M2):**
+- Nico Campaign auto-trigger at start of turn (currently click action; needs corp phase 12 timing)
+- Nico Campaign draw 1 on empty
+- Red Team credits on successful run (currently taken before run)
+- Red Team server-not-run-this-turn restriction
+- Seamless Launch not-installed-this-turn restriction
+- Verbal Plasticity first-per-turn restriction
+- Carmen install cost reduction
+- HQ multi-access flow (Jailbreak + Docklands Pass combo)
 
 ### M3: Intermediate Matchup Parity
 

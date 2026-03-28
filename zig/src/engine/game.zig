@@ -22,6 +22,7 @@ pub const CardSpec = struct {
     subtypes: []const []const u8 = &.{},
     cost: ?u16 = null,
     strength: ?u8 = null,
+    remote_strength_bonus: u8 = 0, // Palisade: +N strength when protecting a remote
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
     corp_play: state.CorpPlaySpec = .{},
@@ -59,9 +60,9 @@ pub const MatchupSpec = struct {
 pub const all_cards = [_]CardSpec{
     .{ .title = "The Syndicate: Profit over Principle", .side = .corp, .code = 30077, .card_type = "Identity" },
     .{ .title = "The Catalyst: Convention Breaker", .side = .runner, .code = 30076, .card_type = "Identity" },
-    .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
-    .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
-    .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 2, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
+    .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
+    .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
+    .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
     .{ .title = "Orbital Superiority", .side = .corp, .code = 30068, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -264,24 +265,23 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .remote_strength_bonus = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .end_the_run },
     } },
-    .{ .title = "Diviner", .side = .corp, .code = 30046, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage, .amount = 1 },
-        .{ .kind = .end_the_run },
+    .{ .title = "Diviner", .side = .corp, .code = 30046, .card_type = "ICE", .subtypes = &.{ "Code Gate", "AP" }, .cost = 2, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .do_net_damage_conditional_etr, .amount = 1 },
     } },
-    .{ .title = "Whitespace", .side = .corp, .code = 30074, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .runner_loses_credits, .amount = 2 },
-        .{ .kind = .runner_loses_credits, .amount = 2 },
+    .{ .title = "Whitespace", .side = .corp, .code = 30074, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .runner_loses_credits, .amount = 3 },
+        .{ .kind = .runner_loses_credits_or_etr, .amount = 6 },
     } },
-    .{ .title = "Karunā", .side = .corp, .code = 30047, .card_type = "ICE", .subtypes = &.{"Sentry"}, .cost = 4, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Karunā", .side = .corp, .code = 30047, .card_type = "ICE", .subtypes = &.{ "Sentry", "AP" }, .cost = 4, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .do_net_damage_then_jack_out, .amount = 2 },
         .{ .kind = .do_net_damage, .amount = 2 },
-        .{ .kind = .do_net_damage, .amount = 2 },
     } },
-    .{ .title = "Tithe", .side = .corp, .code = 30073, .card_type = "ICE", .subtypes = &.{"Sentry"}, .cost = 1, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+    .{ .title = "Tithe", .side = .corp, .code = 30073, .card_type = "ICE", .subtypes = &.{ "Sentry", "AP" }, .cost = 1, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .do_net_damage, .amount = 1 },
-        .{ .kind = .end_the_run },
+        .{ .kind = .corp_gains_credits, .amount = 1 },
     } },
     .{ .title = "Funhouse", .side = .corp, .code = 30054, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 5, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .trace_tag, .base_trace = 4 },
@@ -372,9 +372,8 @@ pub const all_cards = [_]CardSpec{
         .kind = .take_credits,
         .click_cost = 1,
         .initial_credit_counters = 0,
-        .take_credits_amount = 0,
-        .trash_on_empty = false,
-        .once_per_turn = true,
+        .takes_all_credits = true,
+        .on_successful_run_place_credits = 1,
     } },
     .{ .title = "DZMZ Optimizer", .side = .runner, .code = 30022, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware } },
     .{ .title = "Red Team", .side = .runner, .code = 30018, .card_type = "Resource", .cost = 5, .runner_install = .{ .kind = .resource }, .installed_ability = .{
@@ -414,12 +413,12 @@ pub const all_cards = [_]CardSpec{
         .credit_cost = 1,
         .break_subroutine_count = 1,
         .trashes_after_break = true,
-    } },
+    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 1, .pump_strength_amount = 1 } },
     .{ .title = "Unity", .side = .runner, .code = 30026, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Decoder" }, .cost = 3, .strength = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .credit_cost = 1,
-        .break_subroutine_count = 2,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 1, .pump_strength_amount = 1 } },
+        .break_subroutine_count = 1,
+    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 1, .pump_strength_amount = 0, .pump_is_variable = true } },
     .{ .title = "Conduit", .side = .runner, .code = 30024, .card_type = "Program", .cost = 4, .runner_install = .{ .kind = .program } },
     .{ .title = "Leech", .side = .runner, .code = 30008, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program } },
 };
@@ -640,6 +639,10 @@ pub const Game = struct {
         self.runner_rig_resources.deinit(self.backing_allocator);
         self.arena.deinit();
         self.* = undefined;
+    }
+
+    pub fn hasInstalledCards(self: *const Game) bool {
+        return countInstalledCards(self.corp_servers.items) > 0;
     }
 
     pub fn toSnapshot(self: *Game) !state.GameSnapshot {
@@ -1236,6 +1239,11 @@ fn applyPromptChoice(
         return;
     }
 
+    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "jack-out")) {
+        try applyJackOutPromptChoice(generated, choice_text);
+        return;
+    }
+
     // Generic card prompt resolution: look up on_prompt_choice from card spec
     if (prompt.source_card) |sc| {
         if (lookupCardSpec(sc)) |spec| {
@@ -1278,6 +1286,7 @@ fn applyCorpBasicActionAbility(
         },
         .advance_installed => {
             if (countInstalledCards(generated.corp_servers.items) == 0) {
+                // No installed cards - advance action does nothing useful
                 try spendClicks(generated, .corp, 1);
                 try spendCredits(generated, .corp, 1);
             } else {
@@ -1349,7 +1358,7 @@ const InstalledTarget = struct {
 
 fn beginAdvanceInstalledPrompt(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    const choices = try installedCardChoices(allocator, generated.corp_servers.items);
+    const choices = try advanceableCardChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return error.UnsupportedAbility;
 
     generated.corp_prompt_state = .{
@@ -1428,6 +1437,11 @@ fn applyScoreAgendaChoice(
             },
             .draw_cards => {
                 try drawCards(generated, .corp, spec.on_score.amount);
+                // Superconducting Hub: +2 corp hand size while scored
+                if (spec.code == 30070) {
+                    generated.corp_hand_size.base += 2;
+                    generated.corp_hand_size.total += 2;
+                }
             },
             .rez_ice_free => {
                 // rez_ice_free after game-over check below
@@ -1488,6 +1502,38 @@ fn scoreableAgendaChoices(
             if (card.agenda_points == null) continue;
             if (card.advancement_requirement == null) continue;
             if (card.advancement_counter < card.advancement_requirement.?) continue;
+            const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
+            choices[next] = stringChoice(text);
+            next += 1;
+        }
+    }
+    return choices;
+}
+
+fn isAdvanceable(card: state.CardInstance) bool {
+    if (card.card_type) |ct| {
+        if (std.mem.eql(u8, ct, "Agenda")) return true;
+    }
+    // Assets with net_damage_on_access and adds_advancement (Urtica Cipher)
+    if (card.access.adds_advancement) return true;
+    return false;
+}
+
+fn advanceableCardChoices(
+    allocator: std.mem.Allocator,
+    servers: []const MutableServer,
+) ![]const state.PromptChoice {
+    var count: usize = 0;
+    for (servers) |server| {
+        for (server.content.items) |card| {
+            if (isAdvanceable(card)) count += 1;
+        }
+    }
+    const choices = try allocator.alloc(state.PromptChoice, count);
+    var next: usize = 0;
+    for (servers) |server| {
+        for (server.content.items, 0..) |card, card_index| {
+            if (!isAdvanceable(card)) continue;
             const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
             choices[next] = stringChoice(text);
             next += 1;
@@ -1724,6 +1770,21 @@ fn canBreakIceType(breaker: state.CardInstance, ice: state.CardInstance) bool {
 
 fn effectiveStrength(card: state.CardInstance) u8 {
     return card.current_strength orelse card.strength orelse 0;
+}
+
+fn effectiveIceStrength(card: state.CardInstance, server_path: []const []const u8) u8 {
+    const base = card.strength orelse 0;
+    var bonus: u8 = 0;
+    // Palisade: +N strength on remote servers
+    if (card.remote_strength_bonus > 0 and isRemoteServerPath(server_path)) {
+        bonus += card.remote_strength_bonus;
+    }
+    return base + bonus;
+}
+
+fn isRemoteServerPath(server_path: []const []const u8) bool {
+    if (server_path.len == 0) return false;
+    return std.mem.startsWith(u8, server_path[0], "remote");
 }
 
 fn wildcat_strike_choices(allocator: std.mem.Allocator) ![]const state.PromptChoice {
@@ -2073,6 +2134,7 @@ fn applyJackOut(
     if (!run.jack_out_available) return error.JackOutNotAvailable;
 
     const allocator = generated.arena.allocator();
+    endOfRunCleanup(generated);
     generated.run = null;
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -2163,8 +2225,9 @@ fn applyUseSubroutine(
 
             // Validate subtype matching
             if (!canBreakIceType(icebreaker, ice.*)) return error.CannotBreakIceType;
-            // Validate strength
-            if (effectiveStrength(icebreaker) < (ice.strength orelse 0)) return error.InsufficientStrength;
+            // Validate strength (ICE strength includes remote bonus)
+            const ice_str = effectiveIceStrength(ice.*, run.server);
+            if (effectiveStrength(icebreaker) < ice_str) return error.InsufficientStrength;
 
             // Check which subroutine to break based on subroutine_index
             const sub_idx: u8 = switch (subroutine_index.kind) {
@@ -2182,6 +2245,9 @@ fn applyUseSubroutine(
 
             // Mark subroutine as broken
             ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(sub_idx)));
+
+            // Track that this breaker was used (for Mayfly end-of-run trash)
+            generated.runner_rig_program.items[icebreaker_idx].used_break_this_run = true;
         } else {
             return error.NotAnIcebreaker;
         }
@@ -2532,9 +2598,16 @@ fn applyInstalledAbility(
             switch (installed_ability) {
                 .take_credits => {
                     try spendClicks(generated, .runner, card.installed_ability.click_cost);
-                    const amount = @min(card.credit_counter, card.installed_ability.take_credits_amount);
-                    generated.runner_credit += amount;
-                    card.credit_counter -= amount;
+                    if (card.installed_ability.takes_all_credits) {
+                        // Pennyshaver: gain 1 + all hosted credits
+                        const total = @as(u16, card.credit_counter) + 1;
+                        generated.runner_credit += total;
+                        card.credit_counter = 0;
+                    } else {
+                        const amount = @min(card.credit_counter, card.installed_ability.take_credits_amount);
+                        generated.runner_credit += amount;
+                        card.credit_counter -= amount;
+                    }
                     card.ability_used_this_turn = true;
 
                     if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
@@ -2583,7 +2656,12 @@ fn applyInstalledAbility(
 
                     // Boost strength
                     const current = effectiveStrength(icebreaker.*);
-                    icebreaker.current_strength = current + icebreaker.pump_ability.pump_strength_amount;
+                    const pump_amount = if (icebreaker.pump_ability.pump_is_variable)
+                        // Unity: pump = number of installed icebreakers
+                        @as(u8, @intCast(generated.runner_rig_program.items.len))
+                    else
+                        icebreaker.pump_ability.pump_strength_amount;
+                    icebreaker.current_strength = current + pump_amount;
 
                     // Regenerate encounter actions
                     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
@@ -2624,6 +2702,7 @@ fn applyInstalledAbility(
                     generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
                     return;
                 },
+                .start_of_turn_credits => return error.UnsupportedAbility, // auto-trigger, not a click action
                 .none => return error.UnsupportedAbility,
             }
 
@@ -2655,7 +2734,7 @@ fn applyInstalledAbility(
                         try appendDiscardCard(generated, .corp, trashed);
                     }
                 },
-                .place_credits, .break_subroutine, .pump_strength, .run_central => return error.UnsupportedAbility,
+                .place_credits, .break_subroutine, .pump_strength, .run_central, .start_of_turn_credits => return error.UnsupportedAbility,
                 .none => return error.UnsupportedAbility,
             }
 
@@ -2975,6 +3054,7 @@ fn resolveEncounteredIceSubroutines(
 
         switch (sub.kind) {
             .end_the_run => {
+                endOfRunCleanup(generated);
                 generated.run = null;
                 generated.corp_prompt_state = null;
                 generated.runner_prompt_state = null;
@@ -3043,6 +3123,81 @@ fn resolveEncounteredIceSubroutines(
             .runner_loses_credits => {
                 const loss = @min(sub.amount, @as(u8, @intCast(generated.runner_credit)));
                 generated.runner_credit -= loss;
+            },
+            .corp_gains_credits => {
+                generated.corp_credit += sub.amount;
+            },
+            .do_net_damage_conditional_etr => {
+                // Diviner: do N net damage, if trashed card has odd cost, end the run
+                const damage = sub.amount;
+                const hand_before = generated.runner_hand.items.len;
+                try trashRandomRunnerHandCards(generated, damage);
+                updateTerminalState(generated);
+                if (generated.game_over) return;
+                // Check if a card was trashed and if it has odd cost
+                if (generated.runner_hand.items.len < hand_before) {
+                    // The last trashed card went to discard
+                    if (generated.runner_discard.items.len > 0) {
+                        const trashed_card = generated.runner_discard.items[generated.runner_discard.items.len - 1];
+                        const card_cost = trashed_card.cost orelse 0;
+                        if (card_cost % 2 == 1) {
+                            // Odd cost - end the run
+                            endOfRunCleanup(generated);
+                            generated.run = null;
+                            generated.corp_prompt_state = null;
+                            generated.runner_prompt_state = null;
+                            generated.runner_run_credit = 0;
+                            generated.decision_side = .runner;
+                            generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+                            return;
+                        }
+                    }
+                }
+            },
+            .runner_loses_credits_or_etr => {
+                // Whitespace sub2: end the run if runner has N credits or less
+                const total_credits = generated.runner_credit + generated.runner_run_credit;
+                if (total_credits <= sub.amount) {
+                    endOfRunCleanup(generated);
+                    generated.run = null;
+                    generated.corp_prompt_state = null;
+                    generated.runner_prompt_state = null;
+                    generated.runner_run_credit = 0;
+                    generated.decision_side = .runner;
+                    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+                    return;
+                }
+            },
+            .do_net_damage_then_jack_out => {
+                // Karunā sub1: do N net damage, then runner may jack out
+                const damage = sub.amount;
+                try trashRandomRunnerHandCards(generated, damage);
+                updateTerminalState(generated);
+                if (generated.game_over) return;
+                // Offer jack out - pause subroutines and show jack-out prompt
+                const run = &(generated.run orelse return error.NoRunInProgress);
+                run.pending_subroutine = .{
+                    .server_index = @intCast(server_index),
+                    .ice_index = @intCast(ice_index),
+                    .subroutine_index = @intCast(idx + 1),
+                };
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                try choices.append(allocator, stringChoice("Jack out"));
+                try choices.append(allocator, stringChoice("Continue"));
+                generated.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "jack-out"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = ice,
+                };
+                generated.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "waiting"),
+                    .choices = &.{},
+                    .source_card = null,
+                };
+                generated.decision_side = .runner;
+                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+                return;
             },
             .install_ice_from_hq_archives => {
                 try beginBranInstallIcePrompt(generated, server_index, ice_index, @intCast(idx));
@@ -3260,6 +3415,55 @@ fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8)
     generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
 }
 
+fn applyJackOutPromptChoice(generated: *Game, choice_text: []const u8) !void {
+    const allocator = generated.arena.allocator();
+
+    generated.runner_prompt_state = null;
+    generated.corp_prompt_state = null;
+
+    if (std.mem.eql(u8, choice_text, "Jack out")) {
+        // End the run
+        endOfRunCleanup(generated);
+        generated.run = null;
+        generated.runner_run_credit = 0;
+        generated.decision_side = .runner;
+        generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+        return;
+    }
+
+    if (std.mem.eql(u8, choice_text, "Continue")) {
+        // Resume subroutine resolution
+        const run = &(generated.run orelse return error.NoRunInProgress);
+        const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
+        run.pending_subroutine = null;
+
+        const server = &generated.corp_servers.items[pending.server_index];
+        const ice = server.ices.items[pending.ice_index];
+        try resolveEncounteredIceSubroutines(generated, ice, pending.server_index, pending.ice_index, pending.subroutine_index);
+
+        if (generated.run == null) return;
+        if (generated.runner_prompt_state != null) return;
+        if (generated.game_over) return;
+
+        // Continue with movement phase after subroutines
+        for (generated.runner_rig_program.items) |*card| {
+            card.current_strength = null;
+        }
+        const next_run = &generated.run.?;
+        if (next_run.position > 0) next_run.position -= 1;
+        next_run.phase = try allocator.dupe(u8, "movement");
+        next_run.encounter_phase = .none;
+        next_run.current_ice_index = null;
+        next_run.jack_out_available = true;
+        next_run.no_action = null;
+        generated.decision_side = .runner;
+        generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
+        return;
+    }
+
+    return error.UnsupportedChoice;
+}
+
 fn advanceMovementPhase(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     const run = &generated.run.?;
@@ -3337,6 +3541,8 @@ fn applySuccessfulRunEffects(generated: *Game) !void {
 fn completeRunWithoutAccess(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.runner_successful_run_this_turn = true;
+    applyPennyshaverOnSuccessfulRun(generated);
+    endOfRunCleanup(generated);
     generated.run = null;
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -3351,6 +3557,8 @@ fn completeRunWithoutAccess(generated: *Game) !void {
 fn completeRunAfterAccess(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.runner_successful_run_this_turn = true;
+    applyPennyshaverOnSuccessfulRun(generated);
+    endOfRunCleanup(generated);
     generated.run = null;
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -3365,6 +3573,8 @@ fn completeRunAfterAccess(generated: *Game) !void {
 fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.runner_successful_run_this_turn = true;
+    applyPennyshaverOnSuccessfulRun(generated);
+    endOfRunCleanup(generated);
     generated.run = null;
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -3624,13 +3834,16 @@ fn encounterActionsForState(
     generated: *Game,
     ice: state.CardInstance,
 ) ![]const state.LegalAction {
+    const run = generated.run orelse return error.NoRunInProgress;
+    const ice_str = effectiveIceStrength(ice, run.server);
+
     // Count available icebreakers that can break this ICE type and have sufficient strength
     var breaker_count: usize = 0;
     for (generated.runner_rig_program.items) |card| {
         if (!isIcebreaker(card)) continue;
         if (card.installed_ability.kind != .break_subroutine) continue;
         if (!canBreakIceType(card, ice)) continue;
-        if (effectiveStrength(card) < (ice.strength orelse 0)) continue;
+        if (effectiveStrength(card) < ice_str) continue;
         breaker_count += 1;
     }
 
@@ -3677,7 +3890,7 @@ fn encounterActionsForState(
         if (!isIcebreaker(card)) continue;
         if (card.installed_ability.kind != .break_subroutine) continue;
         if (!canBreakIceType(card, ice)) continue;
-        if (effectiveStrength(card) < (ice.strength orelse 0)) continue;
+        if (effectiveStrength(card) < ice_str) continue;
 
         for (ice.subroutines, 0..) |_, sub_idx| {
             const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(sub_idx))) != 0;
@@ -3960,11 +4173,15 @@ fn installedAbilityLabel(
     card: state.CardInstance,
 ) ![]const u8 {
     return switch (card.installed_ability.kind) {
-        .take_credits => std.fmt.allocPrint(allocator, "Take {d} [Credits] from this card", .{card.installed_ability.take_credits_amount}),
+        .take_credits => if (card.installed_ability.takes_all_credits)
+            std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{@as(u16, card.credit_counter) + 1})
+        else
+            std.fmt.allocPrint(allocator, "Take {d} [Credits] from this card", .{card.installed_ability.take_credits_amount}),
         .place_credits => std.fmt.allocPrint(allocator, "Place {d} [Credits] on this card", .{card.installed_ability.place_credits_amount}),
         .break_subroutine => std.fmt.allocPrint(allocator, "Break {d} subroutine(s)", .{card.installed_ability.break_subroutine_count}),
         .pump_strength => std.fmt.allocPrint(allocator, "Add {d} strength", .{card.installed_ability.pump_strength_amount}),
         .run_central => allocator.dupe(u8, "Make a run on a central server"),
+        .start_of_turn_credits => allocator.dupe(u8, "Take credits (automatic)"),
         .none => allocator.dupe(u8, "Use ability"),
     };
 }
@@ -4137,6 +4354,7 @@ fn makeCardInstance(
         .subtypes = subtypes,
         .cost = spec.cost,
         .strength = spec.strength,
+        .remote_strength_bonus = spec.remote_strength_bonus,
         .agenda_points = spec.agenda_points,
         .advancement_requirement = spec.advancement_requirement,
         .corp_play = spec.corp_play,
@@ -4147,6 +4365,7 @@ fn makeCardInstance(
         .installed_ability = spec.installed_ability,
         .pump_ability = spec.pump_ability,
         .subroutines = spec.subroutines,
+        .runner_abilities = spec.runner_abilities,
         .advancement_counter = 0,
         .credit_counter = 0,
         .ability_used_this_turn = false,
@@ -4216,6 +4435,59 @@ fn resetInstalledAbilityUsage(game: *Game) void {
     }
     for (game.runner_rig_resources.items) |*card| {
         card.ability_used_this_turn = false;
+    }
+}
+
+fn applyCorpStartOfTurnAbilities(game: *Game) !void {
+    // Nico Campaign and similar: auto-take credits at start of corp turn
+    for (game.corp_servers.items) |*server| {
+        var i: usize = 0;
+        while (i < server.content.items.len) {
+            var card = &server.content.items[i];
+            if (card.installed_ability.kind == .start_of_turn_credits and card.rezzed and card.credit_counter > 0) {
+                const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
+                card.credit_counter -= take;
+                game.corp_credit += take;
+
+                if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
+                    // Draw cards before trashing if draw_on_empty > 0
+                    if (card.installed_ability.draw_on_empty > 0) {
+                        try drawCards(game, .corp, card.installed_ability.draw_on_empty);
+                    }
+                    const trashed = server.content.orderedRemove(i);
+                    try appendDiscardCard(game, .corp, trashed);
+                    continue; // Don't increment i
+                }
+            }
+            i += 1;
+        }
+    }
+}
+
+fn applyPennyshaverOnSuccessfulRun(game: *Game) void {
+    // Pennyshaver: place 1 credit on successful run
+    for (game.runner_rig_hardware.items) |*card| {
+        if (card.installed_ability.on_successful_run_place_credits > 0) {
+            card.credit_counter += card.installed_ability.on_successful_run_place_credits;
+        }
+    }
+}
+
+fn endOfRunCleanup(game: *Game) void {
+    // Mayfly: trash icebreakers that used their break ability this run
+    var i: usize = 0;
+    while (i < game.runner_rig_program.items.len) {
+        const card = game.runner_rig_program.items[i];
+        if (card.installed_ability.trashes_after_break and card.used_break_this_run) {
+            const trashed = game.runner_rig_program.orderedRemove(i);
+            appendDiscardCard(game, .runner, trashed) catch {};
+            continue;
+        }
+        i += 1;
+    }
+    // Reset used_break_this_run for remaining breakers
+    for (game.runner_rig_program.items) |*card| {
+        card.used_break_this_run = false;
     }
 }
 
@@ -4844,7 +5116,7 @@ test "offworld office on-score grants credits" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
 
     var offworld = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30067));
-    offworld.advancement_counter = 3;
+    offworld.advancement_counter = 4;
     try installCard(&generated, offworld, "New remote");
 
     generated.decision_side = .corp;
@@ -5211,9 +5483,21 @@ test "ICE net damage subroutine applies damage" {
 
     try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
 
-    // Progress through the run
+    // Progress through the run, handling jack-out prompts
     var guard: usize = 0;
-    while (guard < 20 and generated.run != null) : (guard += 1) {
+    while (guard < 30 and generated.run != null) : (guard += 1) {
+        // Handle jack-out prompt from Karunā sub1 - choose to continue
+        if (generated.runner_prompt_state) |ps| {
+            if (std.mem.eql(u8, ps.prompt_type, "jack-out")) {
+                try applyAction(&generated, .{
+                    .kind = .prompt_choice,
+                    .side = .runner,
+                    .prompt_type = "jack-out",
+                    .choice = stringChoice("Continue"),
+                });
+                continue;
+            }
+        }
         const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
         try applyAction(&generated, continue_action);
     }
@@ -5233,12 +5517,14 @@ test "runner loses credits subroutine" {
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
     try applyAction(&generated, .{ .kind = .start_turn, .side = .corp });
 
-    // Install Whitespace (runner loses 2 credits, runner loses 2 credits) on a remote
+    // Install Whitespace (sub1: runner loses 3 credits, sub2: ETR if runner ≤ 6 credits)
     var whitespace = try makeCardInstance(generated.arena.allocator(), try lookupRequiredCardSpec(30074));
     whitespace.rezzed = true;
     try installCard(&generated, whitespace, "New remote");
 
     generated.corp_credit = 20;
+    // Give runner enough credits that sub2 won't end the run
+    generated.runner_credit = 20;
     try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -5253,8 +5539,9 @@ test "runner loses credits subroutine" {
         try applyAction(&generated, continue_action);
     }
 
-    // Whitespace should have reduced runner credits by 4 (2 + 2)
-    try std.testing.expectEqual(@as(u16, @max(0, credit_before - 4)), generated.runner_credit);
+    // Whitespace sub1 should have reduced runner credits by 3
+    // Sub2 should NOT end the run because runner has > 6 credits
+    try std.testing.expectEqual(@as(u16, credit_before - 3), generated.runner_credit);
 }
 
 test "tread lightly run rez cost bonus is applied during corp rez window" {

@@ -98,6 +98,7 @@ pub const InstalledAbilityKind = enum(u8) {
     break_subroutine,
     pump_strength,
     run_central,
+    start_of_turn_credits, // Nico Campaign: auto-take credits at start of corp turn
 };
 
 pub const SubroutineKind = enum(u8) {
@@ -110,6 +111,10 @@ pub const SubroutineKind = enum(u8) {
     give_runner_tags,
     runner_loses_credits,
     install_ice_from_hq_archives, // Install an ice from HQ or Archives behind this ice
+    corp_gains_credits, // Corp gains N credits
+    do_net_damage_conditional_etr, // Do N net damage; if trashed card has odd cost, ETR
+    runner_loses_credits_or_etr, // Runner loses N credits (sub1); ETR if runner has ≤ amount credits (sub2)
+    do_net_damage_then_jack_out, // Do N net damage, then runner may jack out
 };
 
 pub const SubroutineSpec = struct {
@@ -188,11 +193,15 @@ pub const InstalledAbilitySpec = struct {
     take_credits_amount: u16 = 0,
     break_subroutine_count: u8 = 0,
     pump_strength_amount: u8 = 0,
+    pump_is_variable: bool = false, // Unity: pump = number of installed icebreakers
     trash_on_empty: bool = false,
     once_per_turn: bool = false,
-    trashes_after_break: bool = false,
+    trashes_after_break: bool = false, // Mayfly: trash self at end of run (not immediately)
     click_draw_bonus: u8 = 0,
     hq_access_bonus: u8 = 0,
+    draw_on_empty: u8 = 0, // Nico Campaign: draw N cards when trashed due to empty
+    on_successful_run_place_credits: u8 = 0, // Pennyshaver: place N credits on successful run
+    takes_all_credits: bool = false, // Pennyshaver: click ability takes all hosted credits + 1
 };
 
 pub const CardReference = struct {
@@ -226,6 +235,7 @@ pub const CardInstance = struct {
     subtypes: []const []const u8 = &.{},
     cost: ?u16 = null,
     strength: ?u8 = null,
+    remote_strength_bonus: u8 = 0, // Palisade: +N strength when protecting a remote
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
     corp_play: CorpPlaySpec = .{},
@@ -242,6 +252,7 @@ pub const CardInstance = struct {
     advancement_counter: u8 = 0,
     credit_counter: u16 = 0,
     ability_used_this_turn: bool = false,
+    used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
 };
 
