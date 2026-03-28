@@ -186,6 +186,7 @@ pub const InstallSpec = struct {
 pub const RunnerInstallSpec = struct {
     kind: RunnerInstallKind = .none,
     install_cost_reduction_if_successful_run: u16 = 0, // Carmen: -2 if successful run this turn
+    mu_cost: u8 = 1, // Memory units used (default 1 for programs, 0 for non-programs)
 };
 
 pub const InstalledAbilitySpec = struct {

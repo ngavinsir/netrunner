@@ -551,6 +551,19 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Translate mu-overflow prompt_choice into a "select" action for Clojure
+        if (std.mem.eql(u8, action.prompt_type.?, "mu-overflow")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "select", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeRunnerProgramLocator(writer, text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Translate advance-installed prompt_choice into an "advance" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "advance-installed")) {
             try writer.writeByte('{');
@@ -610,6 +623,18 @@ fn writeHandCardLocator(writer: anytype, side: state.Side, card_title: []const u
     _ = side;
 }
 
+fn writeRunnerProgramLocator(writer: anytype, choice_text: []const u8, leading_comma: bool) !void {
+    // Parse "p|2" into ["runner", "rig", "program", 2]
+    var iter = std.mem.splitScalar(u8, choice_text, '|');
+    _ = iter.next(); // skip "p"
+    const index_text = iter.next() orelse return;
+    if (leading_comma) try writer.writeByte(',');
+    try writeJsonString(writer, "card-locator");
+    try writer.writeAll(":[\"runner\",\"rig\",\"program\",");
+    try writer.writeAll(index_text);
+    try writer.writeByte(']');
+}
+
 fn writeRunnerRigResourceLocatorJsonField(
     writer: anytype,
     key: []const u8,
@@ -654,6 +679,7 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
+    if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;
 }
 

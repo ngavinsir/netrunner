@@ -1856,6 +1856,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
+    if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;
 }
 
@@ -2368,6 +2369,7 @@ test "e2e beginner game plays to completion with oracle parity" {
         // Resolve discard prompts locally (NOT recorded — oracle auto-resolves)
         if (try resolveOneDiscardPrompt(&generated)) continue;
 
+
         // Resolve corp phase-12 locally (NOT recorded — oracle auto-resolves)
         if (generated.corp_phase_12) {
             try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
@@ -2460,7 +2462,7 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
         }
     }
 
-    // Play/install a card if hand exceeds hand_size (original safe heuristic)
+    // Play/install a card if hand exceeds hand_size
     {
         const hand_len = switch (side) {
             .corp => gen.corp_hand.items.len,
@@ -2497,6 +2499,16 @@ fn findPromptText(actions: []const state.LegalAction, text: []const u8) ?state.L
         }
     }
     return null;
+}
+
+fn hasAdvanceableCards(gen: *const generator.Game) bool {
+    for (gen.corp_servers.items) |server| {
+        for (server.content.items) |card| {
+            if (card.agenda_points != null) return true;
+            if (card.access.adds_advancement) return true;
+        }
+    }
+    return false;
 }
 
 fn findPlayByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) ?state.LegalAction {

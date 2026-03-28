@@ -216,7 +216,8 @@ pub const all_cards = [_]CardSpec{
                     const trashed = g.runner_rig_program.orderedRemove(index);
                     try g.runner_discard.append(g.backing_allocator, trashed);
                     if (g.runner_memory) |*mem| {
-                        if (mem.used > 0) mem.used -= 1;
+                        const mu = trashed.runner_install.mu_cost;
+                        if (mem.used >= mu) mem.used -= mu else mem.used = 0;
                         mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
                     }
                 } else return error.UnsupportedChoice;
@@ -448,7 +449,7 @@ pub const all_cards = [_]CardSpec{
         .credit_cost = 1,
         .break_subroutine_count = 2,
     }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 2, .pump_strength_amount = 1 } },
-    .{ .title = "Mayfly", .side = .runner, .code = 30032, .card_type = "Program", .subtypes = &.{ "Icebreaker", "AI" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
+    .{ .title = "Mayfly", .side = .runner, .code = 30032, .card_type = "Program", .subtypes = &.{ "Icebreaker", "AI" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 }, .installed_ability = .{
         .kind = .break_subroutine,
         .credit_cost = 1,
         .break_subroutine_count = 1,
@@ -1281,6 +1282,11 @@ fn applyPromptChoice(
 
     if (std.mem.eql(u8, prompt.prompt_type, "trace")) {
         try applyTraceChoice(generated, side, choice_text);
+        return;
+    }
+
+    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_mu_overflow)) {
+        try applyMuOverflowChoice(generated, choice_text);
         return;
     }
 
@@ -2552,9 +2558,12 @@ fn applyInstallFromHand(
     if (card.runner_install.kind == .program) {
         generated.turn_events.programs_installed_this_turn += 1;
         if (generated.runner_memory) |*mem| {
-            mem.used += 1;
+            mem.used += card.runner_install.mu_cost;
             mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
         }
+
+        // MU overflow: prompt runner to trash programs if over limit
+        if (try beginMuOverflowPrompt(generated)) return;
     }
 
     generated.decision_side = .runner;
@@ -2836,7 +2845,8 @@ fn applyInstalledAbility(
                                 const trashed = generated.runner_rig_program.orderedRemove(program_index);
                                 try appendDiscardCard(generated, .runner, trashed);
                                 if (generated.runner_memory) |*mem| {
-                                    if (mem.used > 0) mem.used -= 1;
+                                    const mu = trashed.runner_install.mu_cost;
+                                    if (mem.used >= mu) mem.used -= mu else mem.used = 0;
                                     mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
                                 }
                             },
@@ -5785,6 +5795,56 @@ fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
             }
         }
     }
+}
+
+const prompt_mu_overflow = "mu-overflow";
+
+fn beginMuOverflowPrompt(generated: *Game) !bool {
+    const mem = generated.runner_memory orelse return false;
+    if (mem.used <= mem.base) return false;
+
+    const allocator = generated.arena.allocator();
+    // List all installed programs as trash choices
+    var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices_list.deinit(allocator);
+    for (generated.runner_rig_program.items, 0..) |card, idx| {
+        const text = try std.fmt.allocPrint(allocator, "p|{d}", .{idx});
+        try choices_list.append(allocator, .{ .kind = .string, .text = text, .card = .{ .title = card.title } });
+    }
+    if (choices_list.items.len == 0) return false;
+
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, prompt_mu_overflow),
+        .choices = try choices_list.toOwnedSlice(allocator),
+        .source_card = null,
+    };
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+    return true;
+}
+
+fn applyMuOverflowChoice(generated: *Game, choice_text: []const u8) !void {
+    var pieces = std.mem.splitScalar(u8, choice_text, '|');
+    _ = pieces.next(); // "p"
+    const index_text = pieces.next() orelse return error.UnsupportedChoice;
+    const index = try std.fmt.parseInt(usize, index_text, 10);
+    if (index >= generated.runner_rig_program.items.len) return error.UnsupportedChoice;
+
+    const trashed = generated.runner_rig_program.orderedRemove(index);
+    try appendDiscardCard(generated, .runner, trashed);
+    if (generated.runner_memory) |*mem| {
+        const mu = trashed.runner_install.mu_cost;
+        if (mem.used >= mu) mem.used -= mu else mem.used = 0;
+        mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+    }
+
+    // Check if still over limit
+    if (try beginMuOverflowPrompt(generated)) return;
+
+    generated.runner_prompt_state = null;
+    const allocator = generated.arena.allocator();
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
 
 pub fn corpStartTurnFull(generated: *Game) !void {
