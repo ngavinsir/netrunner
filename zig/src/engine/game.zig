@@ -928,8 +928,7 @@ pub fn applyStartTurn(
         .runner => {
             var runner = &generated.snapshot.state.runner;
             runner.click = runner.click_per_turn;
-            generated.snapshot.state.runner_breached_hq_this_turn = false;
-            generated.snapshot.state.runner_used_click_draw_this_turn = false;
+            generated.snapshot.state.turn_events = .{};
             resetInstalledAbilityUsage(generated);
 
             generated.snapshot.state.active_player = .runner;
@@ -1138,12 +1137,12 @@ fn applyRunnerBasicActionAbility(
         .draw_card => {
             try spendClicks(runner, 1);
             // Verbal Plasticity: first click draw each turn, draw 1 additional card
-            if (!generated.snapshot.state.runner_used_click_draw_this_turn and runner_has_installed_resource(generated, 30034)) {
+            if (generated.snapshot.state.turn_events.runner_click_draws == 0 and runner_has_installed_resource(generated, 30034)) {
                 try drawCards(generated, .runner, 2);
             } else {
                 try drawCard(generated, .runner);
             }
-            generated.snapshot.state.runner_used_click_draw_this_turn = true;
+            generated.snapshot.state.turn_events.runner_click_draws += 1;
         },
         .run_any_server => {
             try beginRunAnyServerPrompt(generated);
@@ -2943,11 +2942,11 @@ fn prepareNextAccess(generated: *Game) !bool {
     if (run.accesses_remaining == 0) {
         var bonus: u8 = run.access_bonus;
         // Docklands Pass: first HQ breach each turn, +1 access
-        if (std.mem.eql(u8, run.server[0], "hq") and !generated.snapshot.state.runner_breached_hq_this_turn) {
+        if (std.mem.eql(u8, run.server[0], "hq") and generated.snapshot.state.turn_events.runner_hq_breaches == 0) {
             if (runner_has_installed_hardware(generated, 30013)) {
                 bonus += 1;
             }
-            generated.snapshot.state.runner_breached_hq_this_turn = true;
+            generated.snapshot.state.turn_events.runner_hq_breaches += 1;
         }
         run.accesses_remaining = 1 + bonus;
     }

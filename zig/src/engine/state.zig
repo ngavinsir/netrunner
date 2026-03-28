@@ -340,6 +340,11 @@ pub const PlayerState = struct {
     servers: []const ServerSlot = &.{},
 };
 
+pub const TurnEvents = struct {
+    runner_click_draws: u8 = 0,
+    runner_hq_breaches: u8 = 0,
+};
+
 pub const LegalAction = struct {
     kind: ActionKind,
     side: Side,
@@ -363,8 +368,7 @@ pub const GameState = struct {
     run: ?RunState = null,
     runner_successful_run_last_turn: bool = false,
     runner_successful_run_this_turn: bool = false,
-    runner_breached_hq_this_turn: bool = false,
-    runner_used_click_draw_this_turn: bool = false,
+    turn_events: TurnEvents = .{},
     game_over: bool = false,
     winner: ?Side = null,
     pending_install: ?PendingInstall = null,

@@ -2238,7 +2238,7 @@ test "docklands pass grants extra hq access" {
         }
     }
     // Verify the Docklands Pass bonus was applied
-    try std.testing.expect(generated.snapshot.state.runner_breached_hq_this_turn);
+    try std.testing.expect(generated.snapshot.state.turn_events.runner_hq_breaches > 0);
 }
 
 test "orbital superiority gives tag when runner not tagged" {
