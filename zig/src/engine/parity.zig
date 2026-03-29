@@ -2424,7 +2424,16 @@ test "e2e beginner game plays to completion with oracle parity" {
         }
 
         const action = pickE2eAction(&generated);
-        try takeAction(allocator, &actions, &generated, action);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== ACTION ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" title={s}", .{t});
+            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            if (action.label) |l| std.debug.print(" label={s}", .{l});
+            if (action.card_index) |ci| std.debug.print(" idx={d}", .{ci});
+            std.debug.print("\n", .{});
+            return err;
+        };
     }
 
     try std.testing.expect(generated.game_over);
@@ -2459,6 +2468,10 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     // === Prompts ===
     if (findPromptText(actions, "Keep")) |a| return a;
     if (findPromptText(actions, "Steal")) |a| return a;
+
+    // Encounter-specific prompts: Funhouse (pay to avoid tag), Karunā (jack out after damage)
+    if (findPromptText(actions, "Pay")) |a| return a;
+    // For jack-out prompts during encounter, decline (don't jack out)
     if (findPromptText(actions, "No action")) |a| return a;
 
     // Any other prompt: first choice
@@ -2466,8 +2479,17 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
         if (a.kind == .prompt_choice) return a;
     }
 
-    // Run phases
+    // Corp continue (approach/movement phases)
     if (findFirstKindAction(actions, .@"continue", .corp)) |a| return a;
+
+    // === ICE encounter combat ===
+    // During encounter: break > pump > leech > bioroid > continue
+    if (findEncounterBreakAction(actions)) |a| return a;
+    if (findEncounterPumpAction(actions)) |a| return a;
+    if (findEncounterLeechAction(actions)) |a| return a;
+    if (findFirstKindAction(actions, .use_runner_ability, .runner)) |a| return a;
+
+    // Runner continue (pass encounter/movement)
     if (findFirstKindAction(actions, .@"continue", .runner)) |a| return a;
 
     // Start turn
@@ -2475,6 +2497,39 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
 
     if (side == .corp) return pickCorpAction(gen, actions);
     return pickRunnerAction(gen, actions);
+}
+
+fn findEncounterBreakAction(actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .use_installed_ability and a.side == .runner) {
+            if (a.installed_ability) |ia| {
+                if (ia == .break_subroutine) return a;
+            }
+        }
+    }
+    return null;
+}
+
+fn findEncounterPumpAction(actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .use_installed_ability and a.side == .runner) {
+            if (a.installed_ability) |ia| {
+                if (ia == .pump_strength) return a;
+            }
+        }
+    }
+    return null;
+}
+
+fn findEncounterLeechAction(actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .use_installed_ability and a.side == .runner) {
+            if (a.installed_ability) |ia| {
+                if (ia == .none and a.card_title != null) return a;
+            }
+        }
+    }
+    return null;
 }
 
 fn pickCorpAction(gen: *generator.Game, actions: []const state.LegalAction) state.LegalAction {

@@ -515,9 +515,16 @@ fn shouldSkipAction(action: state.LegalAction) bool {
     }
     // Skip discard-to-hand-size selects — Clojure handles these as part of the
     // end-turn async chain. Sending them as separate actions breaks the chain.
-    // The oracle auto-resolves discard prompts after end-turn instead.
     if (action.kind == .prompt_choice and action.prompt_type != null) {
         if (std.mem.eql(u8, action.prompt_type.?, "discard")) return true;
+        // Skip "No rez" from rez-window — Clojure's auto-no-action handles approach passing.
+        if (std.mem.eql(u8, action.prompt_type.?, "rez-window")) {
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    if (std.mem.eql(u8, text, "No rez")) return true;
+                }
+            }
+        }
     }
     return false;
 }
@@ -576,6 +583,14 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Translate rez-window "Rez approached ice" into a "rez-ice" action for Clojure
+        if (std.mem.eql(u8, action.prompt_type.?, "rez-window")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "rez-ice", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            try writer.writeByte('}');
+            return;
+        }
         // Translate advance-installed prompt_choice into an "advance" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "advance-installed")) {
             try writer.writeByte('{');
@@ -601,6 +616,14 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
     if (action.card_index) |card_index| try writeJsonFieldInteger(writer, "card-index", card_index, true);
     if (oracleAbilityIndex(action)) |ability_index| try writeJsonFieldInteger(writer, "ability-index", ability_index, true);
     if (action.label) |label| try writeJsonFieldString(writer, "label", label, true);
+    // For use_subroutine, emit subroutine-index from the choice's number
+    if (action.kind == .use_subroutine) {
+        if (action.choice) |choice| {
+            if (choice.number) |num| {
+                try writeJsonFieldInteger(writer, "subroutine-index", num, true);
+            }
+        }
+    }
     try writer.writeByte('}');
 }
 
@@ -646,7 +669,16 @@ fn writeRunnerProgramLocator(writer: anytype, choice_text: []const u8, leading_c
 }
 
 fn oracleAbilityIndex(action: state.LegalAction) ?u8 {
-    if (action.kind == .use_installed_ability) return 0;
+    if (action.kind == .use_installed_ability) {
+        // Icebreaker pump_strength is the 2nd ability (index 1) in Clojure card defs
+        if (action.installed_ability) |ia| {
+            if (ia == .pump_strength) return 1;
+        }
+        return 0;
+    }
+    if (action.kind == .use_runner_ability) {
+        return 0;
+    }
     if (action.basic_action) |basic_action| {
         return switch (action.side) {
             .corp => switch (basic_action) {

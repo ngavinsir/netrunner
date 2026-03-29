@@ -985,6 +985,9 @@ pub fn applyAction(
             const subroutine_index = action.choice orelse return error.MissingChoice;
             try applyUseSubroutine(generated, action.side, action.card_index orelse 0, subroutine_index, action);
         },
+        .use_runner_ability => {
+            try applyRunnerAbility(generated, action);
+        },
         else => return error.UnsupportedAction,
     }
 }
@@ -2397,6 +2400,53 @@ fn applyUseSubroutine(
     generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
 }
 
+fn applyRunnerAbility(generated: *Game, action: state.LegalAction) !void {
+    // Bioroid break: spend clicks to break subroutines on the encountered ICE
+    const run = generated.run orelse return error.NoRunInProgress;
+    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+
+    const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
+    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
+    const server = &generated.corp_servers.items[target_server.index];
+    const ice_count = server.ices.items.len;
+    if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
+    const actual_ice_idx = ice_count - 1 - current_ice_idx;
+    var ice = &server.ices.items[actual_ice_idx];
+
+    // Find the bioroid ability on the ICE
+    const ice_title = action.card_title orelse return error.NoBioroidAbility;
+    if (!std.mem.eql(u8, ice_title, ice.title)) return error.NoBioroidAbility;
+
+    var found_ability: ?state.RunnerAbilitySpec = null;
+    for (ice.runner_abilities) |ability| {
+        if (ability.kind == .bioroid_break) {
+            found_ability = ability;
+            break;
+        }
+    }
+    const ability = found_ability orelse return error.NoBioroidAbility;
+
+    // Pay click cost
+    if (generated.runner_click < ability.click_cost) return error.InsufficientClicks;
+    generated.runner_click -= ability.click_cost;
+
+    // Break first break_quantity unbroken subroutines
+    var broken_count: u8 = 0;
+    for (ice.subroutines, 0..) |_, sub_idx| {
+        if (broken_count >= ability.break_quantity) break;
+        const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(sub_idx))) != 0;
+        if (!is_broken) {
+            ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(sub_idx)));
+            broken_count += 1;
+        }
+    }
+
+    // Regenerate encounter actions
+    const allocator = generated.arena.allocator();
+    generated.decision_side = .runner;
+    generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
+}
+
 fn removeAccessedCard(
     generated: *Game,
     run: state.RunState,
@@ -2827,7 +2877,13 @@ fn applyInstalledAbility(
                 return;
             }
 
-            if (card.installed_ability.kind != installed_ability) return error.UnsupportedAbility;
+            // Pump strength is a separate ability from the card's primary installed_ability.kind
+            // (icebreakers have .break_subroutine as primary but also support pump via pump_ability)
+            if (card.installed_ability.kind != installed_ability and
+                !(installed_ability == .pump_strength and card.pump_ability.kind == .pump_strength))
+            {
+                return error.UnsupportedAbility;
+            }
             if (card.installed_ability.once_per_turn and card.ability_used_this_turn) return error.AbilityAlreadyUsed;
 
             switch (installed_ability) {
@@ -2875,7 +2931,60 @@ fn applyInstalledAbility(
                     card.ability_used_this_turn = true;
                 },
                 .break_subroutine => {
-                    return error.UnsupportedAbility;
+                    // Break all unbroken subroutines with this icebreaker during encounter
+                    const run = generated.run orelse return error.NoRunInProgress;
+                    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+
+                    // card_index is the combined rig index; convert to program index
+                    const program_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len));
+                    var icebreaker = &generated.runner_rig_program.items[program_index];
+
+                    // Get current ICE
+                    const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
+                    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
+                    const server = &generated.corp_servers.items[target_server.index];
+                    const ice_count = server.ices.items.len;
+                    if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
+                    const actual_ice_idx = ice_count - 1 - current_ice_idx;
+                    var ice = &server.ices.items[actual_ice_idx];
+
+                    // Validate type and strength
+                    if (!isIcebreaker(icebreaker.*)) return error.NotAnIcebreaker;
+                    if (icebreaker.installed_ability.kind != .break_subroutine) return error.UnsupportedAbility;
+                    if (!canBreakIceType(icebreaker.*, ice.*)) return error.CannotBreakIceType;
+                    const ice_str = effectiveIceStrength(ice.*, run.server, run.ice_strength_modifier);
+                    if (effectiveStrength(icebreaker.*) < ice_str) return error.InsufficientStrength;
+
+                    // Count unbroken subs
+                    var unbroken_count: u16 = 0;
+                    for (ice.subroutines, 0..) |_, idx| {
+                        const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
+                        if (!is_broken) unbroken_count += 1;
+                    }
+                    if (unbroken_count == 0) return error.UnsupportedAbility;
+
+                    // Calculate cost: ceil(unbroken / break_count) * credit_cost
+                    const break_count = @max(@as(u16, 1), @as(u16, icebreaker.installed_ability.break_subroutine_count));
+                    const activations = (unbroken_count + break_count - 1) / break_count;
+                    const total_cost = activations * icebreaker.installed_ability.credit_cost;
+                    if (generated.runner_credit < total_cost) return error.InsufficientCredits;
+                    generated.runner_credit -= total_cost;
+
+                    // Mark all unbroken subs as broken
+                    for (ice.subroutines, 0..) |_, idx| {
+                        const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
+                        if (!is_broken) {
+                            ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(idx)));
+                        }
+                    }
+
+                    // Track breaker usage (Mayfly)
+                    icebreaker.used_break_this_run = true;
+
+                    // Regenerate encounter actions
+                    generated.decision_side = .runner;
+                    generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
+                    return;
                 },
                 .pump_strength => {
                     // Pump strength during encounter
@@ -4177,53 +4286,58 @@ fn encounterActionsForState(
     const run = generated.run orelse return error.NoRunInProgress;
     const ice_str = effectiveIceStrength(ice, run.server, run.ice_strength_modifier);
 
-    // Count available icebreakers that can break this ICE type and have sufficient strength
-    var breaker_count: usize = 0;
-    for (generated.runner_rig_program.items) |card| {
-        if (!isIcebreaker(card)) continue;
-        if (card.installed_ability.kind != .break_subroutine) continue;
-        if (!canBreakIceType(card, ice)) continue;
-        if (effectiveStrength(card) < ice_str) continue;
-        breaker_count += 1;
-    }
-
     // Count unbroken subroutines
-    var unbroken_count: usize = 0;
+    var unbroken_count: u16 = 0;
     for (ice.subroutines, 0..) |_, idx| {
         const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
         if (!is_broken) unbroken_count += 1;
     }
 
-    // Count ICE-printed runner abilities (e.g., bioroid break)
+    // Count per-icebreaker break-all actions (one per qualified icebreaker that can afford to break all)
+    var breaker_count: usize = 0;
+    if (unbroken_count > 0) {
+        for (generated.runner_rig_program.items) |card| {
+            if (!isIcebreaker(card)) continue;
+            if (card.installed_ability.kind != .break_subroutine) continue;
+            if (!canBreakIceType(card, ice)) continue;
+            if (effectiveStrength(card) < ice_str) continue;
+            // Check affordability: ceil(unbroken / break_count) * credit_cost
+            const break_count = @max(@as(u16, 1), @as(u16, card.installed_ability.break_subroutine_count));
+            const activations = (unbroken_count + break_count - 1) / break_count;
+            const total_cost = activations * card.installed_ability.credit_cost;
+            if (generated.runner_credit < total_cost) continue;
+            breaker_count += 1;
+        }
+    }
+
+    // Only offer pump/leech/bioroid if there are unbroken subroutines remaining
     var bioroid_ability_count: usize = 0;
-    for (ice.runner_abilities) |ability| {
-        if (ability.kind == .bioroid_break) {
-            bioroid_ability_count += 1;
-        }
-    }
-
-    // Count pump-capable breakers
     var pump_count: usize = 0;
-    for (generated.runner_rig_program.items) |card| {
-        if (!isIcebreaker(card)) continue;
-        if (card.pump_ability.kind != .pump_strength) continue;
-        if (generated.runner_credit < card.pump_ability.credit_cost) continue;
-        pump_count += 1;
-    }
-
-    // Count Leech-like virus strength reduction abilities
     var leech_count: usize = 0;
-    for (generated.runner_rig_program.items) |card| {
-        if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
-            leech_count += 1;
+    if (unbroken_count > 0) {
+        for (ice.runner_abilities) |ability| {
+            if (ability.kind == .bioroid_break and generated.runner_click >= ability.click_cost) {
+                bioroid_ability_count += 1;
+            }
+        }
+        for (generated.runner_rig_program.items) |card| {
+            if (!isIcebreaker(card)) continue;
+            if (card.pump_ability.kind != .pump_strength) continue;
+            if (!canBreakIceType(card, ice)) continue;
+            if (generated.runner_credit < card.pump_ability.credit_cost) continue;
+            pump_count += 1;
+        }
+        for (generated.runner_rig_program.items) |card| {
+            if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
+                leech_count += 1;
+            }
         }
     }
 
-    // Actions: continue + break + bioroid + pump + leech
-    const total_actions = 1 + (breaker_count * unbroken_count) + bioroid_ability_count + pump_count + leech_count;
+    const total_actions = 1 + breaker_count + bioroid_ability_count + pump_count + leech_count;
     const actions = try allocator.alloc(state.LegalAction, total_actions);
 
-    // Add continue action (let the ice fire)
+    // Continue action (let unbroken subs fire)
     actions[0] = .{
         .kind = .@"continue",
         .side = .runner,
@@ -4233,82 +4347,76 @@ fn encounterActionsForState(
 
     var next: usize = 1;
 
-    // Add break actions for each qualified icebreaker and each unbroken subroutine
-    for (generated.runner_rig_program.items, 0..) |card, card_idx| {
-        if (!isIcebreaker(card)) continue;
-        if (card.installed_ability.kind != .break_subroutine) continue;
-        if (!canBreakIceType(card, ice)) continue;
-        if (effectiveStrength(card) < ice_str) continue;
+    // Break-all actions: one per qualified icebreaker
+    if (unbroken_count > 0) {
+        for (generated.runner_rig_program.items, 0..) |card, card_idx| {
+            if (!isIcebreaker(card)) continue;
+            if (card.installed_ability.kind != .break_subroutine) continue;
+            if (!canBreakIceType(card, ice)) continue;
+            if (effectiveStrength(card) < ice_str) continue;
+            const break_count = @max(@as(u16, 1), @as(u16, card.installed_ability.break_subroutine_count));
+            const activations = (unbroken_count + break_count - 1) / break_count;
+            const total_cost = activations * card.installed_ability.credit_cost;
+            if (generated.runner_credit < total_cost) continue;
 
-        for (ice.subroutines, 0..) |_, sub_idx| {
-            const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(sub_idx))) != 0;
-            if (is_broken) continue;
-
-            const label = try std.fmt.allocPrint(allocator, "Break subroutine {d} with {s}", .{ sub_idx, card.title });
-            actions[next] = .{
-                .kind = .use_subroutine,
-                .side = .runner,
-                .card_index = @intCast(card_idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .choice = .{
-                    .kind = .number,
-                    .number = @intCast(sub_idx),
-                },
-                .label = label,
-            };
-            next += 1;
-        }
-    }
-
-    // Add bioroid break actions (lose clicks to break subroutines)
-    for (ice.runner_abilities) |ability| {
-        if (ability.kind == .bioroid_break) {
-            const label = try std.fmt.allocPrint(allocator, "Lose {d} click(s) to break {d} subroutine(s)", .{ ability.click_cost, ability.break_quantity });
-            actions[next] = .{
-                .kind = .use_subroutine,
-                .side = .runner,
-                .card_title = try allocator.dupe(u8, ice.title),
-                .choice = .{
-                    .kind = .number,
-                    .number = ability.break_quantity,
-                },
-                .label = label,
-            };
-            next += 1;
-        }
-    }
-
-    // Add pump actions for icebreakers with pump ability
-    for (generated.runner_rig_program.items, 0..) |card, card_idx| {
-        if (!isIcebreaker(card)) continue;
-        if (card.pump_ability.kind != .pump_strength) continue;
-        if (generated.runner_credit < card.pump_ability.credit_cost) continue;
-
-        actions[next] = .{
-            .kind = .use_installed_ability,
-            .side = .runner,
-            .card_index = @intCast(card_idx),
-            .card_title = try allocator.dupe(u8, card.title),
-            .installed_ability = .pump_strength,
-            .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ card.pump_ability.pump_strength_amount, card.title }),
-        };
-        next += 1;
-    }
-
-    // Add Leech-like virus ICE strength reduction actions
-    for (generated.runner_rig_program.items, 0..) |card, card_idx| {
-        if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
-            // Use combined index: resources.len + program_idx
             const combined_idx = generated.runner_rig_resources.items.len + card_idx;
             actions[next] = .{
                 .kind = .use_installed_ability,
                 .side = .runner,
                 .card_index = @intCast(combined_idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = .none, // special marker - handled by virus_ice_strength_reduction check
-                .label = try std.fmt.allocPrint(allocator, "Give -{d} strength to {s}", .{ card.installed_ability.virus_ice_strength_reduction, ice.title }),
+                .installed_ability = .break_subroutine,
+                .label = try std.fmt.allocPrint(allocator, "Break subroutines with {s}", .{card.title}),
             };
             next += 1;
+        }
+
+        // Bioroid break actions
+        for (ice.runner_abilities) |ability| {
+            if (ability.kind == .bioroid_break and generated.runner_click >= ability.click_cost) {
+                actions[next] = .{
+                    .kind = .use_runner_ability,
+                    .side = .runner,
+                    .card_title = try allocator.dupe(u8, ice.title),
+                    .label = try std.fmt.allocPrint(allocator, "Lose {d} click(s) to break {d} subroutine(s)", .{ ability.click_cost, ability.break_quantity }),
+                };
+                next += 1;
+            }
+        }
+
+        // Pump strength actions
+        for (generated.runner_rig_program.items, 0..) |card, card_idx| {
+            if (!isIcebreaker(card)) continue;
+            if (card.pump_ability.kind != .pump_strength) continue;
+            if (!canBreakIceType(card, ice)) continue;
+            if (generated.runner_credit < card.pump_ability.credit_cost) continue;
+
+            const combined_idx = generated.runner_rig_resources.items.len + card_idx;
+            actions[next] = .{
+                .kind = .use_installed_ability,
+                .side = .runner,
+                .card_index = @intCast(combined_idx),
+                .card_title = try allocator.dupe(u8, card.title),
+                .installed_ability = .pump_strength,
+                .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ card.pump_ability.pump_strength_amount, card.title }),
+            };
+            next += 1;
+        }
+
+        // Leech-like virus ICE strength reduction actions
+        for (generated.runner_rig_program.items, 0..) |card, card_idx| {
+            if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
+                const combined_idx = generated.runner_rig_resources.items.len + card_idx;
+                actions[next] = .{
+                    .kind = .use_installed_ability,
+                    .side = .runner,
+                    .card_index = @intCast(combined_idx),
+                    .card_title = try allocator.dupe(u8, card.title),
+                    .installed_ability = .none,
+                    .label = try std.fmt.allocPrint(allocator, "Give -{d} strength to {s}", .{ card.installed_ability.virus_ice_strength_reduction, ice.title }),
+                };
+                next += 1;
+            }
         }
     }
 
@@ -4594,13 +4702,13 @@ fn hasRunnerInstalledAbilityAction(card: state.CardInstance, turn_events: state.
         return card.installed_ability.click_cost > 0;
     }
 
-    // For abilities that require clicks, check click cost
-    if (card.installed_ability.click_cost > 0) {
-        return true;
+    // Combat abilities (break/pump) are only valid during encounter — handled by encounterActionsForState
+    if (card.installed_ability.kind == .break_subroutine or card.installed_ability.kind == .pump_strength) {
+        return false;
     }
 
-    // For icebreaker abilities during encounter, they don't need click cost
-    if (card.installed_ability.kind == .break_subroutine or card.installed_ability.kind == .pump_strength) {
+    // For abilities that require clicks, check click cost
+    if (card.installed_ability.click_cost > 0) {
         return true;
     }
 

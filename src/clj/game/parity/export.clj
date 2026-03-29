@@ -4,6 +4,7 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as string]
+   [game.core.card :as card]
    [game.core.diffs :as diffs]
    [game.main :as main]
    [game.core.set-up :as set-up]
@@ -669,6 +670,32 @@
       :else
       value)))
 
+(defn- auto-resolve-break-prompts!
+  "After activating an icebreaker break or bioroid break ability in the oracle,
+  auto-select all subroutines from the resulting prompts until the encounter resumes.
+  Clojure's auto-repeat handles re-activating the ability for additional sub batches."
+  [state side]
+  (loop [remaining 30]
+    (when (pos? remaining)
+      (let [prompt (first (filter #(not= :waiting (:prompt-type %))
+                                  (get-in @state [side :prompt])))]
+        (when (and prompt (seq (:choices prompt)))
+          (let [choices (:choices prompt)
+                choice-val (fn [c] (if (map? c) (:value c) (str c)))
+                sub-choice (first (remove #(= "Done" (choice-val %)) choices))
+                done-choice (first (filter #(= "Done" (choice-val %)) choices))]
+            (cond
+              ;; Select a sub choice (auto-select all breakable subs)
+              sub-choice
+              (do (main/handle-action state side "choice" {:choice sub-choice})
+                  (recur (dec remaining)))
+              ;; Only "Done" left — click it to complete the break activation
+              done-choice
+              (do (main/handle-action state side "choice" {:choice done-choice})
+                  (recur (dec remaining)))
+              ;; No actionable choices
+              :else nil)))))))
+
 (defn- apply-action!
   [state action]
   (let [side (:side action)]
@@ -690,16 +717,32 @@
                                                 :ability (:ability-index action)})
 
       :use-installed-ability
-      (main/handle-action state side "ability" {:card (require-card! (resolve-installed-card state side action) action)
-                                                :ability (:ability-index action)})
+      (let [card (require-card! (resolve-installed-card state side action) action)
+            ability-idx (:ability-index action)]
+        (main/handle-action state side "ability" {:card card :ability ability-idx})
+        ;; After activating an icebreaker break ability (index 0) during encounter,
+        ;; auto-resolve the sub selection prompts that Clojure creates.
+        (when (and (= 0 ability-idx) (get-in @state [:run :current-ice]))
+          (auto-resolve-break-prompts! state side)))
 
       :use-corp-ability
       (main/handle-action state side "corp-ability" {:card (resolve-ability-card state side action)
                                                      :ability (:ability-index action)})
 
       :use-runner-ability
-      (main/handle-action state side "runner-ability" {:card (resolve-ability-card state side action)
-                                                       :ability (:ability-index action)})
+      (let [card-title (:card-title action)
+            ;; For bioroid breaks, find the current ICE card
+            current-ice (get-in @state [:run :current-ice])
+            ice-card (when current-ice (card/get-card state current-ice))
+            ;; Use card-title to distinguish: if it matches the ICE, it's a bioroid break
+            card (if (and ice-card (= card-title (:title ice-card)))
+                   ice-card
+                   (resolve-ability-card state side action))]
+        (main/handle-action state side "runner-ability" {:card card
+                                                         :ability (:ability-index action)})
+        ;; Auto-resolve bioroid break sub selection prompts
+        (when (and ice-card (= card-title (:title ice-card)))
+          (auto-resolve-break-prompts! state side)))
 
       :run
       (main/handle-action state side "run" {:server (:server action)})
@@ -717,8 +760,16 @@
       (main/handle-action state side "end-turn" nil)
 
       :use-subroutine
-      (main/handle-action state side "subroutine" {:card (resolve-card state (:card-locator action))
-                                                   :subroutine (:subroutine-index action)})
+      (let [current-ice (get-in @state [:run :current-ice])
+            ice-card (when current-ice (card/get-card state current-ice))]
+        (main/handle-action state side "subroutine" {:card (or ice-card current-ice)
+                                                     :subroutine (:subroutine-index action)}))
+
+      :rez-ice
+      (let [current-ice (get-in @state [:run :current-ice])
+            ice-card (when current-ice (card/get-card state current-ice))]
+        (when ice-card
+          (main/handle-action state side "rez" {:card ice-card})))
 
       :score
       (let [card (resolve-card state (:card-locator action))]
@@ -803,6 +854,8 @@
         (swap! state assoc-in [s :prompt] remaining)
         (swap! state assoc-in [s :prompt-state] (first remaining))))))
 
+
+
 (defn- auto-dismiss-hide-prompts!
   [state]
   (loop [remaining 12]
@@ -882,9 +935,6 @@
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
          (apply-action! state normalized-action)
          ;; After end-turn, auto-resolve any discard-to-hand-size select prompts.
-         ;; Clojure handles discards as part of end-turn's async chain; sending them
-         ;; as separate select actions breaks the continuation. Instead we resolve
-         ;; them here so they complete within the end-turn flow.
          (when (= :end-turn (:kind normalized-action))
            (auto-resolve-end-turn-discard! state (:side normalized-action)))))
      (auto-dismiss-hide-prompts! state)
