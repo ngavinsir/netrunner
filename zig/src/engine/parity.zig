@@ -1366,7 +1366,7 @@ test "manegarm skunkworks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("other", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("manegarm-tax", generated.runner_prompt_state.?.prompt_type);
     try std.testing.expectEqual(@as(usize, 3), generated.runner_prompt_state.?.choices.len);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "End the run"));
@@ -1403,12 +1403,17 @@ test "manegarm skunkworks spend clicks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("other", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("manegarm-tax", generated.runner_prompt_state.?.prompt_type);
 
     const runner_clicks_before = generated.runner_click;
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Spend [Click][Click]"));
 
     try std.testing.expectEqual(@as(u8, runner_clicks_before - 2), generated.runner_click);
+    // After paying tax, runner directly accesses Manegarm (trash prompt — no corp priority)
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "No action"));
+
     try std.testing.expect(generated.run == null);
     try std.testing.expect(generated.runner_successful_run_this_turn);
 
@@ -1442,12 +1447,17 @@ test "manegarm skunkworks pay credits parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("other", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("manegarm-tax", generated.runner_prompt_state.?.prompt_type);
 
     const runner_credits_before = generated.runner_credit;
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Pay 5 [Credits]"));
 
     try std.testing.expectEqual(@as(u16, runner_credits_before - 5), generated.runner_credit);
+    // After paying tax, runner directly accesses Manegarm (trash prompt — no corp priority)
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "No action"));
+
     try std.testing.expect(generated.run == null);
     try std.testing.expect(generated.runner_successful_run_this_turn);
 

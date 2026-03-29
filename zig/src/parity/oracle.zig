@@ -591,6 +591,19 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Translate manegarm-tax prompt_choice into a "manegarm-tax" action for Clojure
+        if (std.mem.eql(u8, action.prompt_type.?, "manegarm-tax")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "manegarm-tax", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Translate advance-installed prompt_choice into an "advance" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "advance-installed")) {
             try writer.writeByte('{');

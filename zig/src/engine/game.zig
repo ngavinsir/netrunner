@@ -245,9 +245,16 @@ pub const all_cards = [_]CardSpec{
                 g.runner_prompt_state = null;
                 try applySuccessfulRunEffects(g);
                 if (try prepareNextAccess(g)) {
+                    // Clojure's approach-server event resolves directly into breach —
+                    // no corp priority window between Manegarm payment and access.
                     run.phase = try allocator.dupe(u8, "success");
-                    g.decision_side = .corp;
-                    g.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+                    if (g.runner_prompt_state) |ps| {
+                        g.decision_side = .runner;
+                        g.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+                    } else {
+                        g.decision_side = .runner;
+                        g.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+                    }
                     return;
                 }
                 try completeSuccessfulRunWithCorpPriority(g);
@@ -808,6 +815,7 @@ const prompt_run_central = "run-central";
 const prompt_hq_access = "hq-access";
 const prompt_rez_window = "rez-window";
 const prompt_discard = "discard";
+const prompt_manegarm_tax = "manegarm-tax";
 
 fn lookupCardSpec(card: state.CardInstance) ?CardSpec {
     if (card.code) |code| return lookupCardSpecByCode(code);
@@ -3637,7 +3645,7 @@ fn checkManegarmSkunkworks(generated: *Game) !bool {
             });
 
             generated.runner_prompt_state = .{
-                .prompt_type = try allocator.dupe(u8, "other"),
+                .prompt_type = try allocator.dupe(u8, prompt_manegarm_tax),
                 .choices = try choices.toOwnedSlice(allocator),
                 .source_card = card,
             };
@@ -4032,7 +4040,7 @@ fn beginAccessFlow(
         .net_damage_on_access => {
             return try beginNetDamageOnAccessPrompt(generated, accessed);
         },
-        .tax_or_etr => return false,
+        .tax_or_etr => return try beginTrashAccessPrompt(generated, accessed),
         .none => return try beginTrashAccessPrompt(generated, accessed),
     }
 }

@@ -765,6 +765,19 @@
         (main/handle-action state side "subroutine" {:card (or ice-card current-ice)
                                                      :subroutine (:subroutine-index action)}))
 
+      :manegarm-tax
+      ;; Manegarm's approach-server event auto-resolves in Clojure (auto-dismiss clears
+      ;; the corp waiting prompt, causing the async chain to complete without payment).
+      ;; We directly apply the payment here to match Zig's explicit prompt handling.
+      (let [choice (:choice action)]
+        (cond
+          (= choice "Spend [Click][Click]")
+          (swap! state update-in [:runner :click] - 2)
+          (= choice "Pay 5 [Credits]")
+          (swap! state update-in [:runner :credit] - 5)
+          ;; "End the run" — Clojure already ended the run via auto-resolve
+          :else nil))
+
       :rez-ice
       (let [current-ice (get-in @state [:run :current-ice])
             ice-card (when current-ice (card/get-card state current-ice))]
