@@ -2057,11 +2057,19 @@ fn finishAccessCard(generated: *Game) !void {
     const run = &generated.run.?;
     generated.runner_prompt_state = null;
 
+    // If more accesses remain, immediately prepare the next access
+    // (matches Clojure's recursive access flow — no continues between accesses)
     if (run.accesses_remaining > 0) {
-        run.phase = try allocator.dupe(u8, "success");
-        generated.decision_side = .corp;
-        generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
-        return;
+        if (try prepareNextAccess(generated)) {
+            run.phase = try allocator.dupe(u8, "success");
+            generated.decision_side = .runner;
+            if (generated.runner_prompt_state) |ps| {
+                generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+            } else {
+                generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+            }
+            return;
+        }
     }
 
     try completeRunAfterAccess(generated);
@@ -2529,14 +2537,13 @@ fn applyInstallFromHand(
     if (generated.active_player != side) return error.NotActivePlayer;
     if (side != .runner) return error.UnsupportedSide;
 
-    const allocator = generated.arena.allocator();
     if (card_index >= generated.runner_hand.items.len) return error.InvalidCardIndex;
 
     const card = generated.runner_hand.items[card_index];
     if (card.runner_install.kind == .none) return error.UnsupportedRunnerInstall;
 
     try spendClicks(generated, .runner, 1);
-    var install_cost = card.cost orelse 0;
+    var install_cost: u16 = card.cost orelse 0;
     if (card.runner_install.install_cost_reduction_if_successful_run > 0 and generated.runner_successful_run_this_turn) {
         install_cost = if (install_cost >= card.runner_install.install_cost_reduction_if_successful_run)
             install_cost - card.runner_install.install_cost_reduction_if_successful_run
@@ -2548,6 +2555,24 @@ fn applyInstallFromHand(
         const dzmz_discount = runnerInstalledFirstProgramDiscount(generated);
         install_cost = if (install_cost >= dzmz_discount) install_cost - dzmz_discount else 0;
     }
+
+    // For programs, check MU BEFORE paying credits (matches Clojure's runner-install-pay flow).
+    // If MU would overflow, show the trash prompt first; install completes after resolution.
+    if (card.runner_install.kind == .program) {
+        generated.pending_install = .{
+            .card = card,
+            .card_index = card_index,
+            .runner_install_cost = install_cost,
+        };
+        if (try beginMuOverflowPromptWithExtra(generated, card.runner_install.mu_cost)) return;
+        generated.pending_install = null;
+    }
+
+    try completeRunnerInstall(generated, card_index, card, install_cost);
+}
+
+fn completeRunnerInstall(generated: *Game, card_index: u8, card: state.CardInstance, install_cost: u16) !void {
+    const allocator = generated.arena.allocator();
     try spendCredits(generated, .runner, install_cost);
 
     var installed_card = try removeCardFromHand(generated, .runner, card_index);
@@ -2561,16 +2586,11 @@ fn applyInstallFromHand(
             mem.used += card.runner_install.mu_cost;
             mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
         }
-
-        // MU overflow: prompt runner to trash programs if over limit
-        if (try beginMuOverflowPrompt(generated)) return;
     }
 
+    generated.pending_install = null;
     generated.decision_side = .runner;
-    generated.legal_actions = try runnerOpeningActionsForState(
-        allocator,
-        generated,
-    );
+    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
 
 fn playRunnerGainCredits(
@@ -2625,10 +2645,7 @@ fn applyRunnerRunTargetChoice(
     const run_server = try canonicalRunServer(allocator, server);
     trackMadeRun(generated, run_server);
     const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
-    const initial_position: u8 = if (isCentralRunServer(run_server))
-        0
-    else
-        @intCast(target_server.slot.ices.items.len);
+    const initial_position: u8 = @intCast(target_server.slot.ices.items.len);
 
     generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
@@ -2678,10 +2695,7 @@ fn applyRun(
     const run_server = try canonicalRunServer(allocator, server);
     trackMadeRun(generated, run_server);
     const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
-    const initial_position: u8 = if (isCentralRunServer(run_server))
-        0
-    else
-        @intCast(target_server.slot.ices.items.len);
+    const initial_position: u8 = @intCast(target_server.slot.ices.items.len);
     generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "run"),
         .choices = &.{},
@@ -2723,10 +2737,7 @@ fn applyRunFromAbility(
     const allocator = generated.arena.allocator();
     const run_server = try canonicalRunServer(allocator, server);
     const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
-    const initial_position: u8 = if (isCentralRunServer(run_server))
-        0
-    else
-        @intCast(target_server.slot.ices.items.len);
+    const initial_position: u8 = @intCast(target_server.slot.ices.items.len);
 
     // Track made_run for this server
     trackMadeRun(generated, run_server);
@@ -3208,11 +3219,13 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
         }
     }
     if (generated.runner_prompt_state) |runner_prompt| {
-        if (side != .corp) return error.InvalidAction;
-        generated.corp_prompt_state = null;
-        generated.decision_side = .runner;
-        generated.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
-        return;
+        if (!std.mem.eql(u8, runner_prompt.prompt_type, "waiting")) {
+            if (side != .corp) return error.InvalidAction;
+            generated.corp_prompt_state = null;
+            generated.decision_side = .runner;
+            generated.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
+            return;
+        }
     }
 
     if (run.no_action == null) {
@@ -3788,13 +3801,25 @@ fn prepareNextAccess(generated: *Game) !bool {
 
     if (run.accesses_remaining == 0) return false;
     if (std.mem.eql(u8, run.server[0], "hq")) {
+        if (generated.corp_hand.items.len == 0) {
+            run.accesses_remaining = 0;
+            return false;
+        }
+        // Shuffle HQ and auto-access the random card immediately
+        // (matches Clojure's access-helper-hq auto-execute behavior).
         const maybe_access = try nextHqAccessTarget(generated, run);
         if (maybe_access == null) {
             run.accesses_remaining = 0;
             return false;
         }
         run.access_card_index = maybe_access.?.index;
-        return beginHqAccessChoicePrompt(generated);
+        rememberAccessedIndex(run, maybe_access.?.index);
+        run.accesses_remaining -= 1;
+        // Always show an access prompt (even "No action") per card.
+        // This matches Clojure which always shows access options.
+        if (try beginAccessFlow(generated, maybe_access.?.card)) return true;
+        // Card has no special access interaction — show "No action" prompt
+        return try beginNoActionAccessPrompt(generated, maybe_access.?.card);
     }
     const maybe_access = try nextAccessTarget(generated);
     if (maybe_access == null) {
@@ -3903,6 +3928,16 @@ fn beginAccessFlow(
     }
 }
 
+fn beginNoActionAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
+    const allocator = generated.arena.allocator();
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, prompt_access_choice),
+        .choices = try singleStringChoice(allocator, "No action"),
+        .source_card = accessed,
+    };
+    return true;
+}
+
 fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
     const spec = lookupCardSpec(accessed) orelse return false;
     const trash_cost = spec.trash_cost orelse return false;
@@ -3996,7 +4031,10 @@ fn applyHqAccessChoice(
     if (!std.mem.eql(u8, choice_text, "Card from hand")) return error.UnsupportedChoice;
     const run = &generated.run.?;
     if (run.accesses_remaining == 0) return error.MissingAccessTarget;
-    const access_index = run.access_card_index orelse return error.MissingAccessTarget;
+    // Shuffle HQ now (when player picks "Card from hand"), matching Clojure's timing
+    const maybe_access = try nextHqAccessTarget(generated, run);
+    if (maybe_access == null) return error.MissingAccessTarget;
+    const access_index = maybe_access.?.index;
     if (access_index >= generated.corp_hand.items.len) return error.MissingAccessTarget;
     const accessed = generated.corp_hand.items[access_index];
     rememberAccessedIndex(run, access_index);
@@ -4011,17 +4049,20 @@ fn applyHqAccessChoice(
         return;
     }
 
-    generated.runner_prompt_state = .{
-        .prompt_type = try generated.arena.allocator().dupe(u8, "waiting"),
-        .choices = &.{},
-        .source_card = null,
-    };
+    // If more accesses remain, immediately prepare the next access
+    // (matches Clojure's recursive access-helper-hq behavior — no continues between accesses)
     if (run.accesses_remaining > 0) {
-        run.phase = try generated.arena.allocator().dupe(u8, "success");
-        run.no_action = null;
-        generated.decision_side = .corp;
-        generated.legal_actions = try continueActionsForRun(generated.arena.allocator(), .corp, run.*);
-        return;
+        if (try prepareNextAccess(generated)) {
+            run.phase = try generated.arena.allocator().dupe(u8, "success");
+            generated.decision_side = .runner;
+            // If a prompt was set (e.g., another hq-access), use it
+            if (generated.runner_prompt_state) |ps| {
+                generated.legal_actions = try promptChoiceActions(generated.arena.allocator(), .runner, ps);
+            } else {
+                generated.legal_actions = try continueActionsForRun(generated.arena.allocator(), .runner, run.*);
+            }
+            return;
+        }
     }
     try completeRunWithoutAccess(generated);
 }
@@ -5800,8 +5841,12 @@ fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
 const prompt_mu_overflow = "mu-overflow";
 
 fn beginMuOverflowPrompt(generated: *Game) !bool {
+    return beginMuOverflowPromptWithExtra(generated, 0);
+}
+
+fn beginMuOverflowPromptWithExtra(generated: *Game, extra_mu: u8) !bool {
     const mem = generated.runner_memory orelse return false;
-    if (mem.used <= mem.base) return false;
+    if (mem.used + extra_mu <= mem.base) return false;
 
     const allocator = generated.arena.allocator();
     // List all installed programs as trash choices
@@ -5838,8 +5883,18 @@ fn applyMuOverflowChoice(generated: *Game, choice_text: []const u8) !void {
         mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
     }
 
-    // Check if still over limit
-    if (try beginMuOverflowPrompt(generated)) return;
+    // Check if still over limit (include pending program's MU cost)
+    const pending_mu: u8 = if (generated.pending_install) |p| p.card.runner_install.mu_cost else 0;
+    if (try beginMuOverflowPromptWithExtra(generated, pending_mu)) return;
+
+    // MU resolved — complete the pending program install if any
+    if (generated.pending_install) |pending| {
+        const pi_card = pending.card;
+        const pi_index = pending.card_index;
+        const pi_cost = pending.runner_install_cost;
+        try completeRunnerInstall(generated, pi_index, pi_card, pi_cost);
+        return;
+    }
 
     generated.runner_prompt_state = null;
     const allocator = generated.arena.allocator();

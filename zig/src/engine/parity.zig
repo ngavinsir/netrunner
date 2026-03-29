@@ -2359,16 +2359,12 @@ test "e2e beginner game plays to completion with oracle parity" {
     defer actions.deinit(allocator);
 
     var step: u32 = 0;
-    const max_steps: u32 = 500;
+    const max_steps: u32 = 1000;
     var last_turn: u16 = 0;
 
     while (step < max_steps) : (step += 1) {
         if (generated.game_over) break;
         if (generated.legal_actions.len == 0) break;
-
-        // Resolve discard prompts locally (NOT recorded — oracle auto-resolves)
-        if (try resolveOneDiscardPrompt(&generated)) continue;
-
 
         // Resolve corp phase-12 locally (NOT recorded — oracle auto-resolves)
         if (generated.corp_phase_12) {
@@ -2379,18 +2375,51 @@ test "e2e beginner game plays to completion with oracle parity" {
 
         // Check oracle parity at turn boundaries
         if (generated.turn != last_turn and generated.turn > 0) {
-            const scenario_actions = try actions.toOwnedSlice(allocator);
-            defer allocator.free(scenario_actions);
-            var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+            var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, null) catch |err| {
+                std.debug.print("\n=== ORACLE REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  error: {s}\n", .{@errorName(err)});
+                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.choice) |c| { if (c.text) |t| std.debug.print(" choice={s}", .{t}); }
+                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
             defer replay.deinit();
             const gen_snapshot = try generated.toSnapshot();
             expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
-                std.debug.print("\n=== PARITY DIVERGENCE at turn {d} (step {d}) ===\n", .{ generated.turn, step });
-                std.debug.print("  corp: credit oracle={d} zig={d}, click oracle={d} zig={d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
-                std.debug.print("  runner: credit oracle={d} zig={d}, click oracle={d} zig={d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("\n=== PARITY DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
+                    std.debug.print("  run: oracle={s} zig={s}\n", .{
+                        if (replay.snapshot.state.run) |r| r.phase else "null",
+                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                    });
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
+                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
+                std.debug.print("  last actions:\n", .{});
+                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.choice) |c| { if (c.text) |t| std.debug.print(" choice={s}", .{t}); }
+                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
+                    std.debug.print("\n", .{});
+                }
                 return err;
             };
-            for (scenario_actions) |a| try actions.append(allocator, a);
             last_turn = generated.turn;
         }
 
@@ -2444,49 +2473,143 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     // Start turn
     if (findFirstKindAction(actions, .start_turn, side)) |a| return a;
 
-    // Play/install a card if hand exceeds hand_size
-    {
-        const hand_len = switch (side) {
-            .corp => gen.corp_hand.items.len,
-            .runner => gen.runner_hand.items.len,
-        };
-        const hand_size = switch (side) {
-            .corp => gen.corp_hand_size.total,
-            .runner => gen.runner_hand_size.total,
-        };
-        if (hand_len > hand_size) {
-            if (side == .corp) {
-                if (findFirstCorpInstallPlay(actions) catch null) |a| return a;
-            }
-            if (findFirstPlayFromHand(actions, side) catch null) |a| return a;
-        }
+    if (side == .corp) return pickCorpAction(gen, actions);
+    return pickRunnerAction(gen, actions);
+}
+
+fn pickCorpAction(gen: *generator.Game, actions: []const state.LegalAction) state.LegalAction {
+    const click = gen.corp_click;
+    const credit = gen.corp_credit;
+
+    // Score agenda if possible
+    if (findBasicAction(actions, .corp, .score_agenda)) |a| return a;
+
+    // Install cards (ICE, agendas, assets, upgrades)
+    if (click >= 1 and gen.corp_hand.items.len > 0) {
+        if (findFirstCorpInstallPlay(actions) catch null) |a| return a;
     }
 
-    // Play/install a card if hand exceeds hand_size
-    {
-        const hand_len = switch (side) {
-            .corp => gen.corp_hand.items.len,
-            .runner => gen.runner_hand.items.len,
-        };
-        const hand_size = switch (side) {
-            .corp => gen.corp_hand_size.total,
-            .runner => gen.runner_hand_size.total,
-        };
-        if (hand_len > hand_size) {
-            if (side == .corp) {
-                if (findFirstCorpInstallPlay(actions) catch null) |a| return a;
-            }
-            if (findFirstPlayFromHand(actions, side) catch null) |a| return a;
-        }
+    // Play economy operations if affordable
+    if (credit >= 5) {
+        if (findPlayByTitle(actions, .corp, "Hedge Fund")) |a| return a;
+    }
+    if (credit >= 0) {
+        if (findPlayByTitle(actions, .corp, "Government Subsidy")) |a| return a;
     }
 
-    // Gain credits (safe default)
-    if (findBasicAction(actions, side, .gain_credit)) |a| return a;
+    // Use installed abilities (Regolith Mining License, Nico Campaign)
+    for (actions) |a| {
+        if (a.kind == .use_installed_ability and a.side == .corp) return a;
+    }
+
+    // Advance installed cards if we have targets
+    if (click >= 1 and credit >= 1 and hasAdvanceableCards(gen)) {
+        if (findBasicAction(actions, .corp, .advance_installed)) |a| return a;
+    }
+
+    // Play Seamless Launch if we have advanceable cards
+    if (hasAdvanceableCards(gen)) {
+        if (findPlayByTitle(actions, .corp, "Seamless Launch")) |a| return a;
+    }
+
+    // Draw cards if hand is small
+    if (gen.corp_hand.items.len <= 3) {
+        if (findBasicAction(actions, .corp, .draw_card)) |a| return a;
+    }
+
+    // Gain credits as fallback
+    if (findBasicAction(actions, .corp, .gain_credit)) |a| return a;
 
     // End turn
-    if (findFirstKindAction(actions, .end_turn, side)) |a| return a;
+    if (findFirstKindAction(actions, .end_turn, .corp)) |a| return a;
 
     return actions[0];
+}
+
+fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) state.LegalAction {
+    const click = gen.runner_click;
+    const credit = gen.runner_credit;
+
+    // Play economy events first
+    if (credit >= 5) {
+        if (findPlayByTitle(actions, .runner, "Sure Gamble")) |a| return a;
+    }
+    if (findPlayByTitle(actions, .runner, "Creative Commission")) |a| return a;
+
+    // Install economy resources
+    if (credit >= 1) {
+        if (findPlayByTitle(actions, .runner, "Telework Contract")) |a| return a;
+    }
+    if (findPlayByTitle(actions, .runner, "Smartware Distributor")) |a| return a;
+
+    // Use installed abilities (Telework, Pennyshaver, Red Team) — skip combat abilities
+    for (actions) |a| {
+        if (a.kind == .use_installed_ability and a.side == .runner and isSafeInstalledAbility(a)) return a;
+    }
+
+    // Install hardware
+    if (findPlayByTitle(actions, .runner, "Pennyshaver")) |a| return a;
+    if (findPlayByTitle(actions, .runner, "Docklands Pass")) |a| return a;
+
+    // Install icebreakers — prioritize core breakers over Mayfly (AI).
+    // MU overflow is handled properly via the select prompt.
+    if (credit >= 3) {
+        if (findPlayByTitle(actions, .runner, "Carmen")) |a| return a;
+        if (findPlayByTitle(actions, .runner, "Cleaver")) |a| return a;
+        if (findPlayByTitle(actions, .runner, "Unity")) |a| return a;
+        if (findPlayByTitle(actions, .runner, "Mayfly")) |a| return a;
+    }
+
+    // Install Verbal Plasticity for draw power
+    if (findPlayByTitle(actions, .runner, "Verbal Plasticity")) |a| return a;
+
+    // Run a server if we have credits and clicks
+    if (click >= 2 and credit >= 3) {
+        if (findRunActionAny(actions)) |a| return a;
+    }
+
+    // Play run events
+    if (credit >= 1) {
+        if (findPlayByTitle(actions, .runner, "Jailbreak")) |a| return a;
+        if (findPlayByTitle(actions, .runner, "Overclock")) |a| return a;
+    }
+    if (findPlayByTitle(actions, .runner, "Tread Lightly")) |a| return a;
+
+    // Play VRcation for draw + credits
+    if (findPlayByTitle(actions, .runner, "VRcation")) |a| return a;
+
+    // Play/install remaining cards from hand if overflowing
+    if (gen.runner_hand.items.len > gen.runner_hand_size.total) {
+        if (findFirstPlayFromHand(actions, .runner) catch null) |a| return a;
+    }
+
+    // Draw cards if hand is small
+    if (gen.runner_hand.items.len <= 2) {
+        if (findBasicAction(actions, .runner, .draw_card)) |a| return a;
+    }
+
+    // Gain credits as fallback
+    if (findBasicAction(actions, .runner, .gain_credit)) |a| return a;
+
+    // End turn
+    if (findFirstKindAction(actions, .end_turn, .runner)) |a| return a;
+
+    return actions[0];
+}
+
+fn findRunActionAny(actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .run and a.side == .runner) return a;
+    }
+    return null;
+}
+
+fn isSafeInstalledAbility(action: state.LegalAction) bool {
+    const ability = action.installed_ability orelse return false;
+    return switch (ability) {
+        .take_credits, .place_credits, .run_central, .run_rd, .start_of_turn_credits => true,
+        .break_subroutine, .pump_strength, .none => false,
+    };
 }
 
 fn findPromptText(actions: []const state.LegalAction, text: []const u8) ?state.LegalAction {

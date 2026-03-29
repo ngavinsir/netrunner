@@ -283,6 +283,7 @@ pub const ServerSlot = struct {
 pub const PendingInstall = struct {
     card: CardInstance,
     card_index: u8,
+    runner_install_cost: u16 = 0,
 };
 
 pub const EncounterPhase = enum(u8) {

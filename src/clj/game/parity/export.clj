@@ -633,9 +633,9 @@
   (let [card-from-locator (when card-locator (resolve-card state card-locator))]
     (or card-from-locator
         (when (some? card-title)
-          (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :resource])))
-        (when (some? card-index)
-          (get-in @state [side :rig :resource card-index])))))
+          (or (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :resource]))
+              (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :program]))
+              (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :hardware])))))))
 
 (defn- require-card!
   [card action]
@@ -729,11 +729,24 @@
         (main/handle-action state side "advance" {:card card}))
 
       :select
-      (let [card-title (:card-title action)
-            hand (get-in @state [side :hand])
-            card (some #(when (= card-title (:title %)) %) hand)]
+      (let [card (or (when-let [loc (:card-locator action)]
+                       (resolve-card state loc))
+                     (let [card-title (:card-title action)]
+                       (or (some #(when (= card-title (:title %)) %) (get-in @state [side :hand]))
+                           (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :program]))
+                           (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :resource]))
+                           (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :hardware])))))
+            ;; Pass the select prompt's eid so the engine can match the card to the correct selection entry
+            prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [side :prompt])))
+            prompt-eid (:eid prompt)]
         (when card
-          (main/handle-action state side "select" {:card card})))
+          (main/handle-action state side "select" {:card card :eid prompt-eid})
+          ;; Auto-click "Done" if there's still a select prompt (e.g., MU overflow multi-select).
+          ;; Zig sends one select per card; Clojure's multi-select needs explicit Done.
+          ;; If the select auto-resolved (max reached), the prompt is already gone.
+          (when-let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [side :prompt])))]
+            (when-let [done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
+              (main/handle-action state side "choice" {:choice {:uuid (:uuid done-choice)}})))))
 
       (throw (ex-info "Unsupported parity action" {:action action})))))
 
@@ -763,6 +776,33 @@
         (ack-top-toast! state side)
         true))))
 
+(defn- auto-resolve-end-turn-discard!
+  "Auto-resolve discard-to-hand-size select prompts after end-turn.
+  These prompts have :all true (must select exactly :max cards).
+  We pick cards from the hand to discard, selecting them one at a time
+  until the auto-resolve triggers."
+  [state side]
+  (loop [attempts 0]
+    (when (< attempts 10)
+      (let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [side :prompt])))]
+        (when prompt
+          (let [prompt-eid (:eid prompt)
+                hand (get-in @state [side :hand])]
+            (when (seq hand)
+              ;; Select the first card in hand that hasn't been selected yet
+              (let [card (first (filter #(not (:selected %)) hand))]
+                (when card
+                  (main/handle-action state side "select" {:card card :eid prompt-eid})
+                  ;; Recurse to handle multi-card discards or check if resolved
+                  (recur (inc attempts))))))))))
+  ;; Clear any remaining waiting prompts left by the discard flow
+  (doseq [s [:corp :runner]]
+    (let [prompts (get-in @state [s :prompt])
+          remaining (vec (remove #(= :waiting (:prompt-type %)) prompts))]
+      (when (not= (count prompts) (count remaining))
+        (swap! state assoc-in [s :prompt] remaining)
+        (swap! state assoc-in [s :prompt-state] (first remaining))))))
+
 (defn- auto-dismiss-hide-prompts!
   [state]
   (loop [remaining 12]
@@ -786,6 +826,8 @@
                            (assoc-in [side :prompt] remaining)
                            (assoc-in [side :prompt-state] next-prompt))))
         true))))
+
+
 
 (defn- normalize-choice
   [choice]
@@ -834,11 +876,17 @@
                  (intermediate-state seed)
                  (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
-     (doseq [action actions]
+     (doseq [[idx action] (map-indexed vector actions)]
        (let [normalized-action (normalize-action action)]
          (auto-dismiss-hide-prompts! state)
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
-         (apply-action! state normalized-action)))
+         (apply-action! state normalized-action)
+         ;; After end-turn, auto-resolve any discard-to-hand-size select prompts.
+         ;; Clojure handles discards as part of end-turn's async chain; sending them
+         ;; as separate select actions breaks the continuation. Instead we resolve
+         ;; them here so they complete within the end-turn flow.
+         (when (= :end-turn (:kind normalized-action))
+           (auto-resolve-end-turn-discard! state (:side normalized-action)))))
      (auto-dismiss-hide-prompts! state)
      (canonical-bundle state))))
 

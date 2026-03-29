@@ -513,6 +513,12 @@ fn shouldSkipAction(action: state.LegalAction) bool {
     if (action.basic_action) |ba| {
         if (ba == .score_agenda or ba == .advance_installed) return true;
     }
+    // Skip discard-to-hand-size selects — Clojure handles these as part of the
+    // end-turn async chain. Sending them as separate actions breaks the chain.
+    // The oracle auto-resolves discard prompts after end-turn instead.
+    if (action.kind == .prompt_choice and action.prompt_type != null) {
+        if (std.mem.eql(u8, action.prompt_type.?, "discard")) return true;
+    }
     return false;
 }
 
@@ -560,6 +566,12 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
                 if (choice.text) |text| {
                     try writeRunnerProgramLocator(writer, text, true);
                 }
+                // Also send card-title for fallback resolution
+                if (choice.card) |card| {
+                    if (card.title) |title| {
+                        try writeJsonFieldString(writer, "card-title", title, true);
+                    }
+                }
             }
             try writer.writeByte('}');
             return;
@@ -587,8 +599,6 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
     if (action.server) |server| try writeJsonFieldString(writer, "server", server, true);
     if (action.card_title) |card_title| try writeJsonFieldString(writer, "card-title", card_title, true);
     if (action.card_index) |card_index| try writeJsonFieldInteger(writer, "card-index", card_index, true);
-    if (action.kind == .use_installed_ability and action.side == .runner and action.card_index != null)
-        try writeRunnerRigResourceLocatorJsonField(writer, "card-locator", action.card_index.?, true);
     if (oracleAbilityIndex(action)) |ability_index| try writeJsonFieldInteger(writer, "ability-index", ability_index, true);
     if (action.label) |label| try writeJsonFieldString(writer, "label", label, true);
     try writer.writeByte('}');
@@ -632,20 +642,6 @@ fn writeRunnerProgramLocator(writer: anytype, choice_text: []const u8, leading_c
     try writeJsonString(writer, "card-locator");
     try writer.writeAll(":[\"runner\",\"rig\",\"program\",");
     try writer.writeAll(index_text);
-    try writer.writeByte(']');
-}
-
-fn writeRunnerRigResourceLocatorJsonField(
-    writer: anytype,
-    key: []const u8,
-    card_index: u8,
-    leading_comma: bool,
-) !void {
-    if (leading_comma) try writer.writeByte(',');
-    try writeJsonString(writer, key);
-    try writer.writeByte(':');
-    try writer.writeAll("[\"runner\",\"rig\",\"resource\",");
-    try writer.print("{d}", .{card_index});
     try writer.writeByte(']');
 }
 

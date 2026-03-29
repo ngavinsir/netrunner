@@ -38,19 +38,24 @@
 (defn- handle-socket-client!
   [socket]
   (future
-    (with-open [socket socket
-                reader (-> socket
-                           Channels/newInputStream
-                           (io/reader :encoding "UTF-8"))
-                writer (-> socket
-                           Channels/newOutputStream
-                           (io/writer :encoding "UTF-8"))]
-      (when-let [line (.readLine reader)]
-        (let [request (json/parse-string line true)
-              response (json/generate-string (request->bundle request))]
-          (.write writer response)
-          (.write writer "\n")
-          (.flush writer))))))
+    (try
+      (with-open [socket socket
+                  reader (-> socket
+                             Channels/newInputStream
+                             (io/reader :encoding "UTF-8"))
+                  writer (-> socket
+                             Channels/newOutputStream
+                             (io/writer :encoding "UTF-8"))]
+        (when-let [line (.readLine reader)]
+          (let [request (json/parse-string line true)
+                response (json/generate-string (request->bundle request))]
+            (.write writer response)
+            (.write writer "\n")
+            (.flush writer))))
+      (catch Exception e
+        (binding [*out* *err*]
+          (println (str "ORACLE ERROR: " (.getMessage e)))
+          (.printStackTrace e *err*))))))
 
 (defn serve-unix!
   [socket-path]
