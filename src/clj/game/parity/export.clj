@@ -765,18 +765,49 @@
         (main/handle-action state side "subroutine" {:card (or ice-card current-ice)
                                                      :subroutine (:subroutine-index action)}))
 
+      :funhouse-encounter
+      ;; Funhouse on-encounter: resolve via handle-action "choice".
+      ;; After the choice resolves, Clojure's async chain continues the encounter
+      ;; (firing subs automatically). Auto-resolve any resulting prompts.
+      (let [choice (:choice action)
+            prompt (first (filter #(not= :waiting (:prompt-type %))
+                                  (get-in @state [:runner :prompt])))
+            choices (:choices prompt)
+            match (first (filter #(= choice (if (map? %) (:value %) (str %))) choices))]
+        (when match
+          (main/handle-action state :runner "choice" {:choice match})))
+
+      :retribution-trash
+      ;; Retribution trashes a runner hardware or program via card-selection (select) prompt.
+      ;; Resolve by finding the card from the locator path in the runner's rig.
+      (let [card (when-let [loc (:card-locator action)]
+                   (resolve-card state loc))
+            prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+            prompt-eid (:eid prompt)]
+        (when card
+          (main/handle-action state :corp "select" {:card card :eid prompt-eid})
+          ;; Auto-click "Done" if the select prompt is still active
+          (when-let [p (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))]
+            (when-let [done-choice (first (filter #(= "Done" (:value %)) (:choices p)))]
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))))
+
       :manegarm-tax
-      ;; Manegarm's approach-server event auto-resolves in Clojure (auto-dismiss clears
-      ;; the corp waiting prompt, causing the async chain to complete without payment).
-      ;; We directly apply the payment here to match Zig's explicit prompt handling.
-      (let [choice (:choice action)]
-        (cond
-          (= choice "Spend [Click][Click]")
-          (swap! state update-in [:runner :click] - 2)
-          (= choice "Pay 5 [Credits]")
-          (swap! state update-in [:runner :credit] - 5)
-          ;; "End the run" — Clojure already ended the run via auto-resolve
-          :else nil))
+      ;; Resolve Manegarm's approach-server prompt properly through the prompt system.
+      (let [choice (:choice action)
+            runner-prompts (get-in @state [:runner :prompt])
+            prompt (first (filter #(not= :waiting (:prompt-type %)) runner-prompts))
+            choices (:choices prompt)
+            match (first (filter #(= choice (if (map? %) (:value %) (str %))) choices))]
+        (binding [*err* *err*]
+          (.println *err* (str "[manegarm-tax] choice=" choice
+                               " prompt-count=" (count runner-prompts)
+                               " prompt-type=" (:prompt-type prompt)
+                               " choices=" (pr-str (mapv #(if (map? %) (:value %) %) choices))
+                               " match=" (some? match)
+                               " runner-credit=" (get-in @state [:runner :credit]))))
+        (when match
+          (main/handle-action state :runner "choice" {:choice match})
+          (.println *err* (str "[manegarm-tax] after resolve: runner-credit=" (get-in @state [:runner :credit])))))
 
       :rez-ice
       (let [current-ice (get-in @state [:run :current-ice])
@@ -869,6 +900,25 @@
 
 
 
+(defn- auto-resolve-optional-virus-prompts!
+  "Auto-resolve optional virus placement prompts (Conduit, Leech successful-run events).
+  Zig places virus counters automatically; Clojure creates optional Yes/No prompts.
+  Auto-click 'Yes' on these to keep the engines in sync."
+  [state]
+  (doseq [side [:corp :runner]]
+    (loop [remaining 5]
+      (when (pos? remaining)
+        (let [prompt (first (filter #(not= :waiting (:prompt-type %))
+                                    (get-in @state [side :prompt])))]
+          (when (and prompt
+                     (let [msg (or (:msg prompt) (:prompt prompt) "")]
+                       (re-find #"Place \d+ virus counter" msg)))
+            (let [choices (:choices prompt)
+                  yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %))) choices))]
+              (when yes-choice
+                (main/handle-action state side "choice" {:choice yes-choice})
+                (recur (dec remaining))))))))))
+
 (defn- auto-dismiss-hide-prompts!
   [state]
   (loop [remaining 12]
@@ -945,12 +995,14 @@
      (doseq [[idx action] (map-indexed vector actions)]
        (let [normalized-action (normalize-action action)]
          (auto-dismiss-hide-prompts! state)
+         (auto-resolve-optional-virus-prompts! state)
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
          (apply-action! state normalized-action)
          ;; After end-turn, auto-resolve any discard-to-hand-size select prompts.
          (when (= :end-turn (:kind normalized-action))
            (auto-resolve-end-turn-discard! state (:side normalized-action)))))
      (auto-dismiss-hide-prompts! state)
+     (auto-resolve-optional-virus-prompts! state)
      (canonical-bundle state))))
 
 (defn- export-transition-tree

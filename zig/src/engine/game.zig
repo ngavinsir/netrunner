@@ -193,7 +193,7 @@ pub const all_cards = [_]CardSpec{
                     return;
                 }
                 g.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "other"),
+                    .prompt_type = try allocator.dupe(u8, "retribution-trash"),
                     .choices = choices,
                     .source_card = card,
                 };

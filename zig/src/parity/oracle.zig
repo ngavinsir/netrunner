@@ -31,7 +31,7 @@ const OracleServer = struct {
         child.cwd = repo_root;
         child.stdin_behavior = .Ignore;
         child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
+        child.stderr_behavior = .Inherit;
         try child.spawn();
         try child.waitForSpawn();
 
@@ -591,6 +591,32 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Translate funhouse-encounter prompt_choice into Clojure's standard choice resolution
+        if (std.mem.eql(u8, action.prompt_type.?, "funhouse-encounter")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "funhouse-encounter", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Translate retribution-trash prompt_choice into a card locator for Clojure
+        if (std.mem.eql(u8, action.prompt_type.?, "retribution-trash")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "retribution-trash", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeRetributionLocator(writer, text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Translate manegarm-tax prompt_choice into a "manegarm-tax" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "manegarm-tax")) {
             try writer.writeByte('{');
@@ -681,6 +707,23 @@ fn writeRunnerProgramLocator(writer: anytype, choice_text: []const u8, leading_c
     try writer.writeByte(']');
 }
 
+fn writeRetributionLocator(writer: anytype, choice_text: []const u8, leading_comma: bool) !void {
+    // Parse "h|0" → ["runner", "rig", "hardware", 0] or "p|0" → ["runner", "rig", "program", 0]
+    var iter = std.mem.splitScalar(u8, choice_text, '|');
+    const zone = iter.next() orelse return;
+    const index_text = iter.next() orelse return;
+    const zone_name = if (std.mem.eql(u8, zone, "h")) "hardware" else "program";
+
+    if (leading_comma) try writer.writeByte(',');
+    try writeJsonString(writer, "card-locator");
+    try writer.writeByte(':');
+    try writer.writeAll("[\"runner\",\"rig\",");
+    try writeJsonString(writer, zone_name);
+    try writer.writeByte(',');
+    try writer.writeAll(index_text);
+    try writer.writeByte(']');
+}
+
 fn oracleAbilityIndex(action: state.LegalAction) ?u8 {
     if (action.kind == .use_installed_ability) {
         // Icebreaker pump_strength is the 2nd ability (index 1) in Clojure card defs
@@ -706,6 +749,7 @@ fn oracleAbilityIndex(action: state.LegalAction) ?u8 {
                 .draw_card => 1,
                 .install_from_grip => 2,
                 .run_any_server => 4,
+                .remove_tag => 5,
                 else => null,
             },
         };
@@ -718,6 +762,8 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "access-choice")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
+    if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
+    if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
@@ -1004,6 +1050,16 @@ fn parseOptionalRunSide(
     };
 }
 
+fn parseRezzed(object: std.json.ObjectMap) bool {
+    const val = object.get("rezzed") orelse return false;
+    return switch (val) {
+        .bool => |b| b,
+        .string => |s| std.mem.eql(u8, s, "true"),
+        .integer => |i| i != 0,
+        else => false,
+    };
+}
+
 fn parseCard(
     allocator: std.mem.Allocator,
     object: std.json.ObjectMap,
@@ -1018,7 +1074,7 @@ fn parseCard(
         .cost = try getOptionalIntegerAs(u16, object, "cost"),
         .agenda_points = try getOptionalIntegerAs(u8, object, "agenda-points"),
         .advancement_requirement = try getOptionalIntegerAs(u8, object, "advancement-requirement"),
-        .rezzed = (try getOptional(.boolean, object, "rezzed")) orelse false,
+        .rezzed = parseRezzed(object),
         .advancement_counter = if (counter) |counter_map| try getIntegerAsOrDefault(u8, counter_map, "advancement", 0) else 0,
         .credit_counter = if (counter) |counter_map| try getIntegerAsOrDefault(u16, counter_map, "credit", 0) else 0,
     };
@@ -1119,7 +1175,7 @@ fn parseLegalAction(
         .card_index = installed_resource_index orelse try parseOptionalCardIndex(object),
         .card_title = try dupeOptionalString(allocator, try getOptional(.string, object, "card-title")),
         .basic_action = if (kind == .use_ability and installed_resource_index == null)
-            if (ability_index) |idx| try parseBasicAction(side, idx) else null
+            if (ability_index) |idx| parseBasicAction(side, idx) else null
         else
             null,
         .installed_ability = if (kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .take_credits else null,
@@ -1141,21 +1197,22 @@ fn parseRunnerRigResourceCardIndex(
     return try castInteger(u8, try extractField(.integer, locator.items[3]));
 }
 
-fn parseBasicAction(side: state.Side, ability_index: u8) !state.BasicAction {
+fn parseBasicAction(side: state.Side, ability_index: u8) ?state.BasicAction {
     return switch (side) {
         .corp => switch (ability_index) {
             0 => .gain_credit,
             1 => .draw_card,
             4 => .advance_installed,
             6 => .purge_viruses,
-            else => error.UnsupportedAbility,
+            else => null, // corp install(2), play-op(3), trash-resource(5) etc. aren't basic actions in Zig
         },
         .runner => switch (ability_index) {
             0 => .gain_credit,
             1 => .draw_card,
             2 => .install_from_grip,
             4 => .run_any_server,
-            else => error.UnsupportedAbility,
+            5 => .remove_tag,
+            else => null,
         },
     };
 }

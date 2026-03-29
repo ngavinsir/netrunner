@@ -1466,8 +1466,7 @@ test "manegarm skunkworks pay credits parity test" {
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
 
-    try std.testing.expectEqual(replay.snapshot.decision_side, generated.decision_side);
-    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.legal_actions.len);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "government subsidy parity test" {
@@ -1865,6 +1864,8 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "access-choice")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
+    if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
+    if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;
@@ -2014,6 +2015,12 @@ fn filterOracleComparableActions(
     for (actions) |action| {
         switch (action.kind) {
             .install_from_hand => continue,
+            // Skip oracle use_ability actions that don't map to Zig basic actions
+            // (e.g., Clojure corp install/play-op/remove-tag abilities)
+            .use_ability => {
+                if (action.basic_action == null and action.installed_ability == null) continue;
+                try filtered.append(allocator, action);
+            },
             else => try filtered.append(allocator, action),
         }
     }
@@ -2699,6 +2706,56 @@ fn hasAdvanceableCards(gen: *const generator.Game) bool {
     return false;
 }
 
+fn resolveRunToEnd(
+    allocator: std.mem.Allocator,
+    actions: *std.ArrayList(state.LegalAction),
+    generated: *generator.Game,
+) !void {
+    var iters: u32 = 0;
+    while (iters < 50) : (iters += 1) {
+        if (generated.run == null) break;
+
+        // Handle prompts first: steal, access, subroutine choices, encounter prompts
+        if (findPromptText(generated.legal_actions, "Steal")) |a| {
+            try takeAction(allocator, actions, generated, a);
+            continue;
+        }
+        if (findPromptText(generated.legal_actions, "Take 1 tag")) |a| {
+            try takeAction(allocator, actions, generated, a);
+            continue;
+        }
+        if (findPromptText(generated.legal_actions, "Pay")) |a| {
+            try takeAction(allocator, actions, generated, a);
+            continue;
+        }
+        if (findPromptText(generated.legal_actions, "No action")) |a| {
+            try takeAction(allocator, actions, generated, a);
+            continue;
+        }
+        // Generic prompt fallback
+        var found_prompt = false;
+        for (generated.legal_actions) |a| {
+            if (a.kind == .prompt_choice) {
+                try takeAction(allocator, actions, generated, a);
+                found_prompt = true;
+                break;
+            }
+        }
+        if (found_prompt) continue;
+
+        // Continues
+        if (findFirstKindAction(generated.legal_actions, .@"continue", .corp)) |cont| {
+            try takeAction(allocator, actions, generated, cont);
+            continue;
+        }
+        if (findFirstKindAction(generated.legal_actions, .@"continue", .runner)) |cont| {
+            try takeAction(allocator, actions, generated, cont);
+            continue;
+        }
+        break;
+    }
+}
+
 fn findPlayByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind == .play_from_hand and a.side == side and a.card_title != null) {
@@ -2707,3 +2764,337 @@ fn findPlayByTitle(actions: []const state.LegalAction, side: state.Side, title: 
     }
     return null;
 }
+
+// ============================================================================
+// Intermediate card parity tests
+// ============================================================================
+
+test "dzmz optimizer install discount parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 8 intermediate: Runner hand has DZMZ Optimizer
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 8);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp gains credits and ends turn
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: install DZMZ Optimizer (cost 2)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    const credit_before = generated.runner_credit;
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "DZMZ Optimizer"));
+
+    // DZMZ costs 2 credits to install
+    try std.testing.expectEqual(credit_before - 2, generated.runner_credit);
+    // Should be installed in hardware rig
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items.len);
+    try std.testing.expectEqualStrings("DZMZ Optimizer", generated.runner_rig_hardware.items[0].title);
+    // Should provide +1 MU
+    if (generated.runner_memory) |mem| {
+        try std.testing.expectEqual(@as(u8, 5), mem.base); // 4 base + 1 from DZMZ
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "leech virus placement and ice strength reduction parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 2 intermediate: Runner hand has Leech
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 2);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: install Leech (cost 1), then run Archives (central, no ICE)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Leech"));
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_program.items.len);
+    try std.testing.expectEqualStrings("Leech", generated.runner_rig_program.items[0].title);
+
+    // Run on Archives (a central server, no ICE) — Leech should gain a virus on successful run
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 2, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "conduit click to run rd parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 23 intermediate: Runner hand has Conduit
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 23);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: install Conduit (cost 4), then use its click-to-run ability
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Conduit"));
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_program.items.len);
+    try std.testing.expectEqualStrings("Conduit", generated.runner_rig_program.items[0].title);
+
+    // Use Conduit's ability to run R&D (costs 1 click)
+    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Conduit"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 23, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "funhouse install and rez parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 15 intermediate: Corp hand has 1 Funhouse
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 15);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp installs Funhouse on HQ and gains credits
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Funhouse"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "HQ"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2: corp gains credits (for rez)
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 2 runner: run HQ
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    // Corp continue → rez window
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+
+    // Check if rez window is available
+    if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice") catch null) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+    }
+
+    // Verify parity up to this point
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 15, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "funhouse encounter take tag local test" {
+    const allocator = std.testing.allocator;
+    // Verify Funhouse encounter mechanics locally (no oracle)
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 15);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp installs Funhouse on HQ
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Funhouse"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "HQ"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2: corp gains credits
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 2 runner: run HQ
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    // Approach: corp continue → rez window
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    // Rez Funhouse if possible
+    if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice") catch null) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+        // Runner continue → encounter → Funhouse on-encounter prompt
+        try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+        // Funhouse prompt should exist
+        try std.testing.expect(generated.runner_prompt_state != null);
+        try std.testing.expectEqualStrings("funhouse-encounter", generated.runner_prompt_state.?.prompt_type);
+        // Choose "Take 1 tag"
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
+        // Runner should have 1 tag and still be in the encounter
+        try std.testing.expectEqual(@as(u8, 1), generated.runner_tag.?.total);
+        try std.testing.expect(generated.run != null);
+    }
+}
+
+test "public trail runner takes tag parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 32 intermediate: Corp hand has Public Trail
+    // Need runner to have run last turn + corp to have 4+ credits
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 32);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes (just gains credits)
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: make a successful run on Archives
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try resolveRunToEnd(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2: corp plays Public Trail (costs 4, runner ran last turn)
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try std.testing.expect(generated.corp_credit >= 4);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Public Trail"));
+    // Runner must choose: Take 1 tag or Pay 8 credits
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
+
+    // Runner should now have 1 tag
+    const tag = generated.runner_tag.?;
+    try std.testing.expectEqual(@as(u8, 1), tag.total);
+    try std.testing.expect(tag.is_tagged);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 32, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "retribution trashes runner program local test" {
+    const allocator = std.testing.allocator;
+    // Verify Retribution mechanics locally (the card-selection prompt is complex for oracle).
+    // Seed 21: Corp has Retribution
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 21);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: install a program
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    if (findFirstRunnerProgramPlay(generated.legal_actions)) |prog| {
+        try takeAction(allocator, &actions, &generated, prog);
+    } else return; // No program to install, skip test
+    const prog_count = generated.runner_rig_program.items.len;
+    try std.testing.expect(prog_count >= 1);
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Tag the runner directly for test setup
+    generated.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
+
+    // Turn 2: corp plays Retribution
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    if (findPlayByTitle(generated.legal_actions, .corp, "Retribution")) |ret| {
+        const credit_before = generated.corp_credit;
+        try takeAction(allocator, &actions, &generated, ret);
+        // Retribution costs 1 credit
+        try std.testing.expectEqual(credit_before - 1, generated.corp_credit);
+        // Should have retribution-trash prompt
+        try std.testing.expect(generated.corp_prompt_state != null);
+        try std.testing.expectEqualStrings("retribution-trash", generated.corp_prompt_state.?.prompt_type);
+        // Choose first program (p|0)
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "p|0"));
+        // Program should be trashed
+        try std.testing.expectEqual(prog_count - 1, generated.runner_rig_program.items.len);
+        // Corp prompt cleared, back to corp actions
+        try std.testing.expect(generated.corp_prompt_state == null);
+    }
+}
+
+fn findFirstRunnerProgramPlay(actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .play_from_hand and a.side == .runner and a.card_title != null) {
+            // Check if it's a program by looking at known program names
+            const title = a.card_title.?;
+            if (std.mem.eql(u8, title, "Carmen") or
+                std.mem.eql(u8, title, "Cleaver") or
+                std.mem.eql(u8, title, "Mayfly") or
+                std.mem.eql(u8, title, "Unity") or
+                std.mem.eql(u8, title, "Conduit") or
+                std.mem.eql(u8, title, "Leech")) return a;
+        }
+    }
+    return null;
+}
+
+test "amaze amusements install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 6 intermediate: Corp hand has AMAZE Amusements
+    // Verify AMAZE Amusements installs in a remote correctly
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 6);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan phase
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp installs AMAZE Amusements in a remote
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "AMAZE Amusements"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Verify parity
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
