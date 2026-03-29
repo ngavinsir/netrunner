@@ -134,6 +134,67 @@
     gateway-intermediate-corp
     gateway-intermediate-runner))
 
+(def gateway-advanced-corp
+  {:format "system-gateway"
+   :identity {:title "The Syndicate: Profit over Principle" :side "Corp" :code 30077}
+   :name "System Gateway Advanced Corp"
+   :cards [{:qty 3 :card "Offworld Office"}
+           {:qty 2 :card "Send a Message"}
+           {:qty 2 :card "Tomorrow's Headline"}
+           {:qty 1 :card "Above the Law"}
+           {:qty 1 :card "Superconducting Hub"}
+           {:qty 2 :card "Nico Campaign"}
+           {:qty 2 :card "Regolith Mining License"}
+           {:qty 2 :card "Urtica Cipher"}
+           {:qty 2 :card "Government Subsidy"}
+           {:qty 2 :card "Hedge Fund"}
+           {:qty 2 :card "Seamless Launch"}
+           {:qty 2 :card "Sprint"}
+           {:qty 1 :card "Hansei Review"}
+           {:qty 1 :card "Manegarm Skunkworks"}
+           {:qty 1 :card "Anoetic Void"}
+           {:qty 2 :card "Brân 1.0"}
+           {:qty 2 :card "Palisade"}
+           {:qty 2 :card "Ping"}
+           {:qty 2 :card "Ballista"}
+           {:qty 2 :card "Whitespace"}
+           {:qty 2 :card "Karunā"}
+           {:qty 2 :card "Tithe"}]})
+
+(def gateway-advanced-runner
+  {:format "system-gateway"
+   :identity {:title "The Catalyst: Convention Breaker" :side "Runner" :code 30076}
+   :name "System Gateway Advanced Runner"
+   :cards [{:qty 2 :card "Creative Commission"}
+           {:qty 3 :card "Jailbreak"}
+           {:qty 2 :card "Overclock"}
+           {:qty 2 :card "Mutual Favor"}
+           {:qty 2 :card "Wildcat Strike"}
+           {:qty 3 :card "Sure Gamble"}
+           {:qty 2 :card "Tread Lightly"}
+           {:qty 2 :card "VRcation"}
+           {:qty 1 :card "Docklands Pass"}
+           {:qty 1 :card "T400 Memory Diamond"}
+           {:qty 1 :card "Red Team"}
+           {:qty 2 :card "Smartware Distributor"}
+           {:qty 2 :card "Telework Contract"}
+           {:qty 1 :card "Verbal Plasticity"}
+           {:qty 2 :card "Buzzsaw"}
+           {:qty 2 :card "Echelon"}
+           {:qty 2 :card "Marjanah"}
+           {:qty 2 :card "Conduit"}
+           {:qty 2 :card "Leech"}]})
+
+(def system-gateway-advanced
+  (matchup
+    [:lobby.gateway-format.advanced "Advanced"]
+    [:lobby.gateway-format.advanced "Advanced"]
+    [:lobby.gateway-format.advanced-info
+     "This lobby is using the System Gateway advanced decks for the Corporation and Runner. These decks include all faction cards. Games are played to 7 agenda points."]
+    [:lobby.gateway-format.advanced-ul "System Gateway - Advanced Teaching Decks"]
+    gateway-advanced-corp
+    gateway-advanced-runner))
+
 ;; Worlds 2012: Ben Marsh vs. Jeremy Z
 (def worlds-2012-ben-corps
   (matchup

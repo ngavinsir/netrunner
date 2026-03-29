@@ -618,6 +618,82 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Sprint: corp picks a card from HQ to shuffle back — send as sprint-shuffle with card title
+        if (std.mem.eql(u8, action.prompt_type.?, "sprint-shuffle")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "sprint-shuffle", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Hansei Review: corp picks a card from HQ to trash
+        if (std.mem.eql(u8, action.prompt_type.?, "hansei-trash")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "hansei-trash", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Ballista: corp picks a runner program to trash during subroutine
+        if (std.mem.eql(u8, action.prompt_type.?, "ballista-trash")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "ballista-trash", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeRetributionLocator(writer, text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Above the Law: corp picks a runner resource to trash on score
+        if (std.mem.eql(u8, action.prompt_type.?, "above-the-law-trash")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "above-the-law-trash", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    // r|idx → resource locator
+                    var pieces = std.mem.splitScalar(u8, text, '|');
+                    _ = pieces.next(); // skip "r"
+                    if (pieces.next()) |idx_text| {
+                        try writer.writeByte(',');
+                        try writeJsonString(writer, "card-locator");
+                        try writer.writeByte(':');
+                        try writer.writeByte('{');
+                        try writeJsonFieldString(writer, "zone", "resource", false);
+                        try writeJsonFieldString(writer, "index", idx_text, true);
+                        try writer.writeByte('}');
+                    }
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Anoetic Void: corp chooses to use ability
+        if (std.mem.eql(u8, action.prompt_type.?, "anoetic-void")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "anoetic-void", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Translate manegarm-tax prompt_choice into a "manegarm-tax" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "manegarm-tax")) {
             try writer.writeByte('{');
@@ -787,6 +863,11 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
     if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "break-sub")) return "other";
+    if (std.mem.eql(u8, prompt_type, "sprint-shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "hansei-trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "ballista-trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "above-the-law-trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";

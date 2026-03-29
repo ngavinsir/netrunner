@@ -1867,6 +1867,11 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
     if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "break-sub")) return "other";
+    if (std.mem.eql(u8, prompt_type, "sprint-shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "hansei-trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "ballista-trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "above-the-law-trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;
@@ -2018,9 +2023,18 @@ fn filterOracleComparableActions(
             .install_from_hand => continue,
             .rez_non_ice => continue, // Zig offers rez actions during runs; Clojure doesn't list them
             // Skip oracle use_ability actions that don't map to Zig basic actions
-            // (e.g., Clojure corp install/play-op/remove-tag abilities)
+            // (e.g., Clojure corp install/play-op/remove-tag abilities, or
+            // icebreaker pump/break abilities exported as use_ability with wrong basic_action)
             .use_ability => {
                 if (action.basic_action == null and action.installed_ability == null) continue;
+                // Filter icebreaker abilities misidentified as basic actions by Clojure
+                // (e.g., Marjanah's "+1 strength" exported as draw_card basic action)
+                if (action.basic_action != null and action.label != null) {
+                    const ba = action.basic_action.?;
+                    const label = action.label.?;
+                    if (ba == .draw_card and !std.mem.startsWith(u8, label, "Draw")) continue;
+                    if (ba == .gain_credit and !std.mem.startsWith(u8, label, "Gain")) continue;
+                }
                 try filtered.append(allocator, action);
             },
             else => try filtered.append(allocator, action),
@@ -3275,6 +3289,305 @@ test "amaze amusements install parity test" {
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+// ============================================================================
+// Advanced card parity tests (System Gateway full set)
+// ============================================================================
+
+test "buzzsaw install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 1 advanced: Runner has Buzzsaw
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Buzzsaw"));
+    try std.testing.expect(generated.runner_rig_program.items.len >= 1);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "echelon install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 1 advanced: Runner has Echelon
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Echelon"));
+    try std.testing.expect(generated.runner_rig_program.items.len >= 1);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "marjanah install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 8 advanced: Runner has Marjanah
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 8);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Marjanah"));
+    try std.testing.expect(generated.runner_rig_program.items.len >= 1);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "t400 memory diamond install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 12 advanced: Runner has T400 Memory Diamond
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 12);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    const mu_before = generated.runner_memory.?.available;
+    const hs_before = generated.runner_hand_size.total;
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "T400 Memory Diamond"));
+    try std.testing.expectEqual(mu_before + 1, generated.runner_memory.?.available);
+    try std.testing.expectEqual(hs_before + 1, generated.runner_hand_size.total);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 12, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "sprint draw and shuffle parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 1 advanced: Corp has Sprint
+    // Sprint prompt selections are auto-resolved by oracle (skipped from action stream).
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+
+    const hand_before = generated.corp_hand.items.len;
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Sprint"));
+    // Sprint draws 3 then presents shuffle prompt
+    try std.testing.expect(generated.corp_prompt_state != null);
+    try std.testing.expectEqualStrings("sprint-shuffle", generated.corp_prompt_state.?.prompt_type);
+
+    // Pick first card to shuffle back
+    const first_pick = generated.corp_hand.items[0].title;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, first_pick));
+    // Pick second card
+    const second_pick = generated.corp_hand.items[0].title;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, second_pick));
+    try std.testing.expectEqual(hand_before, generated.corp_hand.items.len);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Verify at runner start turn for stable parity point
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "hansei review gain credits and trash parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 15 advanced: Corp has Hansei Review (cost 5)
+    // Hansei trash prompt is auto-resolved by oracle (skipped from action stream).
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 15);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+
+    const credit_before = generated.corp_credit;
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Hansei Review"));
+    try std.testing.expectEqual(credit_before + 5, generated.corp_credit);
+    // Resolve the trash prompt (auto-resolved in oracle)
+    try std.testing.expect(generated.corp_prompt_state != null);
+    const trash_pick = generated.corp_hand.items[0].title;
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, trash_pick));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Verify at runner start turn for stable parity point
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 15, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "ping install and rez parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 1 advanced: Corp has Ping
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install Ping on a server
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Ping"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner runs the server
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "tomorrows headline install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 3 advanced: Corp has Tomorrow's Headline
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 3);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install Tomorrow's Headline in a remote
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Tomorrow's Headline"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 3, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "ballista install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 9 advanced: Corp has Ballista
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 9);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install Ballista on a server
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Ballista"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 9, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "above the law install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 4 advanced: Corp has Above the Law
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 4);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install Above the Law in a remote
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Above the Law"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 4, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "anoetic void install parity test" {
+    const allocator = std.testing.allocator;
+    // Seed 8 advanced: Corp has Anoetic Void
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 8);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install Anoetic Void in a remote
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Anoetic Void"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }

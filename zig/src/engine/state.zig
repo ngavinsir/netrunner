@@ -77,6 +77,7 @@ pub const AccessKind = enum(u8) {
     steal_agenda,
     net_damage_on_access,
     tax_or_etr,
+    corp_pay_etr, // Anoetic Void: corp pays credits + trashes from HQ → ETR
 };
 
 pub const InstallKind = enum(u8) {
@@ -118,6 +119,7 @@ pub const SubroutineKind = enum(u8) {
     runner_loses_credits_or_etr, // Runner loses N credits (sub1); ETR if runner has ≤ amount credits (sub2)
     do_net_damage_then_jack_out, // Do N net damage, then runner may jack out
     give_tag_or_pay_credits, // Funhouse: give 1 tag unless runner pays N credits
+    trash_program_or_etr, // Ballista: trash 1 program, or ETR if no programs
 };
 
 pub const SubroutineSpec = struct {
@@ -131,6 +133,7 @@ pub const AgendaEffectKind = enum(u8) {
     gain_credits,
     draw_cards,
     rez_ice_free,
+    give_runner_tag, // Tomorrow's Headline: give runner 1 tag on score/steal
 };
 
 pub const AgendaEffectSpec = struct {
@@ -215,6 +218,9 @@ pub const InstalledAbilitySpec = struct {
     rd_access_bonus_per_virus: bool = false, // Conduit: RD access bonus = virus counters
     virus_ice_strength_reduction: u8 = 0, // Leech: spend 1 virus for -N ICE strength
     tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements: give N tags if agenda stolen from server
+    strength_per_icebreaker: bool = false, // Echelon: +1 strength per installed icebreaker
+    break_cost_reduction_if_successful_run: u16 = 0, // Marjanah: -1 break cost if successful run this turn
+    hand_size_bonus: u8 = 0, // T400 Memory Diamond: +N max hand size
 };
 
 pub const CardReference = struct {
@@ -269,6 +275,7 @@ pub const CardInstance = struct {
     installed_this_turn: bool = false, // Seamless Launch: cannot target cards installed this turn
     used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
+    tag_on_rez: u8 = 0, // Ping: give runner N tags when rezzed during a run
 };
 
 pub const ServerState = struct {

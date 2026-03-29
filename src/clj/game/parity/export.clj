@@ -178,6 +178,46 @@
    (register-intermediate-cards!)
    (set-up/init-game (intermediate-game seed))))
 
+(defn- register-advanced-cards!
+  []
+  (let [corp (prepare-precon-deck "Corp" preconstructed/gateway-advanced-corp)
+        runner (prepare-precon-deck "Runner" preconstructed/gateway-advanced-runner)
+        corp-cards (into {}
+                         (map (fn [{:keys [card]}]
+                                [(:title card) card]))
+                         (:cards corp))
+        runner-cards (into {}
+                           (map (fn [{:keys [card]}]
+                                  [(:title card) card]))
+                           (:cards runner))
+        identities {(:title (:identity corp)) (:identity corp)
+                    (:title (:identity runner)) (:identity runner)}]
+    (swap! all-cards merge identities corp-cards runner-cards)))
+
+(defn advanced-game
+  ([]
+   (advanced-game 1))
+  ([seed]
+   (let [corp preconstructed/gateway-advanced-corp
+         runner preconstructed/gateway-advanced-runner]
+     {:gameid 1
+      :format "system-gateway"
+      :seed seed
+      :players [{:side "Corp"
+                 :user {:username "Corp"}
+                 :deck (prepare-precon-deck "Corp" corp)}
+                {:side "Runner"
+                 :user {:username "Runner"}
+                 :deck (prepare-precon-deck "Runner" runner)}]})))
+
+(defn advanced-state
+  ([]
+   (advanced-state 1))
+  ([seed]
+   (ensure-card-defs-loaded!)
+   (register-advanced-cards!)
+   (set-up/init-game (advanced-game seed))))
+
 (defn- canonical-choice
   [choice]
   (cond
@@ -229,10 +269,12 @@
 (defn- hide-only-prompt?
   [prompt]
   (and (= :select (:prompt-type prompt))
-       (empty? (remove (fn [choice]
-                         (or (= "Hide" choice)
-                             (= "Hide" (:value choice))))
-                       (:choices prompt)))))
+       (let [choices (:choices prompt)]
+         (and (seq choices)
+              (every? (fn [choice]
+                        (or (= "Hide" choice)
+                            (= "Hide" (:value choice))))
+                      choices)))))
 
 (defn- filter-hide-choices
   [choices]
@@ -841,6 +883,65 @@
             (when-let [done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
               (main/handle-action state side "choice" {:choice {:uuid (:uuid done-choice)}})))))
 
+      :sprint-shuffle
+      ;; Sprint: corp chooses a card from HQ to shuffle into R&D.
+      ;; The select prompt may be wrapped in a "Hide" select — get eid from :selected.
+      (let [card-title (:choice action)
+            hand (get-in @state [:corp :hand])
+            card (first (filter #(= card-title (:title %)) hand))
+            selected (first (get-in @state [:corp :selected]))
+            select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                          (:eid selected))]
+        (when (and card select-eid)
+          (main/handle-action state :corp "select" {:card card :eid select-eid})))
+
+      :hansei-trash
+      ;; Hansei Review: corp chooses a card from HQ to trash.
+      ;; The select prompt may be wrapped in a "Hide" select — get eid from :selected.
+      (let [card-title (:choice action)
+            hand (get-in @state [:corp :hand])
+            card (first (filter #(= card-title (:title %)) hand))
+            selected (first (get-in @state [:corp :selected]))
+            select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                          (:eid selected))]
+        (when (and card select-eid)
+          (main/handle-action state :corp "select" {:card card :eid select-eid})))
+
+      :ballista-trash
+      ;; Ballista subroutine: corp chooses a runner program to trash.
+      (let [card (when-let [loc (:card-locator action)]
+                   (resolve-card state loc))
+            prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+            prompt-eid (:eid prompt)]
+        (when card
+          (main/handle-action state :corp "select" {:card card :eid prompt-eid})
+          (when-let [p (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))]
+            (when-let [done-choice (first (filter #(= "Done" (:value %)) (:choices p)))]
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))))
+
+      :above-the-law-trash
+      ;; Above the Law: corp chooses a runner resource to trash on score.
+      (let [card (when-let [loc (:card-locator action)]
+                   (resolve-card state loc))
+            prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+            prompt-eid (:eid prompt)]
+        (when card
+          (main/handle-action state :corp "select" {:card card :eid prompt-eid})
+          (when-let [p (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))]
+            (when-let [done-choice (first (filter #(= "Done" (:value %)) (:choices p)))]
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))))
+
+      :anoetic-void
+      ;; Anoetic Void: corp chooses to use ability (pay 2cr + trash 2 from HQ -> ETR).
+      ;; In Clojure, this fires as a paid ability prompt on the corp side.
+      (let [choice (:choice action)
+            corp-prompts (get-in @state [:corp :prompt])
+            prompt (first (filter #(not= :waiting (:prompt-type %)) corp-prompts))
+            choices (:choices prompt)
+            match (first (filter #(= choice (if (map? %) (:value %) (str %))) choices))]
+        (when match
+          (main/handle-action state :corp "choice" {:choice match})))
+
       (throw (ex-info "Unsupported parity action" {:action action})))))
 
 (defn- transient-hide-action?
@@ -859,7 +960,11 @@
   (let [prompt-queue (vec (get-in @state [side :prompt]))
         active-prompt (or (first prompt-queue)
                           (get-in @state [side :prompt-state]))]
-    (when (hide-only-prompt? active-prompt)
+    ;; Don't clear "Hide" select prompts when there are pending card selections
+    ;; (e.g., Hansei Review, Sprint). The "Hide" prompt is the UI wrapper for the
+    ;; card selection and removing it breaks the eid linkage needed by the select action.
+    (when (and (hide-only-prompt? active-prompt)
+              (empty? (get-in @state [side :selected])))
       (let [remaining (if (seq prompt-queue) (vec (rest prompt-queue)) prompt-queue)
             next-prompt (first remaining)]
         (swap! state (fn [s]
@@ -986,9 +1091,10 @@
   ([seed actions]
    (replay-bundle-after-actions seed actions nil))
   ([seed actions matchup]
-   (let [state (if (= matchup "system-gateway-intermediate")
-                 (intermediate-state seed)
-                 (beginner-state seed))]
+   (let [state (cond
+                 (= matchup "system-gateway-intermediate") (intermediate-state seed)
+                 (= matchup "system-gateway-advanced") (advanced-state seed)
+                 :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [[idx action] (map-indexed vector actions)]
        (let [normalized-action (normalize-action action)]
