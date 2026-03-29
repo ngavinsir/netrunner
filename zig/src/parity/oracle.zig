@@ -513,8 +513,9 @@ fn shouldSkipAction(action: state.LegalAction) bool {
     if (action.basic_action) |ba| {
         if (ba == .score_agenda or ba == .advance_installed) return true;
     }
-    // Skip discard-to-hand-size selects — Clojure handles these as part of the
-    // end-turn async chain. Sending them as separate actions breaks the chain.
+    // Skip discard-to-hand-size selects — Clojure's end-turn async chain creates a
+    // :waiting prompt on the other side that doesn't get cleaned up by effect-completed
+    // (eid mismatch in continue-ability). Sending discard as separate actions leaves orphaned state.
     if (action.kind == .prompt_choice and action.prompt_type != null) {
         if (std.mem.eql(u8, action.prompt_type.?, "discard")) return true;
         // Skip "No rez" from rez-window — Clojure's auto-no-action handles approach passing.

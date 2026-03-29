@@ -996,7 +996,9 @@
          (auto-resolve-optional-virus-prompts! state)
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
          (apply-action! state normalized-action)
-         ;; After end-turn, auto-resolve any discard-to-hand-size select prompts.
+         ;; After end-turn, auto-resolve discard-to-hand-size select prompts.
+         ;; Clojure's end-turn async chain handles discards internally; the waiting
+         ;; prompt eid mismatch prevents proper cleanup via effect-completed.
          (when (= :end-turn (:kind normalized-action))
            (auto-resolve-end-turn-discard! state (:side normalized-action)))))
      (auto-dismiss-hide-prompts! state)
