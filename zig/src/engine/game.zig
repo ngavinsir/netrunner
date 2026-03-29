@@ -996,6 +996,11 @@ pub fn applyAction(
         .use_runner_ability => {
             try applyRunnerAbility(generated, action);
         },
+        .rez_non_ice => {
+            const card_index = action.card_index orelse return error.MissingCardIndex;
+            const server = action.server orelse return error.MissingServer;
+            try applyRezNonIce(generated, server, card_index);
+        },
         else => return error.UnsupportedAction,
     }
 }
@@ -2784,7 +2789,7 @@ fn applyRun(
         .jack_out_available = false,
     };
     generated.decision_side = .corp;
-    generated.legal_actions = try continueActions(allocator, .corp);
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
 }
 
 fn applyRunFromAbility(
@@ -3182,7 +3187,7 @@ fn applyContinue(
         }
         run.*.?.no_action = side;
         generated.decision_side = otherSide(side);
-        generated.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
+        generated.legal_actions = try continueActionsForRunWithRez(allocator, otherSide(side), run.*, generated);
         return;
     }
 
@@ -3266,6 +3271,30 @@ fn applyRezWindowChoice(
     run.*.?.no_action = .corp;
     generated.decision_side = .runner;
     generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+}
+
+fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !void {
+    const allocator = generated.arena.allocator();
+    const server_path = [_][]const u8{server_name};
+    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, &server_path);
+    const server = &generated.corp_servers.items[target_server.index];
+
+    if (card_index >= server.content.items.len) return error.InvalidCardIndex;
+    var card = &server.content.items[card_index];
+    if (card.rezzed) return error.AlreadyRezzed;
+
+    const rez_cost = card.cost orelse return error.InvalidCost;
+    if (generated.corp_credit < rez_cost) return error.InsufficientCredits;
+
+    // Pay rez cost and set rezzed
+    generated.corp_credit -= rez_cost;
+    card.rezzed = true;
+
+    // After rezzing, corp still has priority — regenerate actions with updated state
+    const run = &generated.run;
+    if (run.* == null) return error.NoRunInProgress;
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
 }
 
 const ApproachedIceTarget = struct {
@@ -3374,7 +3403,7 @@ fn advanceInitiationPhase(generated: *Game) !void {
         run.jack_out_available = false;
     }
     generated.decision_side = .corp;
-    generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
 }
 
 fn advanceApproachIcePhase(generated: *Game) !void {
@@ -3621,7 +3650,7 @@ fn checkManegarmSkunkworks(generated: *Game) !bool {
     const server = target_server.slot;
 
     for (server.content.items) |card| {
-        if (card.access.kind == .tax_or_etr) {
+        if (card.access.kind == .tax_or_etr and card.rezzed) {
             const allocator = generated.arena.allocator();
             var choices: std.ArrayList(state.PromptChoice) = .empty;
 
@@ -4019,8 +4048,8 @@ fn completeUnsuccessfulRun(generated: *Game) !void {
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
     generated.runner_run_credit = 0;
-    generated.decision_side = .corp;
-    generated.legal_actions = try continueActions(allocator, .corp);
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
 
 fn beginAccessFlow(
@@ -4280,10 +4309,56 @@ fn continueActionsForRun(
     side: state.Side,
     run: ?state.RunState,
 ) ![]const state.LegalAction {
+    return continueActionsForRunWithRez(allocator, side, run, null);
+}
+
+fn continueActionsForRunWithRez(
+    allocator: std.mem.Allocator,
+    side: state.Side,
+    run: ?state.RunState,
+    game: ?*const Game,
+) ![]const state.LegalAction {
     return switch (side) {
-        .corp => &corp_continue_actions,
+        .corp => blk: {
+            // Check if corp can rez any non-ICE cards in the run target server
+            const rez_actions = if (game) |g| try corpRezNonIceActions(allocator, g) else &[_]state.LegalAction{};
+            if (rez_actions.len == 0) break :blk &corp_continue_actions;
+            // Combine continue + rez actions
+            var combined = try allocator.alloc(state.LegalAction, 1 + rez_actions.len);
+            combined[0] = corp_continue_actions[0]; // continue action
+            @memcpy(combined[1..], rez_actions);
+            break :blk combined;
+        },
         .runner => runnerContinueActions(allocator, run != null and run.?.jack_out_available),
     };
+}
+
+fn corpRezNonIceActions(allocator: std.mem.Allocator, game: *const Game) ![]const state.LegalAction {
+    const run = game.run orelse return &[_]state.LegalAction{};
+    const target_server = findServerByRunPath(game.corp_servers.items, run.server) catch return &[_]state.LegalAction{};
+    const server = target_server.slot;
+
+    var count: usize = 0;
+    for (server.content.items) |card| {
+        if (!card.rezzed and card.cost != null and game.corp_credit >= card.cost.?) count += 1;
+    }
+    if (count == 0) return &[_]state.LegalAction{};
+
+    const actions = try allocator.alloc(state.LegalAction, count);
+    var idx: usize = 0;
+    for (server.content.items, 0..) |card, card_idx| {
+        if (!card.rezzed and card.cost != null and game.corp_credit >= card.cost.?) {
+            actions[idx] = .{
+                .kind = .rez_non_ice,
+                .side = .corp,
+                .card_title = card.title,
+                .card_index = @intCast(card_idx),
+                .server = if (run.server.len > 0) run.server[0] else null,
+            };
+            idx += 1;
+        }
+    }
+    return actions;
 }
 
 fn encounterActionsForState(

@@ -32,6 +32,7 @@ pub const ActionKind = enum {
     use_subroutine,
     jack_out,
     run,
+    rez_non_ice,
 };
 
 pub const BasicAction = enum(u8) {

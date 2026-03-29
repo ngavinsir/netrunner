@@ -1345,7 +1345,7 @@ test "runner telework contract ability scenario matches live replay oracle" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "manegarm skunkworks parity test" {
+test "manegarm skunkworks end the run parity test" {
     const allocator = std.testing.allocator;
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
     defer generated.deinit();
@@ -1360,6 +1360,8 @@ test "manegarm skunkworks parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    // Corp gets priority — rez Manegarm during the run
+    try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Manegarm Skunkworks") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1370,16 +1372,13 @@ test "manegarm skunkworks parity test" {
     try std.testing.expectEqual(@as(usize, 3), generated.runner_prompt_state.?.choices.len);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "End the run"));
-
     try std.testing.expect(generated.run == null);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
-
-    try std.testing.expectEqual(replay.snapshot.decision_side, generated.decision_side);
-    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.legal_actions.len);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "manegarm skunkworks spend clicks parity test" {
@@ -1397,6 +1396,8 @@ test "manegarm skunkworks spend clicks parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    // Corp rezzes Manegarm during approach
+    try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Manegarm Skunkworks") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1421,9 +1422,7 @@ test "manegarm skunkworks spend clicks parity test" {
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
-
-    try std.testing.expectEqual(replay.snapshot.decision_side, generated.decision_side);
-    try std.testing.expectEqual(replay.snapshot.legal_actions.len, generated.legal_actions.len);
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "manegarm skunkworks pay credits parity test" {
@@ -1441,6 +1440,8 @@ test "manegarm skunkworks pay credits parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    // Corp rezzes Manegarm during approach
+    try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Manegarm Skunkworks") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1465,7 +1466,6 @@ test "manegarm skunkworks pay credits parity test" {
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
-
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
@@ -2015,6 +2015,7 @@ fn filterOracleComparableActions(
     for (actions) |action| {
         switch (action.kind) {
             .install_from_hand => continue,
+            .rez_non_ice => continue, // Zig offers rez actions during runs; Clojure doesn't list them
             // Skip oracle use_ability actions that don't map to Zig basic actions
             // (e.g., Clojure corp install/play-op/remove-tag abilities)
             .use_ability => {
@@ -2754,6 +2755,13 @@ fn resolveRunToEnd(
         }
         break;
     }
+}
+
+fn findRezNonIceAction(actions: []const state.LegalAction, title: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .rez_non_ice and a.card_title != null and std.mem.eql(u8, a.card_title.?, title)) return a;
+    }
+    return null;
 }
 
 fn findPlayByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) ?state.LegalAction {

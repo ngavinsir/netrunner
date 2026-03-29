@@ -798,16 +798,14 @@
             prompt (first (filter #(not= :waiting (:prompt-type %)) runner-prompts))
             choices (:choices prompt)
             match (first (filter #(= choice (if (map? %) (:value %) (str %))) choices))]
-        (binding [*err* *err*]
-          (.println *err* (str "[manegarm-tax] choice=" choice
-                               " prompt-count=" (count runner-prompts)
-                               " prompt-type=" (:prompt-type prompt)
-                               " choices=" (pr-str (mapv #(if (map? %) (:value %) %) choices))
-                               " match=" (some? match)
-                               " runner-credit=" (get-in @state [:runner :credit]))))
         (when match
-          (main/handle-action state :runner "choice" {:choice match})
-          (.println *err* (str "[manegarm-tax] after resolve: runner-credit=" (get-in @state [:runner :credit])))))
+          (main/handle-action state :runner "choice" {:choice match})))
+
+      :rez
+      (let [card (when-let [loc (:card-locator action)]
+                   (resolve-card state loc))]
+        (when card
+          (main/handle-action state side "rez" {:card card})))
 
       :rez-ice
       (let [current-ice (get-in @state [:run :current-ice])

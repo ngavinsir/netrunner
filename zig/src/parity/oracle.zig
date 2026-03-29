@@ -645,6 +645,27 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
         }
     }
 
+    // Translate rez_non_ice into a "rez" action with card-locator for Clojure
+    if (action.kind == .rez_non_ice) {
+        try writer.writeByte('{');
+        try writeJsonFieldString(writer, "kind", "rez", false);
+        try writeJsonFieldString(writer, "side", sideName(action.side), true);
+        if (action.server) |server| {
+            if (action.card_index) |card_index| {
+                try writer.writeByte(',');
+                try writeJsonString(writer, "card-locator");
+                try writer.writeByte(':');
+                try writer.writeAll("[\"corp\",\"servers\",");
+                try writeJsonString(writer, server);
+                try writer.writeAll(",\"content\",");
+                try std.fmt.format(writer, "{d}", .{card_index});
+                try writer.writeByte(']');
+            }
+        }
+        try writer.writeByte('}');
+        return;
+    }
+
     try writer.writeByte('{');
     try writeJsonFieldString(writer, "kind", actionKindName(action.kind), false);
     try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -853,6 +874,7 @@ fn actionKindName(kind: state.ActionKind) []const u8 {
         .use_subroutine => "use-subroutine",
         .jack_out => "jack-out",
         .run => "run",
+        .rez_non_ice => "rez",
     };
 }
 
@@ -1734,6 +1756,7 @@ fn parseActionKind(raw: []const u8) !state.ActionKind {
     if (std.mem.eql(u8, raw, "use-runner-ability")) return .use_runner_ability;
     if (std.mem.eql(u8, raw, "use-subroutine")) return .use_subroutine;
     if (std.mem.eql(u8, raw, "run")) return .run;
+    if (std.mem.eql(u8, raw, "rez")) return .rez_non_ice;
     return error.InvalidActionKind;
 }
 
