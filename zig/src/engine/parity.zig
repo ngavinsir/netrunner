@@ -1866,6 +1866,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
     if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
     if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "break-sub")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;

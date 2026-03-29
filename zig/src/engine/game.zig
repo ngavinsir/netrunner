@@ -1301,6 +1301,11 @@ fn applyPromptChoice(
         return;
     }
 
+    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_break_sub)) {
+        try applyBreakSubChoice(generated, choice_text);
+        return;
+    }
+
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_mu_overflow)) {
         try applyMuOverflowChoice(generated, choice_text);
         return;
@@ -2944,59 +2949,37 @@ fn applyInstalledAbility(
                     card.ability_used_this_turn = true;
                 },
                 .break_subroutine => {
-                    // Break all unbroken subroutines with this icebreaker during encounter
+                    // Activate break ability: pay cost, then open sub selection prompt
                     const run = generated.run orelse return error.NoRunInProgress;
                     if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
 
-                    // card_index is the combined rig index; convert to program index
                     const program_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len));
                     var icebreaker = &generated.runner_rig_program.items[program_index];
 
-                    // Get current ICE
                     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
                     const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
                     const server = &generated.corp_servers.items[target_server.index];
                     const ice_count = server.ices.items.len;
                     if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
                     const actual_ice_idx = ice_count - 1 - current_ice_idx;
-                    var ice = &server.ices.items[actual_ice_idx];
+                    const ice = &server.ices.items[actual_ice_idx];
 
-                    // Validate type and strength
                     if (!isIcebreaker(icebreaker.*)) return error.NotAnIcebreaker;
                     if (icebreaker.installed_ability.kind != .break_subroutine) return error.UnsupportedAbility;
                     if (!canBreakIceType(icebreaker.*, ice.*)) return error.CannotBreakIceType;
                     const ice_str = effectiveIceStrength(ice.*, run.server, run.ice_strength_modifier);
                     if (effectiveStrength(icebreaker.*) < ice_str) return error.InsufficientStrength;
 
-                    // Count unbroken subs
-                    var unbroken_count: u16 = 0;
-                    for (ice.subroutines, 0..) |_, idx| {
-                        const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
-                        if (!is_broken) unbroken_count += 1;
-                    }
-                    if (unbroken_count == 0) return error.UnsupportedAbility;
-
-                    // Calculate cost: ceil(unbroken / break_count) * credit_cost
-                    const break_count = @max(@as(u16, 1), @as(u16, icebreaker.installed_ability.break_subroutine_count));
-                    const activations = (unbroken_count + break_count - 1) / break_count;
-                    const total_cost = activations * icebreaker.installed_ability.credit_cost;
-                    if (generated.runner_credit < total_cost) return error.InsufficientCredits;
-                    generated.runner_credit -= total_cost;
-
-                    // Mark all unbroken subs as broken
-                    for (ice.subroutines, 0..) |_, idx| {
-                        const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
-                        if (!is_broken) {
-                            ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(idx)));
-                        }
-                    }
+                    // Pay cost for this activation (1 credit per activation for most breakers)
+                    const credit_cost = icebreaker.installed_ability.credit_cost;
+                    if (generated.runner_credit < credit_cost) return error.InsufficientCredits;
+                    generated.runner_credit -= credit_cost;
 
                     // Track breaker usage (Mayfly)
                     icebreaker.used_break_this_run = true;
 
-                    // Regenerate encounter actions
-                    generated.decision_side = .runner;
-                    generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
+                    // Open sub selection prompt
+                    try openBreakSubPrompt(generated, ice, icebreaker.*, 0);
                     return;
                 },
                 .pump_strength => {
@@ -3409,6 +3392,121 @@ fn advanceApproachIcePhase(generated: *Game) !void {
     run.no_action = null;
     generated.decision_side = .runner;
     generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+}
+
+const prompt_break_sub = "break-sub";
+
+fn subroutineLabel(allocator: std.mem.Allocator, sub: state.SubroutineSpec, idx: usize) ![]const u8 {
+    return switch (sub.kind) {
+        .end_the_run => std.fmt.allocPrint(allocator, "End the run", .{}),
+        .do_net_damage => std.fmt.allocPrint(allocator, "Do {d} net damage", .{sub.amount}),
+        .do_brain_damage => std.fmt.allocPrint(allocator, "Do {d} brain damage", .{sub.amount}),
+        .tag_runner => std.fmt.allocPrint(allocator, "Give the Runner 1 tag", .{}),
+        .give_runner_tags => std.fmt.allocPrint(allocator, "Give the Runner {d} tags", .{sub.amount}),
+        .runner_loses_credits => std.fmt.allocPrint(allocator, "Runner loses {d} [Credits]", .{sub.amount}),
+        .give_tag_or_pay_credits => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
+        .corp_gains_credits => std.fmt.allocPrint(allocator, "Corp gains {d} [Credits]", .{sub.amount}),
+        .install_ice_from_hq_archives => std.fmt.allocPrint(allocator, "Install a card from HQ or Archives", .{}),
+        .trace_tag => std.fmt.allocPrint(allocator, "Trace[{d}] - Give the Runner 1 tag", .{sub.base_trace}),
+        .do_net_damage_conditional_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
+        .runner_loses_credits_or_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
+        .do_net_damage_then_jack_out => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
+        .none => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
+    };
+}
+
+fn openBreakSubPrompt(
+    generated: *Game,
+    ice: *state.CardInstance,
+    breaker: state.CardInstance,
+    subs_selected: u8,
+) !void {
+    const allocator = generated.arena.allocator();
+    const break_count = @max(@as(u8, 1), breaker.installed_ability.break_subroutine_count);
+
+    // Build choices: each unbroken sub + "Done"
+    var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices_list.deinit(allocator);
+
+    for (ice.subroutines, 0..) |sub, idx| {
+        const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
+        if (!is_broken) {
+            const label = try subroutineLabel(allocator, sub, idx);
+            try choices_list.append(allocator, .{
+                .kind = .number,
+                .text = label,
+                .number = @intCast(idx),
+            });
+        }
+    }
+    // Add "Done" choice
+    try choices_list.append(allocator, stringChoice("Done"));
+
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, prompt_break_sub),
+        .choices = try choices_list.toOwnedSlice(allocator),
+        .source_card = breaker,
+    };
+    // Store break state in the run
+    generated.run.?.break_subs_selected = subs_selected;
+    generated.run.?.break_subs_max = break_count;
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+}
+
+fn applyBreakSubChoice(generated: *Game, choice_text: []const u8) !void {
+    const allocator = generated.arena.allocator();
+    const prompt = generated.runner_prompt_state orelse return error.MissingPrompt;
+    const breaker = prompt.source_card orelse return error.MissingSourceCard;
+    const run = &generated.run.?;
+
+    const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
+    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
+    const server = &generated.corp_servers.items[target_server.index];
+    const ice_count = server.ices.items.len;
+    if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
+    const actual_ice_idx = ice_count - 1 - current_ice_idx;
+    var ice = &server.ices.items[actual_ice_idx];
+
+    if (std.mem.eql(u8, choice_text, "Done")) {
+        // Done selecting — return to encounter actions
+        generated.runner_prompt_state = null;
+        run.break_subs_selected = 0;
+        run.break_subs_max = 0;
+        generated.decision_side = .runner;
+        generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
+        return;
+    }
+
+    // Find the sub index from the choice — match by text against prompt choices
+    var sub_idx: ?u8 = null;
+    for (prompt.choices) |ch| {
+        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+            if (ch.number) |n| {
+                sub_idx = @intCast(n);
+                break;
+            }
+        }
+    }
+    const idx = sub_idx orelse return error.UnsupportedChoice;
+
+    // Mark this sub as broken
+    ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(idx)));
+    run.break_subs_selected += 1;
+
+    // Check if we've hit the max for this activation
+    if (run.break_subs_selected >= run.break_subs_max) {
+        // Activation complete — return to encounter actions
+        generated.runner_prompt_state = null;
+        run.break_subs_selected = 0;
+        run.break_subs_max = 0;
+        generated.decision_side = .runner;
+        generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
+        return;
+    }
+
+    // More subs can be selected in this activation — refresh prompt
+    try openBreakSubPrompt(generated, ice, breaker, run.break_subs_selected);
 }
 
 fn advanceEncounterPhase(generated: *Game) !void {
@@ -4376,7 +4474,7 @@ fn encounterActionsForState(
         if (!is_broken) unbroken_count += 1;
     }
 
-    // Count per-icebreaker break-all actions (one per qualified icebreaker that can afford to break all)
+    // Count icebreaker break actions (one per qualified icebreaker that can afford one activation)
     var breaker_count: usize = 0;
     if (unbroken_count > 0) {
         for (generated.runner_rig_program.items) |card| {
@@ -4384,11 +4482,8 @@ fn encounterActionsForState(
             if (card.installed_ability.kind != .break_subroutine) continue;
             if (!canBreakIceType(card, ice)) continue;
             if (effectiveStrength(card) < ice_str) continue;
-            // Check affordability: ceil(unbroken / break_count) * credit_cost
-            const break_count = @max(@as(u16, 1), @as(u16, card.installed_ability.break_subroutine_count));
-            const activations = (unbroken_count + break_count - 1) / break_count;
-            const total_cost = activations * card.installed_ability.credit_cost;
-            if (generated.runner_credit < total_cost) continue;
+            // Check affordability: one activation cost
+            if (generated.runner_credit < card.installed_ability.credit_cost) continue;
             breaker_count += 1;
         }
     }
