@@ -585,7 +585,7 @@ test "corp first install runner start-turn scenario matches live replay oracle" 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
@@ -613,7 +613,7 @@ test "corp first install runner gain-credit scenario matches live replay oracle"
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
@@ -642,7 +642,7 @@ test "corp first install runner draw-card scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
@@ -671,7 +671,7 @@ test "corp first install runner sure-gamble scenario matches live replay oracle"
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
@@ -700,7 +700,7 @@ test "corp first install runner run-server-1 scenario matches live replay oracle
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try takeAction(allocator, &actions, &generated, gain_action);
@@ -729,7 +729,7 @@ test "corp first install runner run-server-1 continue scenario matches live repl
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -754,7 +754,7 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -783,7 +783,7 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -913,7 +913,7 @@ test "runner tread-lightly prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -936,7 +936,7 @@ test "runner tread-lightly server-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -960,7 +960,7 @@ test "runner jailbreak prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -983,7 +983,7 @@ test "runner jailbreak hq-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1007,7 +1007,7 @@ test "runner overclock prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1030,7 +1030,7 @@ test "runner overclock server-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1160,7 +1160,7 @@ test "runner jailbreak successful-run effect is attached to run flow" {
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try generator.corpStartTurnFull(&generated);
-    try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try flow.applyAction(&generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try flow.applyAction(&generated, gain_action);
@@ -1206,7 +1206,7 @@ test "runner jailbreak successful-run scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1232,7 +1232,7 @@ test "runner tread-lightly run modifier is attached to run state" {
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try generator.corpStartTurnFull(&generated);
-    try flow.applyAction(&generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try flow.applyAction(&generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     while (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
         try flow.applyAction(&generated, gain_action);
@@ -1266,7 +1266,7 @@ test "runner creative-commission scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1289,7 +1289,7 @@ test "runner vrcation scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1749,7 +1749,7 @@ test "icebreaker encounter parity test" {
 
     // Turn 1: corp installs Karuna (ICE) on a remote
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findFirstCorpInstallPlay(generated.legal_actions));
+    try takeAction(allocator, &actions, &generated, findFirstCorpInstallPlay(&generated, generated.legal_actions) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
@@ -2038,7 +2038,95 @@ fn expectInstalledResources(expected: []const state.CardInstance, actual: []cons
     }
 }
 
-const corp_operation_titles = [_][]const u8{ "Government Subsidy", "Hedge Fund", "Seamless Launch" };
+// --- Generic card lookup helpers for e2e action pickers ---
+
+fn findCardInHand(gen: *const generator.Game, title: []const u8, side: state.Side) ?state.CardInstance {
+    const hand = switch (side) {
+        .corp => gen.corp_hand.items,
+        .runner => gen.runner_hand.items,
+    };
+    for (hand) |card| {
+        if (std.mem.eql(u8, card.title, title)) return card;
+    }
+    return null;
+}
+
+fn isCardType(gen: *const generator.Game, title: []const u8, side: state.Side, card_type: []const u8) bool {
+    const card = findCardInHand(gen, title, side) orelse return false;
+    const ct = card.card_type orelse return false;
+    return std.mem.eql(u8, ct, card_type);
+}
+
+fn findPlayByCardType(gen: *const generator.Game, actions: []const state.LegalAction, side: state.Side, card_type: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != side) continue;
+        const title = a.card_title orelse continue;
+        if (isCardType(gen, title, side, card_type)) return a;
+    }
+    return null;
+}
+
+fn findPlayByCorpPlayKind(gen: *const generator.Game, actions: []const state.LegalAction, kind: state.CorpPlayKind) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .corp) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .corp) orelse continue;
+        if (card.corp_play.kind == kind) return a;
+    }
+    return null;
+}
+
+fn findPlayByRunnerPlayKind(gen: *const generator.Game, actions: []const state.LegalAction, kind: state.RunnerPlayKind) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .runner) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .runner) orelse continue;
+        if (!canAffordEventClicks(gen, card)) continue;
+        if (card.runner_play.kind == kind) return a;
+    }
+    return null;
+}
+
+/// Check if runner has enough clicks for an event (1 base + lose_clicks)
+fn canAffordEventClicks(gen: *const generator.Game, card: state.CardInstance) bool {
+    return gen.runner_click >= 1 + card.runner_play.lose_clicks;
+}
+
+/// Find the best economy event: gain_credits kind with actual credit gain, prefer highest gain.
+/// Skips events that only draw cards (VRcation) — those are handled separately.
+fn findRunnerPureEconomy(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
+    var best: ?state.LegalAction = null;
+    var best_gain: u16 = 0;
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .runner) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .runner) orelse continue;
+        if (!canAffordEventClicks(gen, card)) continue;
+        if (card.runner_play.kind != .gain_credits or card.runner_play.gain_credits == 0) continue;
+        if (card.runner_play.gain_credits > best_gain) {
+            best = a;
+            best_gain = card.runner_play.gain_credits;
+        }
+    }
+    return best;
+}
+
+/// Find the best corp economy operation: gain_credits kind, prefer highest gain.
+fn findCorpBestEconomy(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
+    var best: ?state.LegalAction = null;
+    var best_gain: u16 = 0;
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .corp) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .corp) orelse continue;
+        if (card.corp_play.kind != .gain_credits or card.corp_play.gain_credits == 0) continue;
+        if (card.corp_play.gain_credits > best_gain) {
+            best = a;
+            best_gain = card.corp_play.gain_credits;
+        }
+    }
+    return best;
+}
 
 fn takeAction(
     allocator: std.mem.Allocator,
@@ -2079,7 +2167,7 @@ fn endTurnAndDiscard(
         };
         if (hand_len > hand_size) {
             // Try to play any card from hand (install or operation) to reduce hand size
-            if (findFirstCorpInstallPlay(generated.legal_actions) catch null) |install_action| {
+            if (findFirstCorpInstallPlay(generated, generated.legal_actions)) |install_action| {
                 try takeAction(allocator, actions, generated, install_action);
                 if (generated.corp_prompt_state) |ps| {
                     if (std.mem.eql(u8, ps.prompt_type, "install-destination")) {
@@ -2197,19 +2285,14 @@ fn findFirstPlayFromHand(actions: []const state.LegalAction, side: state.Side) !
     return error.MissingAction;
 }
 
-fn findFirstCorpInstallPlay(actions: []const state.LegalAction) !state.LegalAction {
-    for (actions) |legal_action| {
-        if (legal_action.kind != .play_from_hand or legal_action.side != .corp or legal_action.card_title == null) continue;
-        if (!containsTitle(&corp_operation_titles, legal_action.card_title.?)) return legal_action;
+fn findFirstCorpInstallPlay(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .corp or a.card_title == null) continue;
+        // Skip operations — they're played, not installed
+        if (isCardType(gen, a.card_title.?, .corp, "Operation")) continue;
+        return a;
     }
-    return error.MissingAction;
-}
-
-fn containsTitle(titles: []const []const u8, title: []const u8) bool {
-    for (titles) |candidate| {
-        if (std.mem.eql(u8, candidate, title)) return true;
-    }
-    return false;
+    return null;
 }
 
 // Find bioroid break action during ICE encounter
@@ -2552,39 +2635,36 @@ fn findEncounterLeechAction(actions: []const state.LegalAction) ?state.LegalActi
 }
 
 fn pickCorpAction(gen: *generator.Game, actions: []const state.LegalAction) state.LegalAction {
-    const click = gen.corp_click;
     const credit = gen.corp_credit;
 
     // Score agenda if possible
     if (findBasicAction(actions, .corp, .score_agenda)) |a| return a;
 
-    // Install cards (ICE, agendas, assets, upgrades)
-    if (click >= 1 and gen.corp_hand.items.len > 0) {
-        if (findFirstCorpInstallPlay(actions) catch null) |a| return a;
+    // Install cards (non-operations: ICE, agendas, assets, upgrades)
+    if (gen.corp_hand.items.len > 0) {
+        if (findFirstCorpInstallPlay(gen, actions)) |a| return a;
     }
 
-    // Play economy operations if affordable
-    if (credit >= 5) {
-        if (findPlayByTitle(actions, .corp, "Hedge Fund")) |a| return a;
-    }
-    if (credit >= 0) {
-        if (findPlayByTitle(actions, .corp, "Government Subsidy")) |a| return a;
-    }
+    // Play economy operations (generic: best net credit gain)
+    if (findCorpBestEconomy(gen, actions)) |a| return a;
 
-    // Use installed abilities (Regolith Mining License, Nico Campaign)
+    // Use installed abilities (Regolith Mining License, Nico Campaign, etc.)
     for (actions) |a| {
         if (a.kind == .use_installed_ability and a.side == .corp) return a;
     }
 
     // Advance installed cards if we have targets
-    if (click >= 1 and credit >= 1 and hasAdvanceableCards(gen)) {
+    if (credit >= 1 and hasAdvanceableCards(gen)) {
         if (findBasicAction(actions, .corp, .advance_installed)) |a| return a;
     }
 
-    // Play Seamless Launch if we have advanceable cards
+    // Play advancement operations (generic: any operation with advance_installed kind)
     if (hasAdvanceableCards(gen)) {
-        if (findPlayByTitle(actions, .corp, "Seamless Launch")) |a| return a;
+        if (findPlayByCorpPlayKind(gen, actions, .advance_installed)) |a| return a;
     }
+
+    // Play custom operations (Predictive Planogram, Public Trail, Retribution, etc.)
+    if (findPlayByCorpPlayKind(gen, actions, .custom)) |a| return a;
 
     // Draw cards if hand is small
     if (gen.corp_hand.items.len <= 3) {
@@ -2604,53 +2684,49 @@ fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) st
     const click = gen.runner_click;
     const credit = gen.runner_credit;
 
-    // Play economy events first
-    if (credit >= 5) {
-        if (findPlayByTitle(actions, .runner, "Sure Gamble")) |a| return a;
-    }
-    if (findPlayByTitle(actions, .runner, "Creative Commission")) |a| return a;
+    // Play pure economy events (generic: highest credit gain, skips draw-only events)
+    if (findRunnerPureEconomy(gen, actions)) |a| return a;
 
-    // Install economy resources
-    if (credit >= 1) {
-        if (findPlayByTitle(actions, .runner, "Telework Contract")) |a| return a;
-    }
-    if (findPlayByTitle(actions, .runner, "Smartware Distributor")) |a| return a;
+    // Install economy resources (take_credits ability — drip economy)
+    if (findRunnerInstallByAbility(gen, actions, .take_credits)) |a| return a;
 
-    // Use installed abilities (Telework, Pennyshaver, Red Team) — skip combat abilities
+    // Install free resources (cost 0 — Smartware Distributor etc.)
+    if (findRunnerInstallByMaxCost(gen, actions, "Resource", 0)) |a| return a;
+
+    // Use installed abilities (non-combat: take credits, place credits, run abilities)
     for (actions) |a| {
         if (a.kind == .use_installed_ability and a.side == .runner and isSafeInstalledAbility(a)) return a;
     }
 
     // Install hardware
-    if (findPlayByTitle(actions, .runner, "Pennyshaver")) |a| return a;
-    if (findPlayByTitle(actions, .runner, "Docklands Pass")) |a| return a;
+    if (findPlayByCardType(gen, actions, .runner, "Hardware")) |a| return a;
 
-    // Install icebreakers — prioritize core breakers over Mayfly (AI).
-    // MU overflow is handled properly via the select prompt.
+    // Install icebreaker programs (have Icebreaker subtype)
     if (credit >= 3) {
-        if (findPlayByTitle(actions, .runner, "Carmen")) |a| return a;
-        if (findPlayByTitle(actions, .runner, "Cleaver")) |a| return a;
-        if (findPlayByTitle(actions, .runner, "Unity")) |a| return a;
-        if (findPlayByTitle(actions, .runner, "Mayfly")) |a| return a;
+        if (findRunnerInstallIcebreaker(gen, actions)) |a| return a;
     }
 
-    // Install Verbal Plasticity for draw power
-    if (findPlayByTitle(actions, .runner, "Verbal Plasticity")) |a| return a;
+    // Install remaining resources (Verbal Plasticity etc.)
+    if (findPlayByCardType(gen, actions, .runner, "Resource")) |a| return a;
 
     // Run a server if we have credits and clicks
     if (click >= 2 and credit >= 3) {
         if (findRunActionAny(actions)) |a| return a;
     }
 
-    // Play run events
-    if (credit >= 1) {
-        if (findPlayByTitle(actions, .runner, "Jailbreak")) |a| return a;
-        if (findPlayByTitle(actions, .runner, "Overclock")) |a| return a;
-    }
-    if (findPlayByTitle(actions, .runner, "Tread Lightly")) |a| return a;
+    // Play run events (generic: any event with choose_run_target kind)
+    if (findPlayByRunnerPlayKind(gen, actions, .choose_run_target)) |a| return a;
 
-    // Play VRcation for draw + credits
-    if (findPlayByTitle(actions, .runner, "VRcation")) |a| return a;
+    // Play draw/utility events (VRcation, etc. — gain_credits kind with 0 credit gain)
+    if (findPlayByRunnerPlayKind(gen, actions, .gain_credits)) |a| return a;
+
+    // Play custom events (Mutual Favor, Wildcat Strike, etc.)
+    if (findPlayByRunnerPlayKind(gen, actions, .custom)) |a| return a;
+
+    // Install remaining programs (utility — Conduit, Leech)
+    if (credit >= 1) {
+        if (findPlayByCardType(gen, actions, .runner, "Program")) |a| return a;
+    }
 
     // Play/install remaining cards from hand if overflowing
     if (gen.runner_hand.items.len > gen.runner_hand_size.total) {
@@ -2669,6 +2745,42 @@ fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) st
     if (findFirstKindAction(actions, .end_turn, .runner)) |a| return a;
 
     return actions[0];
+}
+
+fn findRunnerInstallByAbility(gen: *const generator.Game, actions: []const state.LegalAction, ability_kind: state.InstalledAbilityKind) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .runner) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .runner) orelse continue;
+        if (card.installed_ability.kind == ability_kind) return a;
+    }
+    return null;
+}
+
+fn findRunnerInstallByMaxCost(gen: *const generator.Game, actions: []const state.LegalAction, card_type: []const u8, max_cost: u16) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .runner) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .runner) orelse continue;
+        const ct = card.card_type orelse continue;
+        if (!std.mem.eql(u8, ct, card_type)) continue;
+        if ((card.cost orelse 0) <= max_cost) return a;
+    }
+    return null;
+}
+
+fn findRunnerInstallIcebreaker(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .runner) continue;
+        const title = a.card_title orelse continue;
+        const card = findCardInHand(gen, title, .runner) orelse continue;
+        const ct = card.card_type orelse continue;
+        if (!std.mem.eql(u8, ct, "Program")) continue;
+        for (card.subtypes) |st| {
+            if (std.mem.eql(u8, st, "Icebreaker")) return a;
+        }
+    }
+    return null;
 }
 
 fn findRunActionAny(actions: []const state.LegalAction) ?state.LegalAction {
@@ -3088,10 +3200,10 @@ test "public trail runner takes tag parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "retribution trashes runner program local test" {
+test "retribution trashes runner program parity test" {
     const allocator = std.testing.allocator;
-    // Verify Retribution mechanics locally (the card-selection prompt is complex for oracle).
-    // Seed 21: Corp has Retribution
+    // Seed 21: Corp has both Public Trail and Retribution, runner has a program.
+    // Flow: runner installs program + runs, corp tags via Public Trail then trashes via Retribution.
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 21);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
@@ -3101,55 +3213,41 @@ test "retribution trashes runner program local test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Turn 1: corp passes
+    // Turn 1 corp: gain credits (need 4 for Public Trail + 1 for Retribution)
     try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
-    // Turn 1 runner: install a program
+    // Turn 1 runner: install a program, then run Archives (sets successful_run for Public Trail)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    if (findFirstRunnerProgramPlay(generated.legal_actions)) |prog| {
-        try takeAction(allocator, &actions, &generated, prog);
-    } else return; // No program to install, skip test
+    const prog = findPlayByCardType(&generated, generated.legal_actions, .runner, "Program") orelse return;
+    try takeAction(allocator, &actions, &generated, prog);
     const prog_count = generated.runner_rig_program.items.len;
     try std.testing.expect(prog_count >= 1);
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try resolveRunToEnd(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
-    // Tag the runner directly for test setup
-    generated.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
-
-    // Turn 2: corp plays Retribution
+    // Turn 2 corp: play Public Trail (tags runner), then Retribution (trashes program)
     try takeCorpStartTurn(allocator, &actions, &generated);
-    if (findPlayByTitle(generated.legal_actions, .corp, "Retribution")) |ret| {
-        const credit_before = generated.corp_credit;
-        try takeAction(allocator, &actions, &generated, ret);
-        // Retribution costs 1 credit
-        try std.testing.expectEqual(credit_before - 1, generated.corp_credit);
-        // Should have retribution-trash prompt
-        try std.testing.expect(generated.corp_prompt_state != null);
-        try std.testing.expectEqualStrings("retribution-trash", generated.corp_prompt_state.?.prompt_type);
-        // Choose first program (p|0)
-        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "p|0"));
-        // Program should be trashed
-        try std.testing.expectEqual(prog_count - 1, generated.runner_rig_program.items.len);
-        // Corp prompt cleared, back to corp actions
-        try std.testing.expect(generated.corp_prompt_state == null);
-    }
-}
+    try std.testing.expect(generated.corp_credit >= 5); // 4 for PT + 1 for Ret
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Public Trail"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
 
-fn findFirstRunnerProgramPlay(actions: []const state.LegalAction) ?state.LegalAction {
-    for (actions) |a| {
-        if (a.kind == .play_from_hand and a.side == .runner and a.card_title != null) {
-            // Check if it's a program by looking at known program names
-            const title = a.card_title.?;
-            if (std.mem.eql(u8, title, "Carmen") or
-                std.mem.eql(u8, title, "Cleaver") or
-                std.mem.eql(u8, title, "Mayfly") or
-                std.mem.eql(u8, title, "Unity") or
-                std.mem.eql(u8, title, "Conduit") or
-                std.mem.eql(u8, title, "Leech")) return a;
-        }
-    }
-    return null;
+    // Runner is now tagged — play Retribution
+    try std.testing.expect(generated.runner_tag.?.is_tagged);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Retribution"));
+    // Choose first program (p|0)
+    try std.testing.expect(generated.corp_prompt_state != null);
+    try std.testing.expectEqualStrings("retribution-trash", generated.corp_prompt_state.?.prompt_type);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "p|0"));
+    try std.testing.expectEqual(prog_count - 1, generated.runner_rig_program.items.len);
+
+    // Verify oracle parity
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 21, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "amaze amusements install parity test" {
@@ -3179,5 +3277,100 @@ test "amaze amusements install parity test" {
     var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "e2e intermediate game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 5;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var step: u32 = 0;
+    const max_steps: u32 = 1000;
+    var last_turn: u16 = 0;
+
+    while (step < max_steps) : (step += 1) {
+        if (generated.game_over) break;
+        if (generated.legal_actions.len == 0) break;
+
+        // Resolve corp phase-12 locally (NOT recorded — oracle auto-resolves)
+        if (generated.corp_phase_12) {
+            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
+            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
+            continue;
+        }
+
+        // Check oracle parity at turn boundaries
+        if (generated.turn != last_turn and generated.turn > 0) {
+            var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-intermediate") catch |err| {
+                std.debug.print("\n=== ORACLE REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  error: {s}\n", .{@errorName(err)});
+                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.choice) |c| {
+                        if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    }
+                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== PARITY DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
+                    std.debug.print("  run: oracle={s} zig={s}\n", .{
+                        if (replay.snapshot.state.run) |r| r.phase else "null",
+                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                    });
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
+                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
+                std.debug.print("  last actions:\n", .{});
+                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.choice) |c| {
+                        if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    }
+                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            last_turn = generated.turn;
+        }
+
+        const action = pickE2eAction(&generated);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== ACTION ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" title={s}", .{t});
+            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            if (action.label) |l| std.debug.print(" label={s}", .{l});
+            if (action.card_index) |ci| std.debug.print(" idx={d}", .{ci});
+            std.debug.print("\n", .{});
+            return err;
+        };
+    }
+
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
 }
 

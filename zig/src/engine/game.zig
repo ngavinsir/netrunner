@@ -40,6 +40,7 @@ pub const CardSpec = struct {
     // Set this instead of/in addition to subroutines for cards like Brân 1.0
     card_subroutine_handler: ?CardSubroutineHandler = null,
     trash_cost: ?u16 = null,
+    can_play: ?*const fn (*const Game) bool = null,
     on_play: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
@@ -136,6 +137,11 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     .{ .title = "Public Trail", .side = .corp, .code = 30057, .card_type = "Operation", .cost = 4, .corp_play = .{ .kind = .custom },
+        .can_play = &struct {
+            fn check(g: *const Game) bool {
+                return runner_had_successful_run_last_turn(g);
+            }
+        }.check,
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -178,6 +184,12 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     .{ .title = "Retribution", .side = .corp, .code = 30065, .card_type = "Operation", .cost = 1, .corp_play = .{ .kind = .custom },
+        .can_play = &struct {
+            fn check(g: *const Game) bool {
+                return is_runner_tagged(g.runner_tag) and
+                    (g.runner_rig_hardware.items.len > 0 or g.runner_rig_program.items.len > 0);
+            }
+        }.check,
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -4632,7 +4644,7 @@ fn corpOpeningActionsForState(
     const scoreable_count = countScoreableAgendas(servers);
     var playable_hand_count: usize = 0;
     for (g.corp_hand.items) |card| {
-        if (isCorpCardPlayableFromHand(g.corp_click, g.corp_credit, card)) playable_hand_count += 1;
+        if (isCorpCardPlayableFromHand(g, card)) playable_hand_count += 1;
     }
 
     const installed_ability_count = countCorpInstalledAbilityActions(servers);
@@ -4646,7 +4658,7 @@ fn corpOpeningActionsForState(
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
     for (g.corp_hand.items, 0..) |card, idx| {
-        if (!isCorpCardPlayableFromHand(g.corp_click, g.corp_credit, card)) continue;
+        if (!isCorpCardPlayableFromHand(g, card)) continue;
         actions[next] = .{
             .kind = .play_from_hand,
             .side = .corp,
@@ -5403,14 +5415,22 @@ fn parseKeepState(text: []const u8) state.KeepState {
 }
 
 fn isCorpCardPlayableFromHand(
-    click: u8,
-    credit: u16,
+    g: *const Game,
     card: state.CardInstance,
 ) bool {
-    if (click < 1) return false;
+    if (g.corp_click < 1) return false;
     const card_type = card.card_type orelse return false;
     if (std.mem.eql(u8, card_type, "Operation")) {
-        return credit >= (card.cost orelse 0);
+        if (g.corp_credit < (card.cost orelse 0)) return false;
+        // Check card-specific preconditions (e.g., Public Trail requires runner ran last turn)
+        if (card.code) |code| {
+            if (lookupCardSpecByCode(code)) |spec| {
+                if (spec.can_play) |can_play| {
+                    if (!can_play(g)) return false;
+                }
+            }
+        }
+        return true;
     }
 
     return card.install.kind != .none;
