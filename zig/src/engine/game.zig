@@ -3129,43 +3129,6 @@ fn applyContinue(
 
     if (std.mem.eql(u8, run.*.?.phase, "success")) return try advanceSuccessPhase(generated, side);
 
-    // Handle encounter-ice phase - runner chose to let remaining subs fire
-    if (std.mem.eql(u8, run.*.?.phase, "encounter-ice")) {
-        // Get the encountered ICE
-        const current_ice_idx = run.*.?.current_ice_index orelse return error.NoIceEncountered;
-        const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.*.?.server);
-        const server_index = target_server.index;
-        const server = &generated.corp_servers.items[server_index];
-        const ice_count = server.ices.items.len;
-        if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
-        const actual_ice_idx = ice_count - 1 - current_ice_idx;
-        const ice = server.ices.items[actual_ice_idx];
-
-        // Fire unbroken subroutines
-        try resolveEncounteredIceSubroutines(generated, ice, server_index, actual_ice_idx, 0);
-        if (generated.run == null) return; // ETR fired
-        if (generated.corp_prompt_state) |ps| {
-            if (!std.mem.eql(u8, ps.prompt_type, "run")) return; // Sub opened prompt (e.g., Brân)
-        }
-
-        // Clear temporary strength boosts on all icebreakers
-        for (generated.runner_rig_program.items) |*card| {
-            card.current_strength = null;
-        }
-
-        // Move to movement phase
-        var next_run = &generated.run.?;
-        if (next_run.position > 0) next_run.position -= 1;
-        next_run.phase = try allocator.dupe(u8, "movement");
-        next_run.encounter_phase = .none;
-        next_run.current_ice_index = null;
-        next_run.jack_out_available = true;
-        next_run.no_action = null;
-        generated.decision_side = .runner;
-        generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
-        return;
-    }
-
     // Handle movement phase jack-out window
     if (std.mem.eql(u8, run.*.?.phase, "movement") and run.*.?.jack_out_available) {
         if (run.*.?.no_action == null) {
@@ -3196,6 +3159,7 @@ fn applyContinue(
     run.*.?.no_action = null;
     if (std.mem.eql(u8, run.*.?.phase, "initiation")) return try advanceInitiationPhase(generated);
     if (std.mem.eql(u8, run.*.?.phase, "approach-ice")) return try advanceApproachIcePhase(generated);
+    if (std.mem.eql(u8, run.*.?.phase, "encounter-ice")) return try advanceEncounterPhase(generated);
     if (std.mem.eql(u8, run.*.?.phase, "movement")) return try advanceMovementPhase(generated);
 
     return error.UnsupportedRunPhase;
@@ -3441,6 +3405,42 @@ fn advanceApproachIcePhase(generated: *Game) !void {
     // Unrezzed or no ice - move to movement
     if (run.position > 0) run.position -= 1;
     run.phase = try allocator.dupe(u8, "movement");
+    run.jack_out_available = true;
+    run.no_action = null;
+    generated.decision_side = .runner;
+    generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+}
+
+fn advanceEncounterPhase(generated: *Game) !void {
+    const allocator = generated.arena.allocator();
+
+    // Both sides passed during encounter — fire unbroken subroutines
+    const current_ice_idx = generated.run.?.current_ice_index orelse return error.NoIceEncountered;
+    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, generated.run.?.server);
+    const server_index = target_server.index;
+    const server = &generated.corp_servers.items[server_index];
+    const ice_count = server.ices.items.len;
+    if (current_ice_idx >= ice_count) return error.InvalidIceIndex;
+    const actual_ice_idx = ice_count - 1 - current_ice_idx;
+    const ice = server.ices.items[actual_ice_idx];
+
+    try resolveEncounteredIceSubroutines(generated, ice, server_index, actual_ice_idx, 0);
+    if (generated.run == null) return; // ETR fired
+    if (generated.corp_prompt_state) |ps| {
+        if (!std.mem.eql(u8, ps.prompt_type, "run")) return; // Sub opened prompt (e.g., Brân)
+    }
+
+    // Clear temporary strength boosts on all icebreakers
+    for (generated.runner_rig_program.items) |*card| {
+        card.current_strength = null;
+    }
+
+    // Move to movement phase
+    var run = &generated.run.?;
+    if (run.position > 0) run.position -= 1;
+    run.phase = try allocator.dupe(u8, "movement");
+    run.encounter_phase = .none;
+    run.current_ice_index = null;
     run.jack_out_available = true;
     run.no_action = null;
     generated.decision_side = .runner;

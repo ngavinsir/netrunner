@@ -2924,6 +2924,80 @@ test "funhouse install and rez parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "funhouse full encounter parity test" {
+    const allocator = std.testing.allocator;
+    // Full encounter: rez Funhouse → on-encounter (take tag) → subs fire → run ends
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 15);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    // Mulligan
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp installs Funhouse on HQ
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Funhouse"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "HQ"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2: corp gains credits (need 5+ to rez Funhouse)
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 2 runner: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 3: corp gains more credits
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 3 runner: run HQ (corp should have 5+ credits)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try std.testing.expect(generated.corp_credit >= 5);
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    // Corp gets priority — approach ICE phase
+    // Corp continue → triggers rez window if affordable
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    // Rez Funhouse via rez-window (if available)
+    if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice") catch null) |rez_action| {
+        try takeAction(allocator, &actions, &generated, rez_action);
+    } else {
+        // Corp can't afford to rez — skip this test
+        return;
+    }
+    // Runner continue → encounter starts → Funhouse on-encounter prompt
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    // Funhouse on-encounter: take 1 tag
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
+    try std.testing.expectEqual(@as(u8, 1), generated.runner_tag.?.total);
+
+    // Runner in encounter — no icebreaker, continue to let subs fire
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
+    // Corp continue → subs fire (give_tag_or_pay_credits)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+
+    // Sub creates a prompt — resolve it, then continue through run to end
+    try resolveRunToEnd(allocator, &actions, &generated);
+
+    // Run should be over, end runner turn
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Verify parity at clean turn boundary
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 15, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "funhouse encounter take tag local test" {
     const allocator = std.testing.allocator;
     // Verify Funhouse encounter mechanics locally (no oracle)
