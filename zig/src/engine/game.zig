@@ -390,7 +390,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Manegarm Skunkworks", .side = .corp, .code = 30042, .card_type = "Upgrade", .cost = 2, .trash_cost = 3, .access = .{ .kind = .tax_or_etr, .click_cost = 2, .credit_cost = 5 }, .install = .{ .kind = .corp_remote_only },
+    .{ .title = "Manegarm Skunkworks", .side = .corp, .code = 30042, .card_type = "Upgrade", .cost = 2, .trash_cost = 3, .access = .{ .kind = .tax_or_etr, .click_cost = 2, .credit_cost = 5 }, .install = .{ .kind = .corp_server_choice },
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -424,7 +424,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{ .tags_on_agenda_steal_from_server = 2 } },
+    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .installed_ability = .{ .tags_on_agenda_steal_from_server = 2 } },
     .{ .title = "Brân 1.0", .side = .corp, .code = 30039, .card_type = "ICE", .subtypes = &.{ "Bioroid", "Barrier" }, .cost = 6, .strength = 6, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .install_ice_from_hq_archives },
         .{ .kind = .end_the_run },
@@ -982,7 +982,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Malapert Data Vault", .side = .corp, .code = 30066, .card_type = "Upgrade", .cost = 1, .trash_cost = 4, .install = .{ .kind = .corp_remote_only },
+    .{ .title = "Malapert Data Vault", .side = .corp, .code = 30066, .card_type = "Upgrade", .cost = 1, .trash_cost = 4, .install = .{ .kind = .corp_server_choice },
         .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .agenda_scored; } }.m,
         .on_event_server_check = true,
         .on_event = &struct {
@@ -1072,7 +1072,7 @@ pub const all_cards = [_]CardSpec{
     }, .runner_abilities = &.{
         .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
     } },
-    .{ .title = "Anoetic Void", .side = .corp, .code = 30050, .card_type = "Upgrade", .cost = 0, .trash_cost = 1, .install = .{ .kind = .corp_remote_only },
+    .{ .title = "Anoetic Void", .side = .corp, .code = 30050, .card_type = "Upgrade", .cost = 0, .trash_cost = 1, .install = .{ .kind = .corp_server_choice },
         .access = .{ .kind = .corp_pay_etr, .credit_cost = 2 },
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
@@ -7276,15 +7276,33 @@ fn installChoicesForCard(
 ) ![]const state.PromptChoice {
     return switch (install_kind) {
         .corp_server_choice => blk: {
-            const choices = try allocator.alloc(state.PromptChoice, 4);
+            // ICE/upgrades: any server (centrals + remotes + new remote)
+            var remote_count: usize = 0;
+            if (game) |g| {
+                for (g.corp_servers.items, 0..) |_, si| {
+                    if (si >= 3) remote_count += 1;
+                }
+            }
+            const choices = try allocator.alloc(state.PromptChoice, 4 + remote_count);
             choices[0] = stringChoice("Archives");
             choices[1] = stringChoice("HQ");
             choices[2] = stringChoice("New remote");
             choices[3] = stringChoice("R&D");
+            if (game) |g| {
+                var idx: usize = 4;
+                var remote_num: usize = 1;
+                for (g.corp_servers.items, 0..) |_, si| {
+                    if (si >= 3) {
+                        choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Server {d}", .{remote_num}));
+                        idx += 1;
+                        remote_num += 1;
+                    }
+                }
+            }
             break :blk choices;
         },
         .corp_remote_only => blk: {
-            // Count existing remote servers (index >= 3 are remotes)
+            // Assets: remotes only (new remote + existing remotes)
             var remote_count: usize = 0;
             if (game) |g| {
                 for (g.corp_servers.items, 0..) |_, si| {
