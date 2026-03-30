@@ -384,8 +384,7 @@
 
 (defn- canonical-prompt
   [prompt]
-  (when (and prompt
-             (not (hide-only-prompt? prompt)))
+  (when prompt
     (let [choices (or (filter-hide-choices (:choices prompt))
                       (:choices prompt))]
     (select-non-nil-keys
