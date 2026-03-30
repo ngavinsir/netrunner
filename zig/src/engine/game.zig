@@ -240,8 +240,7 @@ pub const all_cards = [_]CardSpec{
         }.score,
     },
     .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
-        .kind = .take_credits,
-        .click_cost = 1,
+        .kind = .start_of_turn_credits,
         .initial_credit_counters = 9,
         .take_credits_amount = 3,
         .trash_on_empty = true,
@@ -1954,13 +1953,13 @@ pub fn applyStartTurn(
 
     switch (side) {
         .corp => {
-            // Enter corp phase 12 — both players must pass before main phase
             generated.active_player = .corp;
             generated.turn += 1;
             generated.end_turn = false;
-            generated.corp_phase_12 = true;
-            generated.decision_side = .corp;
-            generated.legal_actions = try continueActions(allocator, .corp);
+            generated.turn_events = .{};
+            resetInstalledAbilityUsage(generated);
+            // Auto-complete phase 12 when no phase-12 abilities exist (matching Clojure)
+            try endCorpPhase12(generated);
         },
         .runner => {
             generated.runner_click = generated.runner_click_per_turn;
@@ -6857,7 +6856,7 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
         var i: usize = 0;
         while (i < server.content.items.len) {
             var card = &server.content.items[i];
-            if (card.installed_ability.kind == .start_of_turn_credits and card.credit_counter > 0) {
+            if (card.installed_ability.kind == .start_of_turn_credits and card.rezzed and card.credit_counter > 0) {
                 const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
                 card.credit_counter -= take;
                 game.corp_credit += take;
@@ -7572,10 +7571,7 @@ test "action index stepping matches corp opening flow" {
     try std.testing.expectEqual(state.Side.corp, currentPlayer(&generated));
     try std.testing.expectEqual(@as(usize, 1), legalActionCount(&generated));
 
-    try applyActionByIndex(&generated, 0); // start_turn
-    // Phase 12: corp continue, runner continue
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
+    try applyActionByIndex(&generated, 0); // start_turn (auto-completes phase 12)
     try std.testing.expectEqual(state.Side.corp, currentPlayer(&generated));
     try std.testing.expectEqual(@as(usize, 9), legalActionCount(&generated));
 
@@ -7996,9 +7992,6 @@ fn applyMuOverflowChoice(generated: *Game, choice_text: []const u8) !void {
 
 pub fn corpStartTurnFull(generated: *Game) !void {
     try applyAction(generated, .{ .kind = .start_turn, .side = .corp });
-    // Phase 12: corp passes, runner passes
-    try applyAction(generated, .{ .kind = .@"continue", .side = .corp });
-    try applyAction(generated, .{ .kind = .@"continue", .side = .runner });
 }
 
 fn findActionByTitle(actions: []const state.LegalAction, kind: state.ActionKind, title: []const u8) ?state.LegalAction {

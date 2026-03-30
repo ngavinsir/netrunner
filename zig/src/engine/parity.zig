@@ -2229,9 +2229,6 @@ fn takeCorpStartTurn(
     generated: *generator.Game,
 ) !void {
     try takeAction(allocator, actions, generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
-    // Phase 12: resolve locally (NOT recorded — oracle auto-resolves)
-    try flow.applyAction(generated, .{ .kind = .@"continue", .side = .corp });
-    try flow.applyAction(generated, .{ .kind = .@"continue", .side = .runner });
 }
 
 fn endTurnAndDiscard(
@@ -2576,13 +2573,6 @@ test "e2e beginner game plays to completion with oracle parity" {
     while (step < max_steps) : (step += 1) {
         if (generated.game_over) break;
         if (generated.legal_actions.len == 0) break;
-
-        // Resolve corp phase-12 locally (NOT recorded — oracle auto-resolves)
-        if (generated.corp_phase_12) {
-            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
-            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
-            continue;
-        }
 
         // Check oracle parity at turn boundaries
         if (generated.turn != last_turn and generated.turn > 0) {
@@ -4498,13 +4488,6 @@ test "e2e intermediate game plays to completion with oracle parity" {
         if (generated.game_over) break;
         if (generated.legal_actions.len == 0) break;
 
-        // Resolve corp phase-12 locally (NOT recorded — oracle auto-resolves)
-        if (generated.corp_phase_12) {
-            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
-            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
-            continue;
-        }
-
         // Check oracle parity at turn boundaries
         if (generated.turn != last_turn and generated.turn > 0) {
             var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-intermediate") catch |err| {
@@ -4594,14 +4577,8 @@ test "e2e fullpack game plays to completion with oracle parity" {
         if (generated.game_over) break;
         if (generated.legal_actions.len == 0) break;
 
-        if (generated.corp_phase_12) {
-            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
-            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
-            continue;
-        }
-
         // Per-action parity check starting from action 30 (every action)
-        if (actions.items.len >= 30 and !generated.corp_phase_12) {
+        if (actions.items.len >= 30) {
             var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-fullpack") catch |err| {
                 std.debug.print("\n=== FULLPACK REPLAY FAILED at step {d} ({d} actions) ===\n", .{ step_counter, actions.items.len });
                 return err;
