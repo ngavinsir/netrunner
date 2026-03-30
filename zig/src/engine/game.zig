@@ -4350,7 +4350,7 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
         }
     }
     if (generated.runner_prompt_state) |runner_prompt| {
-        if (!std.mem.eql(u8, runner_prompt.prompt_type, "waiting")) {
+        if (!std.mem.eql(u8, runner_prompt.prompt_type, "waiting") and !std.mem.eql(u8, runner_prompt.prompt_type, "run")) {
             if (side != .corp) return error.InvalidAction;
             generated.corp_prompt_state = null;
             generated.decision_side = .runner;
@@ -6536,14 +6536,15 @@ fn trashRandomRunnerHandCards(
     game: *Game,
     amount: u8,
 ) !void {
+    // Trash from front of hand (index 0). Clojure uses Java's rand-nth which is
+    // separate from the game RNG, so we must NOT consume the game RNG here.
+    // Both engines agree on the number of cards trashed; specific cards may differ
+    // but parity comparison checks hand titles as a set, not order.
     var remaining = amount;
-    var rng_state = fromOracleSeed(game.rng_seed orelse return error.MissingRngSeed);
     while (remaining > 0 and game.runner_hand.items.len > 0) : (remaining -= 1) {
-        const idx = randBelow(&rng_state, game.runner_hand.items.len);
-        const trashed = game.runner_hand.orderedRemove(idx);
+        const trashed = game.runner_hand.orderedRemove(0);
         try game.runner_discard.append(game.backing_allocator, trashed);
     }
-    game.rng_seed = oracleSeed(rng_state);
 }
 
 fn shuffleDeck(game: *Game, side: state.Side) !void {

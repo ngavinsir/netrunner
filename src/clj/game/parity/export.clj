@@ -890,8 +890,12 @@
           (main/handle-action state side "rez" {:card card})))
 
       :rez-ice
-      (let [current-ice (get-in @state [:run :current-ice])
-            ice-card (when current-ice (card/get-card state current-ice))]
+      ;; Rez the approached ICE. Use run position to find the ICE.
+      (let [run (:run @state)
+            run-ices (get-in @state (concat [:corp :servers] (:server run) [:ices]))
+            pos (:position run)
+            ice-card (when (and run-ices pos (pos? pos) (<= pos (count run-ices)))
+                       (nth run-ices (dec pos)))]
         (when ice-card
           (main/handle-action state side "rez" {:card ice-card})))
 
