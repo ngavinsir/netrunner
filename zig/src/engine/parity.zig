@@ -4617,6 +4617,19 @@ test "e2e fullpack game plays to completion with oracle parity" {
                     replay.snapshot.legal_actions.len,
                     gen_snapshot.legal_actions.len,
                 });
+                if (gen_snapshot.state.runner.memory) |mem| {
+                    std.debug.print("  zig MU: used={d} base={d} avail={d}\n", .{ mem.used, mem.base, mem.available });
+                }
+                std.debug.print("  zig programs ({d}):", .{gen_snapshot.state.runner.rig_program.len});
+                for (gen_snapshot.state.runner.rig_program) |p| {
+                    std.debug.print(" {s}(mu={d})", .{ p.title, p.runner_install.mu_cost });
+                }
+                std.debug.print("\n", .{});
+                std.debug.print("  zig hardware ({d}):", .{gen_snapshot.state.runner.rig_hardware.len});
+                for (gen_snapshot.state.runner.rig_hardware) |h| {
+                    std.debug.print(" {s}(mu_prov={d})", .{ h.title, h.installed_ability.mu_provided });
+                }
+                std.debug.print("\n", .{});
                 std.debug.print("  last 30 actions:\n", .{});
                 const s = if (actions.items.len > 30) actions.items.len - 30 else 0;
                 for (actions.items[s..], s..) |sa, ai| {

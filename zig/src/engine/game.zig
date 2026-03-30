@@ -7990,6 +7990,7 @@ fn applyMuOverflowChoice(generated: *Game, choice_text: []const u8) !void {
         const pi_card = pending.card;
         const pi_index = pending.card_index;
         const pi_cost = pending.runner_install_cost;
+        generated.runner_prompt_state = null;
         // Spend click now (deferred from applyInstallFromHand to match Clojure's async flow)
         try spendClicks(generated, .runner, 1);
         try completeRunnerInstall(generated, pi_index, pi_card, pi_cost);
