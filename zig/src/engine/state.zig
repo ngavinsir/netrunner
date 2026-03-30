@@ -406,6 +406,7 @@ pub const TurnEvents = struct {
     made_run_on_archives: bool = false,
     programs_installed_this_turn: u8 = 0,
     agenda_points_scored_this_turn: u8 = 0, // Neurospike: track AP scored this turn
+    zahya_triggered_this_turn: bool = false, // Zahya: 1/turn trigger tracking
 };
 
 pub const LegalAction = struct {

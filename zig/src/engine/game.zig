@@ -66,6 +66,13 @@ pub const MatchupSpec = struct {
 pub const all_cards = [_]CardSpec{
     .{ .title = "The Syndicate: Profit over Principle", .side = .corp, .code = 30077, .card_type = "Identity" },
     .{ .title = "The Catalyst: Convention Breaker", .side = .runner, .code = 30076, .card_type = "Identity" },
+    .{ .title = "Haas-Bioroid: Precision Design", .side = .corp, .code = 30035, .card_type = "Identity" },
+    .{ .title = "Jinteki: Restoring Humanity", .side = .corp, .code = 30043, .card_type = "Identity" },
+    .{ .title = "NBN: Reality Plus", .side = .corp, .code = 30051, .card_type = "Identity" },
+    .{ .title = "Weyland Consortium: Built to Last", .side = .corp, .code = 30059, .card_type = "Identity" },
+    .{ .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal", .side = .runner, .code = 30001, .card_type = "Identity" },
+    .{ .title = "T\xc4\x81o Salonga: Telepresence Magician", .side = .runner, .code = 30019, .card_type = "Identity" },
+    .{ .title = "Zahya Sadeghi: Versatile Smuggler", .side = .runner, .code = 30010, .card_type = "Identity" },
     .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
     .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
     .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
@@ -1443,6 +1450,11 @@ pub fn createInitialSnapshot(
     game.corp_basic_action_card = try makeCardInstance(allocator, corp_basic_action);
     game.corp_credit = 5;
     game.corp_agenda_point_req = matchup.agenda_point_req;
+    // HB: Precision Design: +1 max hand size
+    if (matchup.corp.identity_code == 30035) {
+        game.corp_hand_size.base += 1;
+        game.corp_hand_size.total += 1;
+    }
     game.corp_keep = .undecided;
     game.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "mulligan"),
@@ -1723,6 +1735,12 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
     switch (side) {
         .corp => generated.corp_prompt_state = null,
         .runner => generated.runner_prompt_state = null,
+    }
+    // Jinteki: Restoring Humanity — gain 1cr at end of corp discard phase if facedown card in Archives
+    if (side == .corp and generated.corp_identity.code != null and generated.corp_identity.code.? == 30043) {
+        if (generated.corp_discard.items.len > 0) {
+            generated.corp_credit += 1;
+        }
     }
     generated.decision_side = next_side;
     generated.legal_actions = try startTurnActions(generated.arena.allocator(), next_side);
@@ -2337,12 +2355,22 @@ fn addAdvancementCounter(
     if (target.is_ice) {
         if (target.card_index >= server.ices.items.len) return error.UnsupportedChoice;
         var card = &server.ices.items[target.card_index];
+        const was_zero = card.advancement_counter == 0;
         card.advancement_counter += amount;
+        // Weyland: Built to Last — gain 2cr when advancing a card with no advancement counters
+        if (was_zero and generated.corp_identity.code != null and generated.corp_identity.code.? == 30059) {
+            generated.corp_credit += 2;
+        }
         return card.*;
     }
     if (target.card_index >= server.content.items.len) return error.UnsupportedChoice;
     var card = &server.content.items[target.card_index];
+    const was_zero = card.advancement_counter == 0;
     card.advancement_counter += amount;
+    // Weyland: Built to Last — gain 2cr when advancing a card with no advancement counters
+    if (was_zero and generated.corp_identity.code != null and generated.corp_identity.code.? == 30059) {
+        generated.corp_credit += 2;
+    }
     return card.*;
 }
 
@@ -4839,6 +4867,7 @@ fn completeRunWithoutAccess(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
+    applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -4858,6 +4887,7 @@ fn completeRunAfterAccess(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
+    applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -4877,6 +4907,7 @@ fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
+    applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -6057,6 +6088,22 @@ fn applyVirusCountersOnSuccessfulRun(game: *Game) void {
         // Conduit: place virus counter on successful R&D run
         if (card.installed_ability.virus_on_successful_rd and is_rd) {
             card.virus_counter += 1;
+        }
+    }
+}
+
+fn applyIdentityOnSuccessfulRun(game: *Game) void {
+    const run = game.run orelse return;
+    // Zahya Sadeghi: gain 1cr per card accessed when HQ/R&D run ends (1/turn)
+    if (game.runner_identity.code != null and game.runner_identity.code.? == 30010) {
+        if (!game.turn_events.zahya_triggered_this_turn) {
+            if (run.server.len > 0 and (std.mem.eql(u8, run.server[0], "hq") or std.mem.eql(u8, run.server[0], "rnd"))) {
+                const accessed = run.accessed_count;
+                if (accessed > 0) {
+                    game.runner_credit += accessed;
+                    game.turn_events.zahya_triggered_this_turn = true;
+                }
+            }
         }
     }
 }
