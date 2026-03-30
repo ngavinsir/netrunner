@@ -104,6 +104,7 @@ pub const InstalledAbilityKind = enum(u8) {
     start_of_turn_credits, // Nico Campaign: auto-take credits at start of corp turn
     trash_for_virus_credits, // Fermenter: click + trash to gain N credits per virus counter
     trash_for_damage, // Clearinghouse: click + trash to do 1 meat damage per advancement counter
+    remove_from_game_shuffle, // Spin Doctor: remove from game, shuffle up to 2 from Archives into R&D
 };
 
 pub const SubroutineKind = enum(u8) {

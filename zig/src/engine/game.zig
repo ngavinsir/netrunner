@@ -49,8 +49,9 @@ pub const CardSpec = struct {
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_encounter: ?*const fn (*Game, *const state.CardInstance) anyerror!void = null,
+    on_rez: ?*const fn (*Game) anyerror!void = null,
     // Event trigger system: identity/card events fire at game events
-    event_trigger: ?state.GameEvent = null,
+    event_match: ?*const fn (state.GameEvent) bool = null,
     on_event: ?*const fn (*Game) anyerror!void = null,
 };
 
@@ -70,7 +71,7 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "The Syndicate: Profit over Principle", .side = .corp, .code = 30077, .card_type = "Identity" },
     .{ .title = "The Catalyst: Convention Breaker", .side = .runner, .code = 30076, .card_type = "Identity" },
     .{ .title = "Haas-Bioroid: Precision Design", .side = .corp, .code = 30035, .card_type = "Identity",
-        .event_trigger = .agenda_scored,
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .agenda_scored; } }.m,
         .on_event = &struct {
             fn handle(g: *Game) anyerror!void {
                 if (g.corp_discard.items.len == 0) return;
@@ -92,7 +93,7 @@ pub const all_cards = [_]CardSpec{
         }.handle,
     },
     .{ .title = "Jinteki: Restoring Humanity", .side = .corp, .code = 30043, .card_type = "Identity",
-        .event_trigger = .corp_end_turn,
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .corp_end_turn; } }.m,
         .on_event = &struct {
             fn handle(g: *Game) anyerror!void {
                 if (g.corp_discard.items.len > 0) {
@@ -102,7 +103,7 @@ pub const all_cards = [_]CardSpec{
         }.handle,
     },
     .{ .title = "NBN: Reality Plus", .side = .corp, .code = 30051, .card_type = "Identity",
-        .event_trigger = .runner_gain_tag,
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .runner_gain_tag; } }.m,
         .on_event = &struct {
             fn handle(g: *Game) anyerror!void {
                 if (g.turn_events.runner_gain_tag_count != 1) return; // first-event? check
@@ -148,7 +149,7 @@ pub const all_cards = [_]CardSpec{
         // Advance trigger is handled inline in addAdvancementCounter since it needs the card's old state
     },
     .{ .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal", .side = .runner, .code = 30001, .card_type = "Identity",
-        .event_trigger = .runner_trash_corp_card,
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .runner_trash_corp_card; } }.m,
         .on_event = &struct {
             fn handle(g: *Game) anyerror!void {
                 if (g.turn_events.runner_trash_corp_card_count == 1) { // first-event?
@@ -160,7 +161,7 @@ pub const all_cards = [_]CardSpec{
     },
     .{ .title = "T\xc4\x81o Salonga: Telepresence Magician", .side = .runner, .code = 30019, .card_type = "Identity" },
     .{ .title = "Zahya Sadeghi: Versatile Smuggler", .side = .runner, .code = 30010, .card_type = "Identity",
-        .event_trigger = .successful_run_ends,
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .successful_run_ends; } }.m,
         .on_event = &struct {
             fn handle(g: *Game) anyerror!void {
                 if (g.turn_events.successful_run_ends_count != 1) return; // once per turn
@@ -919,10 +920,29 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     .{ .title = "Malapert Data Vault", .side = .corp, .code = 30066, .card_type = "Upgrade", .cost = 1, .trash_cost = 4, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Spin Doctor", .side = .corp, .code = 30053, .card_type = "Asset", .subtypes = &.{"Character"}, .cost = 0, .trash_cost = 2, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Spin Doctor", .side = .corp, .code = 30053, .card_type = "Asset", .subtypes = &.{"Character"}, .cost = 0, .trash_cost = 2, .install = .{ .kind = .corp_remote_only },
+        .on_rez = &struct {
+            fn rez(g: *Game) anyerror!void {
+                try drawCards(g, .corp, 2);
+            }
+        }.rez,
+        .installed_ability = .{
+            .kind = .remove_from_game_shuffle,
+            .click_cost = 0, // no click cost — it's a paid ability usable anytime
+        },
+    },
     // --- Phase 3: Consoles ---
     .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true } },
-    .{ .title = "Pantograph", .side = .runner, .code = 30023, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true } },
+    .{ .title = "Pantograph", .side = .runner, .code = 30023, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true },
+        .event_match = &struct {
+            fn m(e: state.GameEvent) bool { return e == .agenda_scored or e == .agenda_stolen; }
+        }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                g.runner_credit += 1;
+            }
+        }.handle,
+    },
     // --- Phase 4: Trojans ---
     .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .is_trojan = true,
@@ -2632,32 +2652,42 @@ fn addRunnerTag(generated: *Game, count: u8) !bool {
 
 /// Fire a game event, checking identity and installed cards for matching triggers.
 /// Returns true if a prompt was opened (caller should return to let prompt resolve).
+fn cardMatchesEvent(code: ?u32, event: state.GameEvent) bool {
+    const c = code orelse return false;
+    const spec = lookupCardSpecByCode(c) orelse return false;
+    const matcher = spec.event_match orelse return false;
+    return matcher(event);
+}
+
 fn fireEvent(generated: *Game, event: state.GameEvent) !bool {
     // Check corp identity
-    if (generated.corp_identity.code) |code| {
-        if (lookupCardSpecByCode(code)) |spec| {
-            if (spec.event_trigger != null and spec.event_trigger.? == event) {
-                if (spec.on_event) |handler| {
-                    try handler(generated);
-                    // If a prompt was opened, return true
-                    if (generated.corp_prompt_state != null) {
-                        const pt = generated.corp_prompt_state.?.prompt_type;
-                        if (!std.mem.eql(u8, pt, "run") and !std.mem.eql(u8, pt, "waiting")) return true;
-                    }
+    if (cardMatchesEvent(generated.corp_identity.code, event)) {
+        if (lookupCardSpecByCode(generated.corp_identity.code.?)) |spec| {
+            if (spec.on_event) |handler| {
+                try handler(generated);
+                if (generated.corp_prompt_state) |ps| {
+                    if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
                 }
             }
         }
     }
     // Check runner identity
-    if (generated.runner_identity.code) |code| {
-        if (lookupCardSpecByCode(code)) |spec| {
-            if (spec.event_trigger != null and spec.event_trigger.? == event) {
+    if (cardMatchesEvent(generated.runner_identity.code, event)) {
+        if (lookupCardSpecByCode(generated.runner_identity.code.?)) |spec| {
+            if (spec.on_event) |handler| {
+                try handler(generated);
+                if (generated.runner_prompt_state) |ps| {
+                    if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
+                }
+            }
+        }
+    }
+    // Check runner installed hardware
+    for (generated.runner_rig_hardware.items) |hw| {
+        if (cardMatchesEvent(hw.code, event)) {
+            if (lookupCardSpecByCode(hw.code.?)) |spec| {
                 if (spec.on_event) |handler| {
                     try handler(generated);
-                    if (generated.runner_prompt_state != null) {
-                        const pt = generated.runner_prompt_state.?.prompt_type;
-                        if (!std.mem.eql(u8, pt, "run") and !std.mem.eql(u8, pt, "waiting")) return true;
-                    }
                 }
             }
         }
@@ -3005,6 +3035,7 @@ fn applyStealAgendaChoice(
     if (generated.run) |*mutable_run| {
         mutable_run.did_steal_this_run = true;
     }
+    _ = try fireEvent(generated, .agenda_stolen);
     try removeAccessedCard(generated, run);
 
     // On-steal agenda effects
@@ -4002,6 +4033,7 @@ fn applyInstalledAbility(
                 },
                 .start_of_turn_credits => return error.UnsupportedAbility, // auto-trigger, not a click action
                 .trash_for_damage => return error.UnsupportedAbility, // corp-only
+                .remove_from_game_shuffle => return error.UnsupportedAbility, // corp-only
                 .none => return error.UnsupportedAbility,
             }
 
@@ -4051,6 +4083,21 @@ fn applyInstalledAbility(
                         try trashRandomRunnerHandCards(generated, damage);
                         updateTerminalState(generated);
                         if (generated.game_over) return;
+                    }
+                },
+                .remove_from_game_shuffle => {
+                    // Spin Doctor: remove from game, shuffle up to 2 from Archives into R&D
+                    // Remove card from server (remove from game, not to Archives)
+                    _ = generated.corp_servers.items[server_index].content.orderedRemove(card_index);
+                    try removeServerIfEmpty(generated, server_index);
+                    // Shuffle up to 2 cards from Archives into R&D (auto-pick first 2)
+                    var shuffled: u8 = 0;
+                    while (shuffled < 2 and generated.corp_discard.items.len > 0) : (shuffled += 1) {
+                        const removed = generated.corp_discard.orderedRemove(0);
+                        try generated.corp_deck.append(generated.backing_allocator, removed);
+                    }
+                    if (shuffled > 0) {
+                        try shuffleDeck(generated, .corp);
                     }
                 },
                 .place_credits, .break_subroutine, .pump_strength, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits => return error.UnsupportedAbility,
@@ -4218,6 +4265,15 @@ fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !vo
     // Pay rez cost and set rezzed
     generated.corp_credit -= rez_cost;
     card.rezzed = true;
+
+    // On-rez trigger (Spin Doctor: draw 2)
+    if (card.code) |code| {
+        if (lookupCardSpecByCode(code)) |spec| {
+            if (spec.on_rez) |handler| {
+                try handler(generated);
+            }
+        }
+    }
 
     // After rezzing, corp still has priority — regenerate actions with updated state
     const run = &generated.run;
@@ -5976,6 +6032,7 @@ fn installedAbilityLabel(
         .start_of_turn_credits => allocator.dupe(u8, "Take credits (automatic)"),
         .trash_for_virus_credits => std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{@as(u16, card.virus_counter) * @as(u16, card.installed_ability.trash_for_virus_credits)}),
         .trash_for_damage => std.fmt.allocPrint(allocator, "Trash to do {d} meat damage", .{card.advancement_counter}),
+        .remove_from_game_shuffle => allocator.dupe(u8, "Remove from game to shuffle Archives"),
         .none => allocator.dupe(u8, "Use ability"),
     };
 }
@@ -6021,6 +6078,8 @@ fn hasCorpInstalledAbilityAction(card: state.CardInstance) bool {
     if (card.ability_used_this_turn and card.installed_ability.once_per_turn) return false;
     // Clearinghouse: trash_for_damage requires advancement counters
     if (card.installed_ability.kind == .trash_for_damage) return card.advancement_counter > 0;
+    // Spin Doctor: remove_from_game_shuffle is always available when rezzed (no click cost, no counters needed)
+    if (card.installed_ability.kind == .remove_from_game_shuffle) return true;
     return card.credit_counter > 0;
 }
 

@@ -2832,7 +2832,7 @@ fn findRunActionAny(actions: []const state.LegalAction) ?state.LegalAction {
 fn isSafeInstalledAbility(action: state.LegalAction) bool {
     const ability = action.installed_ability orelse return false;
     return switch (ability) {
-        .take_credits, .place_credits, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits, .trash_for_damage => true,
+        .take_credits, .place_credits, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits, .trash_for_damage, .remove_from_game_shuffle => true,
         .break_subroutine, .pump_strength, .none => false,
     };
 }
