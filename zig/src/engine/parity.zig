@@ -2077,10 +2077,16 @@ fn filterOracleComparableActions(
 
     for (actions) |action| {
         switch (action.kind) {
-            .install_from_hand => continue,
+            // install_from_hand maps to Clojure's play-from-hand — include with kind remapped
+            .install_from_hand => {
+                var remapped = action;
+                remapped.kind = .play_from_hand;
+                try filtered.append(allocator, remapped);
+                continue;
+            },
             .rez_non_ice, .rez_ice => continue, // Zig offers rez actions during runs; Clojure doesn't list them
             .advance, .score => continue, // Per-card advance/score — Clojure exports differently
-            .jack_out => continue, // Clojure doesn't export jack-out in oracle (it's a separate UI command)
+            // jack_out is exported by both Clojure and Zig — include in comparison
             .prompt_choice => {
                 // Clojure's select prompts use card-click selection — the choice format
                 // differs fundamentally from Zig's prompt choices. Filter all select-type
