@@ -7201,40 +7201,69 @@ fn iceInstallChoices(
     allocator: std.mem.Allocator,
     game: *const Game,
 ) ![]const state.PromptChoice {
-    // ICE can be installed on any central or "New remote"
+    // ICE can be installed on any server (centrals + existing remotes + "New remote")
     // Filter out servers where the install cost exceeds available credits
-    // Order must match oracle: Archives, HQ, New remote, R&D
-    const entries = [_]struct { name: []const u8, index: ?usize }{
+    // Order must match oracle: Archives, HQ, New remote, R&D, Server 1, Server 2, ...
+    var count: usize = 0;
+    // Centrals
+    const central_names = [_]struct { name: []const u8, index: usize }{
         .{ .name = "Archives", .index = 2 },
         .{ .name = "HQ", .index = 0 },
-        .{ .name = "New remote", .index = null }, // always cost 0
-        .{ .name = "R&D", .index = 1 },
     };
-    var count: usize = 0;
-    for (entries) |entry| {
-        if (entry.index) |idx| {
-            if (idx < game.corp_servers.items.len) {
-                const ice_count: u16 = @intCast(game.corp_servers.items[idx].ices.items.len);
-                if (game.corp_credit >= ice_count) count += 1;
-            }
-        } else {
-            count += 1; // New remote always affordable
+    for (central_names) |entry| {
+        if (entry.index < game.corp_servers.items.len) {
+            const ice_count: u16 = @intCast(game.corp_servers.items[entry.index].ices.items.len);
+            if (game.corp_credit >= ice_count) count += 1;
         }
     }
+    count += 1; // "New remote" always affordable
+    // R&D
+    if (1 < game.corp_servers.items.len) {
+        const rnd_ice: u16 = @intCast(game.corp_servers.items[1].ices.items.len);
+        if (game.corp_credit >= rnd_ice) count += 1;
+    }
+    // Existing remotes
+    var remote_count: usize = 0;
+    for (game.corp_servers.items, 0..) |server, si| {
+        if (si >= 3) {
+            const ice_count: u16 = @intCast(server.ices.items.len);
+            if (game.corp_credit >= ice_count) {
+                remote_count += 1;
+            }
+        }
+    }
+    count += remote_count;
+
     const choices = try allocator.alloc(state.PromptChoice, count);
     var next: usize = 0;
-    for (entries) |entry| {
-        if (entry.index) |idx| {
-            if (idx < game.corp_servers.items.len) {
-                const ice_count: u16 = @intCast(game.corp_servers.items[idx].ices.items.len);
-                if (game.corp_credit >= ice_count) {
-                    choices[next] = stringChoice(entry.name);
-                    next += 1;
-                }
+    for (central_names) |entry| {
+        if (entry.index < game.corp_servers.items.len) {
+            const ice_count: u16 = @intCast(game.corp_servers.items[entry.index].ices.items.len);
+            if (game.corp_credit >= ice_count) {
+                choices[next] = stringChoice(entry.name);
+                next += 1;
             }
-        } else {
-            choices[next] = stringChoice(entry.name);
+        }
+    }
+    choices[next] = stringChoice("New remote");
+    next += 1;
+    if (1 < game.corp_servers.items.len) {
+        const rnd_ice: u16 = @intCast(game.corp_servers.items[1].ices.items.len);
+        if (game.corp_credit >= rnd_ice) {
+            choices[next] = stringChoice("R&D");
             next += 1;
+        }
+    }
+    // Existing remotes as "Server 1", "Server 2", ...
+    var remote_num: usize = 1;
+    for (game.corp_servers.items, 0..) |server, si| {
+        if (si >= 3) {
+            const ice_count: u16 = @intCast(server.ices.items.len);
+            if (game.corp_credit >= ice_count) {
+                choices[next] = stringChoice(try std.fmt.allocPrint(allocator, "Server {}", .{remote_num}));
+                next += 1;
+            }
+            remote_num += 1;
         }
     }
     return choices;
@@ -7347,6 +7376,8 @@ fn installCard(
         2
     else if (std.mem.eql(u8, choice_text, "New remote"))
         null
+    else if (std.mem.startsWith(u8, choice_text, "Server "))
+        (std.fmt.parseInt(usize, choice_text["Server ".len..], 10) catch return error.UnsupportedChoice) + 2
     else
         return error.UnsupportedChoice;
 

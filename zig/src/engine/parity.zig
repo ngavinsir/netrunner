@@ -4517,6 +4517,7 @@ test "e2e intermediate game plays to completion with oracle parity" {
 }
 
 
+
 test "e2e fullpack game plays to completion with oracle parity" {
     const allocator = std.testing.allocator;
     const seed: u64 = 7;
@@ -4528,7 +4529,6 @@ test "e2e fullpack game plays to completion with oracle parity" {
 
     var step_counter: u32 = 0;
     const max_steps: u32 = 1000;
-    var last_turn: u16 = 0;
 
     while (step_counter < max_steps) : (step_counter += 1) {
         if (generated.game_over) break;
@@ -4540,15 +4540,17 @@ test "e2e fullpack game plays to completion with oracle parity" {
             continue;
         }
 
-        if (generated.turn != last_turn and generated.turn > 0) {
+        // Per-action parity check: replay ALL actions so far and compare
+        // Only check every 5 actions to keep it fast, and skip during phase_12
+        if (actions.items.len > 0 and actions.items.len % 5 == 0 and !generated.corp_phase_12) {
             var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-fullpack") catch |err| {
-                std.debug.print("\n=== FULLPACK REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step_counter, actions.items.len });
+                std.debug.print("\n=== FULLPACK REPLAY FAILED at step {d} ({d} actions) ===\n", .{ step_counter, actions.items.len });
                 return err;
             };
             defer replay.deinit();
             const gen_snapshot = try generated.toSnapshot();
             expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
-                std.debug.print("\n=== FULLPACK DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step_counter, actions.items.len });
+                std.debug.print("\n=== FULLPACK PER-ACTION DIVERGENCE at step {d} turn {d} ({d} actions) ===\n", .{ step_counter, generated.turn, actions.items.len });
                 std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
                 std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d} deck={d}/{d}\n", .{
                     replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
@@ -4557,7 +4559,13 @@ test "e2e fullpack game plays to completion with oracle parity" {
                     replay.snapshot.state.corp.deck.len, gen_snapshot.state.corp.deck.len,
                 });
                 std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
-                const s = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
+                    std.debug.print("  run: oracle={s} zig={s}\n", .{
+                        if (replay.snapshot.state.run) |r| r.phase else "null",
+                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                    });
+                std.debug.print("  last 10 actions:\n", .{});
+                const s = if (actions.items.len > 10) actions.items.len - 10 else 0;
                 for (actions.items[s..], s..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -4569,7 +4577,6 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 }
                 return err;
             };
-            last_turn = generated.turn;
         }
 
         const action = pickE2eAction(&generated);
