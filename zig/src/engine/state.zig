@@ -234,6 +234,16 @@ pub const InstalledAbilitySpec = struct {
     trojan_derez_threshold: u8 = 0, // Tranquilizer: derez host ICE at N+ virus counters
 };
 
+pub const GameEvent = enum(u8) {
+    agenda_scored,
+    agenda_stolen,
+    runner_gain_tag,
+    advance,
+    runner_trash_corp_card, // Loup: first trash-on-access
+    successful_run_ends, // Zahya: gain credits on HQ/R&D run end
+    corp_end_turn, // Jinteki: Restoring Humanity
+};
+
 pub const CardReference = struct {
     title: ?[]const u8 = null,
     printed_title: ?[]const u8 = null,
@@ -411,9 +421,10 @@ pub const TurnEvents = struct {
     made_run_on_archives: bool = false,
     programs_installed_this_turn: u8 = 0,
     agenda_points_scored_this_turn: u8 = 0, // Neurospike: track AP scored this turn
-    zahya_triggered_this_turn: bool = false, // Zahya: 1/turn trigger tracking
-    loup_triggered_this_turn: bool = false, // Loup: first trash-on-access trigger
-    reality_plus_triggered_this_turn: bool = false, // NBN Reality Plus: first tag trigger
+    // Generic event counters (replaces card-specific flags)
+    runner_gain_tag_count: u8 = 0, // How many times runner gained tags this turn
+    runner_trash_corp_card_count: u8 = 0, // How many times runner trashed corp cards on access this turn
+    successful_run_ends_count: u8 = 0, // How many successful runs ended this turn (for HQ/R&D)
 };
 
 pub const LegalAction = struct {

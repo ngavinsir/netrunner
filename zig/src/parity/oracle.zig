@@ -700,6 +700,32 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // HB: Precision Design: corp picks card from Archives to add to HQ
+        if (std.mem.eql(u8, action.prompt_type.?, "precision-design-archive")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "precision-design-archive", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // NBN: Reality Plus: corp chooses gain 2cr or draw 2
+        if (std.mem.eql(u8, action.prompt_type.?, "reality-plus")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "reality-plus", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Anoetic Void: corp chooses to use ability
         if (std.mem.eql(u8, action.prompt_type.?, "anoetic-void")) {
             try writer.writeByte('{');
@@ -889,6 +915,8 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
     if (std.mem.eql(u8, prompt_type, "longevity-serum-trash")) return "select";
     if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
+    if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";

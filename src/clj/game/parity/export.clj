@@ -982,6 +982,32 @@
         (when match
           (main/handle-action state :corp "choice" {:choice match})))
 
+      :precision-design-archive
+      ;; HB: Precision Design — corp picks a card from Archives to add to HQ
+      (let [choice-text (:choice action)]
+        (if (= choice-text "Done")
+          (let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+                done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
+            (when done-choice
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))
+          (let [discard (get-in @state [:corp :discard])
+                card (first (filter #(= choice-text (:title %)) discard))
+                selected (first (get-in @state [:corp :selected]))
+                select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                               (:eid selected))]
+            (when (and card select-eid)
+              (main/handle-action state :corp "select" {:card card :eid select-eid})))))
+
+      :reality-plus
+      ;; NBN: Reality Plus — corp chooses gain 2cr or draw 2 on first tag
+      (let [choice (:choice action)
+            corp-prompts (get-in @state [:corp :prompt])
+            prompt (first (filter #(not= :waiting (:prompt-type %)) corp-prompts))
+            choices (:choices prompt)
+            match (first (filter #(= choice (if (map? %) (:value %) (str %))) choices))]
+        (when match
+          (main/handle-action state :corp "choice" {:choice match})))
+
       :longevity-serum-trash
       ;; Longevity Serum: corp picks a card from HQ to trash (or "Done" to stop).
       (let [choice-text (:choice action)]
@@ -1165,10 +1191,24 @@
   ([seed actions]
    (replay-bundle-after-actions seed actions nil))
   ([seed actions matchup]
-   (let [state (cond
+   (let [make-identity-state (fn [corp-id-code corp-id-title runner-id-code runner-id-title]
+                               (ensure-card-defs-loaded!)
+                               (register-complete-cards!)
+                               (let [corp-deck (assoc preconstructed/gateway-complete-corp :identity {:title corp-id-title :side "Corp" :code corp-id-code})
+                                     runner-deck (assoc preconstructed/gateway-complete-runner :identity {:title runner-id-title :side "Runner" :code runner-id-code})]
+                                 (set-up/init-game {:gameid 1 :format "system-gateway" :seed seed
+                                                    :players [{:side "Corp" :user {:username "Corp"} :deck (prepare-precon-deck "Corp" corp-deck)}
+                                                              {:side "Runner" :user {:username "Runner"} :deck (prepare-precon-deck "Runner" runner-deck)}]})))
+         state (cond
                  (= matchup "system-gateway-intermediate") (intermediate-state seed)
                  (= matchup "system-gateway-advanced") (advanced-state seed)
                  (= matchup "system-gateway-complete") (complete-state seed)
+                 (= matchup "system-gateway-hb") (make-identity-state 30035 "Haas-Bioroid: Precision Design" 30076 "The Catalyst: Convention Breaker")
+                 (= matchup "system-gateway-jinteki") (make-identity-state 30043 "Jinteki: Restoring Humanity" 30076 "The Catalyst: Convention Breaker")
+                 (= matchup "system-gateway-nbn") (make-identity-state 30051 "NBN: Reality Plus" 30076 "The Catalyst: Convention Breaker")
+                 (= matchup "system-gateway-weyland") (make-identity-state 30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker")
+                 (= matchup "system-gateway-zahya") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30010 "Zahya Sadeghi: Versatile Smuggler")
+                 (= matchup "system-gateway-loup") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30001 "René \"Loup\" Arcemont: Party Animal")
                  :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [[idx action] (map-indexed vector actions)]

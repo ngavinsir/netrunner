@@ -49,6 +49,9 @@ pub const CardSpec = struct {
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_encounter: ?*const fn (*Game, *const state.CardInstance) anyerror!void = null,
+    // Event trigger system: identity/card events fire at game events
+    event_trigger: ?state.GameEvent = null,
+    on_event: ?*const fn (*Game) anyerror!void = null,
 };
 
 pub const SideSpec = struct {
@@ -66,13 +69,111 @@ pub const MatchupSpec = struct {
 pub const all_cards = [_]CardSpec{
     .{ .title = "The Syndicate: Profit over Principle", .side = .corp, .code = 30077, .card_type = "Identity" },
     .{ .title = "The Catalyst: Convention Breaker", .side = .runner, .code = 30076, .card_type = "Identity" },
-    .{ .title = "Haas-Bioroid: Precision Design", .side = .corp, .code = 30035, .card_type = "Identity" },
-    .{ .title = "Jinteki: Restoring Humanity", .side = .corp, .code = 30043, .card_type = "Identity" },
-    .{ .title = "NBN: Reality Plus", .side = .corp, .code = 30051, .card_type = "Identity" },
-    .{ .title = "Weyland Consortium: Built to Last", .side = .corp, .code = 30059, .card_type = "Identity" },
-    .{ .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal", .side = .runner, .code = 30001, .card_type = "Identity" },
+    .{ .title = "Haas-Bioroid: Precision Design", .side = .corp, .code = 30035, .card_type = "Identity",
+        .event_trigger = .agenda_scored,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.corp_discard.items.len == 0) return;
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                for (g.corp_discard.items, 0..) |card, idx| {
+                    try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                }
+                try choices.append(allocator, stringChoice("Done"));
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "precision-design-archive"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = null,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.handle,
+    },
+    .{ .title = "Jinteki: Restoring Humanity", .side = .corp, .code = 30043, .card_type = "Identity",
+        .event_trigger = .corp_end_turn,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.corp_discard.items.len > 0) {
+                    g.corp_credit += 1;
+                }
+            }
+        }.handle,
+    },
+    .{ .title = "NBN: Reality Plus", .side = .corp, .code = 30051, .card_type = "Identity",
+        .event_trigger = .runner_gain_tag,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.turn_events.runner_gain_tag_count != 1) return; // first-event? check
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                try choices.append(allocator, stringChoice("Gain 2 [Credits]"));
+                try choices.append(allocator, stringChoice("Draw 2 cards"));
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "reality-plus"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = null,
+                };
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "waiting"),
+                    .choices = &.{},
+                    .source_card = null,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.handle,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "Gain 2 [Credits]")) {
+                    g.corp_credit += 2;
+                } else if (std.mem.eql(u8, choice_text, "Draw 2 cards")) {
+                    try drawCards(g, .corp, 2);
+                } else return error.UnsupportedChoice;
+                g.corp_prompt_state = null;
+                g.runner_prompt_state = null;
+                if (g.run != null) {
+                    g.decision_side = .runner;
+                    g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
+                } else {
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
+                }
+            }
+        }.choice,
+    },
+    .{ .title = "Weyland Consortium: Built to Last", .side = .corp, .code = 30059, .card_type = "Identity",
+        // Advance trigger is handled inline in addAdvancementCounter since it needs the card's old state
+    },
+    .{ .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal", .side = .runner, .code = 30001, .card_type = "Identity",
+        .event_trigger = .runner_trash_corp_card,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.turn_events.runner_trash_corp_card_count == 1) { // first-event?
+                    g.runner_credit += 1;
+                    try drawCards(g, .runner, 1);
+                }
+            }
+        }.handle,
+    },
     .{ .title = "T\xc4\x81o Salonga: Telepresence Magician", .side = .runner, .code = 30019, .card_type = "Identity" },
-    .{ .title = "Zahya Sadeghi: Versatile Smuggler", .side = .runner, .code = 30010, .card_type = "Identity" },
+    .{ .title = "Zahya Sadeghi: Versatile Smuggler", .side = .runner, .code = 30010, .card_type = "Identity",
+        .event_trigger = .successful_run_ends,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.turn_events.successful_run_ends_count != 1) return; // first-event? for HQ/R&D
+                const run = g.run orelse return;
+                if (run.server.len == 0) return;
+                if (!std.mem.eql(u8, run.server[0], "hq") and !std.mem.eql(u8, run.server[0], "rnd")) return;
+                const accessed = run.accessed_count;
+                if (accessed > 0) {
+                    g.runner_credit += accessed;
+                }
+            }
+        }.handle,
+    },
     .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
     .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
     .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
@@ -1149,6 +1250,38 @@ pub const system_gateway_complete = MatchupSpec{
     },
 };
 
+// Identity-specific matchups for parity testing
+pub const system_gateway_hb = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30035, .deck_lines = &complete_corp_deck_lines }, // HB: Precision Design
+    .runner = .{ .identity_code = 30076, .deck_lines = &complete_runner_deck_lines },
+};
+pub const system_gateway_jinteki = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30043, .deck_lines = &complete_corp_deck_lines }, // Jinteki: Restoring Humanity
+    .runner = .{ .identity_code = 30076, .deck_lines = &complete_runner_deck_lines },
+};
+pub const system_gateway_nbn = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30051, .deck_lines = &complete_corp_deck_lines }, // NBN: Reality Plus
+    .runner = .{ .identity_code = 30076, .deck_lines = &complete_runner_deck_lines },
+};
+pub const system_gateway_weyland = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30059, .deck_lines = &complete_corp_deck_lines }, // Weyland: Built to Last
+    .runner = .{ .identity_code = 30076, .deck_lines = &complete_runner_deck_lines },
+};
+pub const system_gateway_zahya = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30077, .deck_lines = &complete_corp_deck_lines },
+    .runner = .{ .identity_code = 30010, .deck_lines = &complete_runner_deck_lines }, // Zahya
+};
+pub const system_gateway_loup = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30077, .deck_lines = &complete_corp_deck_lines },
+    .runner = .{ .identity_code = 30001, .deck_lines = &complete_runner_deck_lines }, // Loup
+};
+
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {
         if (spec.code == card_code) return spec;
@@ -1759,11 +1892,9 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
         .corp => generated.corp_prompt_state = null,
         .runner => generated.runner_prompt_state = null,
     }
-    // Jinteki: Restoring Humanity — gain 1cr at end of corp discard phase if facedown card in Archives
-    if (side == .corp and generated.corp_identity.code != null and generated.corp_identity.code.? == 30043) {
-        if (generated.corp_discard.items.len > 0) {
-            generated.corp_credit += 1;
-        }
+    // Fire corp_end_turn event (Jinteki: Restoring Humanity trigger)
+    if (side == .corp) {
+        _ = try fireEvent(generated, .corp_end_turn);
     }
     generated.decision_side = next_side;
     generated.legal_actions = try startTurnActions(generated.arena.allocator(), next_side);
@@ -1899,6 +2030,39 @@ fn applyPromptChoice(
 
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "jack-out")) {
         try applyJackOutPromptChoice(generated, choice_text);
+        return;
+    }
+
+    // NBN: Reality Plus: handled by card spec on_prompt_choice via generic handler below
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "reality-plus")) {
+        if (lookupCardSpecByCode(30051)) |spec| {
+            if (spec.on_prompt_choice) |handler| {
+                try handler(generated, choice_text);
+                return;
+            }
+        }
+        return error.UnsupportedPrompt;
+    }
+
+    // HB: Precision Design: select card from Archives to add to HQ
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "precision-design-archive")) {
+        if (std.mem.eql(u8, choice_text, "Done")) {
+            generated.corp_prompt_state = null;
+            generated.decision_side = .corp;
+            generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+            return;
+        }
+        // Find the card in Archives by title and move to HQ
+        for (generated.corp_discard.items, 0..) |card, idx| {
+            if (std.mem.eql(u8, card.title, choice_text)) {
+                const removed = generated.corp_discard.orderedRemove(idx);
+                try generated.corp_hand.append(generated.backing_allocator, removed);
+                break;
+            }
+        }
+        generated.corp_prompt_state = null;
+        generated.decision_side = .corp;
+        generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
         return;
     }
 
@@ -2187,16 +2351,8 @@ fn applyScoreAgendaChoice(
         }
     }
 
-    // HB: Precision Design — add 1 card from Archives to HQ when scoring
-    if (generated.corp_identity.code != null and generated.corp_identity.code.? == 30035) {
-        if (generated.corp_discard.items.len > 0) {
-            // Auto-resolve: take the first card from Archives (top card)
-            // Full implementation would show a select prompt, but this matches
-            // the oracle's auto-resolve behavior for competitive play
-            const card = generated.corp_discard.orderedRemove(0);
-            try generated.corp_hand.append(generated.backing_allocator, card);
-        }
-    }
+    // Fire agenda_scored event (HB: Precision Design trigger)
+    if (try fireEvent(generated, .agenda_scored)) return;
 
     generated.corp_prompt_state = null;
     generated.decision_side = .corp;
@@ -2459,22 +2615,51 @@ fn is_runner_tagged(tag: ?state.TagState) bool {
 }
 
 fn addRunnerTag(generated: *Game, count: u8) void {
-    const was_tagged = is_runner_tagged(generated.runner_tag);
     if (generated.runner_tag == null) {
         generated.runner_tag = .{ .base = 0, .total = count, .is_tagged = count > 0 };
     } else {
         generated.runner_tag.?.total += count;
         generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
     }
-    // NBN: Reality Plus — first tag each turn: gain 2cr (auto-resolve)
-    // Full implementation would need a prompt (gain 2cr or draw 2), but auto-resolving
-    // to 2cr matches competitive play and avoids complex flow interruption.
-    if (!was_tagged and count > 0 and !generated.turn_events.reality_plus_triggered_this_turn) {
-        if (generated.corp_identity.code != null and generated.corp_identity.code.? == 30051) {
-            generated.corp_credit += 2;
-            generated.turn_events.reality_plus_triggered_this_turn = true;
+    if (count > 0) {
+        generated.turn_events.runner_gain_tag_count += 1;
+    }
+}
+
+
+/// Fire a game event, checking identity and installed cards for matching triggers.
+/// Returns true if a prompt was opened (caller should return to let prompt resolve).
+fn fireEvent(generated: *Game, event: state.GameEvent) !bool {
+    // Check corp identity
+    if (generated.corp_identity.code) |code| {
+        if (lookupCardSpecByCode(code)) |spec| {
+            if (spec.event_trigger != null and spec.event_trigger.? == event) {
+                if (spec.on_event) |handler| {
+                    try handler(generated);
+                    // If a prompt was opened, return true
+                    if (generated.corp_prompt_state != null) {
+                        const pt = generated.corp_prompt_state.?.prompt_type;
+                        if (!std.mem.eql(u8, pt, "run") and !std.mem.eql(u8, pt, "waiting")) return true;
+                    }
+                }
+            }
         }
     }
+    // Check runner identity
+    if (generated.runner_identity.code) |code| {
+        if (lookupCardSpecByCode(code)) |spec| {
+            if (spec.event_trigger != null and spec.event_trigger.? == event) {
+                if (spec.on_event) |handler| {
+                    try handler(generated);
+                    if (generated.runner_prompt_state != null) {
+                        const pt = generated.runner_prompt_state.?.prompt_type;
+                        if (!std.mem.eql(u8, pt, "run") and !std.mem.eql(u8, pt, "waiting")) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
 }
 
 fn runner_had_successful_run_last_turn(generated: *const Game) bool {
@@ -2724,14 +2909,9 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     const spec = lookupCardSpec(accessed) orelse return error.UnsupportedAccessTarget;
     const trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
     try spendCredits(generated, .runner, trash_cost);
-    // Loup: first trash-on-access each turn: gain 1cr, draw 1
-    if (generated.runner_identity.code != null and generated.runner_identity.code.? == 30001) {
-        if (!generated.turn_events.loup_triggered_this_turn) {
-            generated.runner_credit += 1;
-            try drawCards(generated, .runner, 1);
-            generated.turn_events.loup_triggered_this_turn = true;
-        }
-    }
+    // Fire runner_trash_corp_card event (Loup trigger)
+    generated.turn_events.runner_trash_corp_card_count += 1;
+    if (try fireEvent(generated, .runner_trash_corp_card)) return;
     // AMAZE Amusements: if trashed during a run, record pending tags
     if (accessed.installed_ability.tags_on_agenda_steal_from_server > 0) {
         if (generated.run) |*mutable_run| {
@@ -4967,7 +5147,7 @@ fn completeRunWithoutAccess(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
-    applyIdentityOnSuccessfulRun(generated);
+    try applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -4987,7 +5167,7 @@ fn completeRunAfterAccess(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
-    applyIdentityOnSuccessfulRun(generated);
+    try applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -5007,7 +5187,7 @@ fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
-    applyIdentityOnSuccessfulRun(generated);
+    try applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -6231,20 +6411,9 @@ fn applyVirusCountersOnSuccessfulRun(game: *Game) void {
     }
 }
 
-fn applyIdentityOnSuccessfulRun(game: *Game) void {
-    const run = game.run orelse return;
-    // Zahya Sadeghi: gain 1cr per card accessed when HQ/R&D run ends (1/turn)
-    if (game.runner_identity.code != null and game.runner_identity.code.? == 30010) {
-        if (!game.turn_events.zahya_triggered_this_turn) {
-            if (run.server.len > 0 and (std.mem.eql(u8, run.server[0], "hq") or std.mem.eql(u8, run.server[0], "rnd"))) {
-                const accessed = run.accessed_count;
-                if (accessed > 0) {
-                    game.runner_credit += accessed;
-                    game.turn_events.zahya_triggered_this_turn = true;
-                }
-            }
-        }
-    }
+fn applyIdentityOnSuccessfulRun(game: *Game) !void {
+    game.turn_events.successful_run_ends_count += 1;
+    _ = try fireEvent(game, .successful_run_ends);
 }
 
 fn applyPennyshaverOnSuccessfulRun(game: *Game) void {
