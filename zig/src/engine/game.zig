@@ -1992,17 +1992,20 @@ pub fn applyStartTurn(
                 }
             }
 
-            // Virus-on-turn-start: Fermenter, Botulus, Tranquilizer
+            // Virus-on-turn-start: Fermenter (rig), Botulus/Tranquilizer (hosted on ICE)
             for (generated.runner_rig_program.items) |*prog| {
                 if (prog.installed_ability.virus_on_turn_start) {
                     prog.virus_counter += 1;
-                    // Tranquilizer: derez host ICE when virus counters >= threshold
-                    if (prog.installed_ability.trojan_derez_threshold > 0 and prog.virus_counter >= prog.installed_ability.trojan_derez_threshold) {
-                        if (prog.hosted_on_ice_server) |si| {
-                            if (prog.hosted_on_ice_index) |ii| {
-                                if (si < generated.corp_servers.items.len and ii < generated.corp_servers.items[si].ices.items.len) {
-                                    generated.corp_servers.items[si].ices.items[ii].rezzed = false;
-                                }
+                }
+            }
+            // Trojans hosted on ICE: increment virus counters and check Tranquilizer derez
+            for (generated.corp_servers.items) |*server| {
+                for (server.ices.items) |*ice| {
+                    for (ice.hosted) |*hosted| {
+                        if (hosted.installed_ability.virus_on_turn_start) {
+                            hosted.virus_counter += 1;
+                            if (hosted.installed_ability.trojan_derez_threshold > 0 and hosted.virus_counter >= hosted.installed_ability.trojan_derez_threshold) {
+                                ice.rezzed = false;
                             }
                         }
                     }
@@ -3082,15 +3085,20 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     var installed_card = try removeCardFromHand(generated, .runner, pending.card_index);
     installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
     installed_card.ability_used_this_turn = false;
-    installed_card.hosted_on_ice_server = @intCast(server_idx);
-    installed_card.hosted_on_ice_index = @intCast(ice_idx);
 
     // Virus-on-install
     if (installed_card.installed_ability.virus_on_install) {
         installed_card.virus_counter += 1;
         installed_card.virus_counter += @intCast(runnerCookbookBonus(generated));
     }
-    try generated.runner_rig_program.append(generated.backing_allocator, installed_card);
+    // Host trojan on the ICE card (matching Clojure's model)
+    const allocator = generated.arena.allocator();
+    var ice = &generated.corp_servers.items[server_idx].ices.items[ice_idx];
+    const new_hosted = try allocator.alloc(state.CardInstance, ice.hosted.len + 1);
+    @memcpy(new_hosted[0..ice.hosted.len], ice.hosted);
+    new_hosted[ice.hosted.len] = installed_card;
+    ice.hosted = new_hosted;
+
     generated.turn_events.programs_installed_this_turn += 1;
     if (generated.runner_memory) |*mem| {
         mem.used += pending.card.runner_install.mu_cost;
@@ -3098,9 +3106,7 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     }
     // Tranquilizer: check derez threshold immediately after install
     if (installed_card.installed_ability.trojan_derez_threshold > 0 and installed_card.virus_counter >= installed_card.installed_ability.trojan_derez_threshold) {
-        if (server_idx < generated.corp_servers.items.len and ice_idx < generated.corp_servers.items[server_idx].ices.items.len) {
-            generated.corp_servers.items[server_idx].ices.items[ice_idx].rezzed = false;
-        }
+        ice.rezzed = false;
     }
     generated.pending_install = null;
     generated.runner_prompt_state = null;
@@ -6162,18 +6168,12 @@ fn encounterActionsForState(
             if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
                 leech_count += 1;
             }
-            // Botulus: trojan hosted on current ICE with virus counters can break any sub
-            if (card.installed_ability.trojan_break_any and card.virus_counter > 0) {
-                // Check if this Botulus is hosted on the current ICE
-                if (card.hosted_on_ice_server != null and card.hosted_on_ice_index != null) {
-                    const run_2 = generated.run orelse continue;
-                    const target_2 = findMutableServerByRunPath(generated.corp_servers.items, run_2.server) catch continue;
-                    const ice_count_2 = target_2.server.ices.items.len;
-                    const current_ice_idx_2 = run_2.current_ice_index orelse continue;
-                    const actual_ice_idx_2 = ice_count_2 - 1 - current_ice_idx_2;
-                    if (card.hosted_on_ice_server.? == @as(u8, @intCast(target_2.index)) and card.hosted_on_ice_index.? == @as(u8, @intCast(actual_ice_idx_2))) {
-                        botulus_count += 1;
-                    }
+        }
+        // Botulus: check hosted cards on the current ICE
+        if (ice.hosted.len > 0) {
+            for (ice.hosted) |hosted| {
+                if (hosted.installed_ability.trojan_break_any and hosted.virus_counter > 0) {
+                    botulus_count += 1;
                 }
             }
         }
@@ -6264,26 +6264,15 @@ fn encounterActionsForState(
             }
         }
 
-        // Botulus: trojan break any subroutine (hosted on current ICE)
-        for (generated.runner_rig_program.items, 0..) |card, card_idx| {
-            if (!card.installed_ability.trojan_break_any or card.virus_counter == 0) continue;
-            if (card.hosted_on_ice_server == null or card.hosted_on_ice_index == null) continue;
-            const run_3 = generated.run orelse continue;
-            const target_3 = findMutableServerByRunPath(generated.corp_servers.items, run_3.server) catch continue;
-            const ice_count_3 = target_3.server.ices.items.len;
-            const current_ice_idx_3 = run_3.current_ice_index orelse continue;
-            const actual_ice_idx_3 = ice_count_3 - 1 - current_ice_idx_3;
-            if (card.hosted_on_ice_server.? != @as(u8, @intCast(target_3.index))) continue;
-            if (card.hosted_on_ice_index.? != @as(u8, @intCast(actual_ice_idx_3))) continue;
-
-            const combined_idx = generated.runner_rig_resources.items.len + card_idx;
+        // Botulus: trojan hosted on current ICE with virus counters can break any sub
+        for (ice.hosted) |hosted| {
+            if (!hosted.installed_ability.trojan_break_any or hosted.virus_counter == 0) continue;
             actions[next] = .{
                 .kind = .use_installed_ability,
                 .side = .runner,
-                .card_index = @intCast(combined_idx),
-                .card_title = try allocator.dupe(u8, card.title),
+                .card_title = try allocator.dupe(u8, hosted.title),
                 .installed_ability = .break_subroutine,
-                .label = try std.fmt.allocPrint(allocator, "Break 1 subroutine with {s}", .{card.title}),
+                .label = try std.fmt.allocPrint(allocator, "Break 1 subroutine with {s}", .{hosted.title}),
             };
             next += 1;
         }
@@ -6720,6 +6709,11 @@ fn deepCloneCard(allocator: std.mem.Allocator, card: state.CardInstance) !state.
         cloned.subtypes = subtypes_copy;
     }
     cloned.subroutines = try allocator.dupe(state.SubroutineSpec, card.subroutines);
+    if (card.hosted.len > 0) {
+        const hosted_copy = try allocator.alloc(state.CardInstance, card.hosted.len);
+        for (card.hosted, 0..) |h, i| hosted_copy[i] = try deepCloneCard(allocator, h);
+        cloned.hosted = hosted_copy;
+    }
     return cloned;
 }
 
@@ -7947,7 +7941,7 @@ fn beginMuOverflowPromptWithExtra(generated: *Game, extra_mu: u8) !bool {
     if (mem.used + extra_mu <= mem.base) return false;
 
     const allocator = generated.arena.allocator();
-    // List all installed programs as trash choices
+    // List installed programs as trash choices (trojans are on ICE, not in rig)
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
     defer choices_list.deinit(allocator);
     for (generated.runner_rig_program.items, 0..) |card, idx| {

@@ -306,8 +306,7 @@ pub const CardInstance = struct {
     advanceable: bool = false, // Pharos, Clearinghouse: can be advanced (beyond agendas/Urtica)
     advancement_strength_threshold: u8 = 0, // Pharos: str bonus starts at this many counters
     advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
-    hosted_on_ice_server: ?u8 = null, // Trojan: server index of host ICE
-    hosted_on_ice_index: ?u8 = null, // Trojan: ice index within server (from outermost)
+    hosted: []CardInstance = &.{}, // Cards hosted on this card (e.g., trojans on ICE)
 };
 
 pub const ServerState = struct {

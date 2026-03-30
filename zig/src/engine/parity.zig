@@ -1944,19 +1944,8 @@ fn expectSnapshotMatches(expected: state.GameSnapshot, actual: state.GameSnapsho
     try expectSameTitles(expected.state.runner.hand, actual.state.runner.hand);
     try expectSameTitles(expected.state.runner.deck, actual.state.runner.deck);
     try expectSameTitles(expected.state.runner.rig_hardware, actual.state.runner.rig_hardware);
-    // Filter out trojans (hosted on ICE) from program comparison — Clojure tracks them on the ICE host
-    const actual_programs = blk: {
-        var non_trojan: std.ArrayList(state.CardInstance) = .empty;
-        defer non_trojan.deinit(std.testing.allocator);
-        for (actual.state.runner.rig_program) |prog| {
-            if (prog.hosted_on_ice_server == null) {
-                try non_trojan.append(std.testing.allocator, prog);
-            }
-        }
-        break :blk try non_trojan.toOwnedSlice(std.testing.allocator);
-    };
-    defer std.testing.allocator.free(actual_programs);
-    try expectSameTitles(expected.state.runner.rig_program, actual_programs);
+    // Trojans are now hosted on ICE cards (matching Clojure), no filtering needed
+    try expectSameTitles(expected.state.runner.rig_program, actual.state.runner.rig_program);
     try expectInstalledResources(expected.state.runner.rig_resources, actual.state.runner.rig_resources);
 }
 
@@ -1970,26 +1959,53 @@ fn expectLiveActions(expected: []const state.LegalAction, actual: []const state.
     std.mem.sort(state.LegalAction, filtered_actual, {}, legalActionLessThan);
 
     try std.testing.expectEqual(filtered_expected.len, filtered_actual.len);
-    for (filtered_expected, filtered_actual) |lhs, rhs| {
+    for (filtered_expected, filtered_actual, 0..) |lhs, rhs, elem_idx| {
         const installed_equivalent = installedAbilityKindsEquivalent(lhs.kind, rhs.kind) or
             lhs.kind == .use_installed_ability or
             rhs.kind == .use_installed_ability;
         if (!installed_equivalent) {
-            try std.testing.expectEqual(lhs.kind, rhs.kind);
+            std.testing.expectEqual(lhs.kind, rhs.kind) catch |e| {
+                std.debug.print("ACTION MISMATCH at element {d}: kind oracle={s} zig={s}\n", .{ elem_idx, @tagName(lhs.kind), @tagName(rhs.kind) });
+                return e;
+            };
         }
-        try std.testing.expectEqual(lhs.side, rhs.side);
-        try expectOptionalString(if (lhs.choice) |choice| choice.text else null, if (rhs.choice) |choice| choice.text else null);
-        try expectOptionalString(lhs.server, rhs.server);
+        std.testing.expectEqual(lhs.side, rhs.side) catch |e| {
+            std.debug.print("ACTION MISMATCH at element {d}: side\n", .{elem_idx});
+            return e;
+        };
+        expectOptionalString(if (lhs.choice) |choice| choice.text else null, if (rhs.choice) |choice| choice.text else null) catch |e| {
+            std.debug.print("ACTION MISMATCH at element {d}: choice\n", .{elem_idx});
+            return e;
+        };
+        expectOptionalString(lhs.server, rhs.server) catch |e| {
+            std.debug.print("ACTION MISMATCH at element {d}: server oracle={s} zig={s}\n", .{ elem_idx, lhs.server orelse "null", rhs.server orelse "null" });
+            return e;
+        };
         if (lhs.card_index != null and rhs.card_index != null) {
-            try std.testing.expectEqual(lhs.card_index, rhs.card_index);
+            std.testing.expectEqual(lhs.card_index, rhs.card_index) catch |e| {
+                std.debug.print("ACTION MISMATCH at element {d}: card_index oracle={?d} zig={?d}\n", .{ elem_idx, lhs.card_index, rhs.card_index });
+                return e;
+            };
         }
         if (!installed_equivalent) {
-            try expectOptionalString(lhs.card_title, rhs.card_title);
+            expectOptionalString(lhs.card_title, rhs.card_title) catch |e| {
+                std.debug.print("ACTION MISMATCH at element {d}: card_title\n", .{elem_idx});
+                return e;
+            };
         }
         if (!installed_equivalent) {
-            try std.testing.expectEqual(lhs.basic_action, rhs.basic_action);
-            try std.testing.expectEqual(lhs.installed_ability, rhs.installed_ability);
-            try expectOptionalString(lhs.label, rhs.label);
+            std.testing.expectEqual(lhs.basic_action, rhs.basic_action) catch |e| {
+                std.debug.print("ACTION MISMATCH at element {d}: basic_action\n", .{elem_idx});
+                return e;
+            };
+            std.testing.expectEqual(lhs.installed_ability, rhs.installed_ability) catch |e| {
+                std.debug.print("ACTION MISMATCH at element {d}: installed_ability\n", .{elem_idx});
+                return e;
+            };
+            expectOptionalString(lhs.label, rhs.label) catch |e| {
+                std.debug.print("ACTION MISMATCH at element {d}: label\n", .{elem_idx});
+                return e;
+            };
         }
     }
 }
@@ -4639,14 +4655,24 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 for (dbg_fe) |a| {
                     std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
                     if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (a.card_index) |ci| std.debug.print(" idx={d}", .{ci});
+                    if (a.server) |s| std.debug.print(" srv={s}", .{s});
                     if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    if (a.label) |l| std.debug.print(" label={s}", .{l});
+                    if (a.basic_action) |ba| std.debug.print(" ba={s}", .{@tagName(ba)});
+                    if (a.installed_ability) |ia| std.debug.print(" ia={s}", .{@tagName(ia)});
                     std.debug.print("\n", .{});
                 }
                 std.debug.print("  filtered zig ({d}):\n", .{dbg_fa.len});
                 for (dbg_fa) |a| {
                     std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
                     if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (a.card_index) |ci| std.debug.print(" idx={d}", .{ci});
+                    if (a.server) |s| std.debug.print(" srv={s}", .{s});
                     if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    if (a.label) |l| std.debug.print(" label={s}", .{l});
+                    if (a.basic_action) |ba| std.debug.print(" ba={s}", .{@tagName(ba)});
+                    if (a.installed_ability) |ia| std.debug.print(" ia={s}", .{@tagName(ia)});
                     std.debug.print("\n", .{});
                 }
                 std.debug.print("  last 30 actions:\n", .{});
