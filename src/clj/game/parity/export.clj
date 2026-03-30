@@ -1345,6 +1345,13 @@
                      (swap! state assoc-in [side :prompt] cleaned)
                      (swap! state assoc-in [side :prompt-state] (first cleaned))))))))
          (apply-action! state normalized-action)
+         ;; Complete corp phase 12 — Clojure's start-turn uses async wait-for which
+         ;; doesn't finish inline. Manually call end-phase-12 to complete the mandatory
+         ;; draw before the oracle captures the snapshot.
+         (when (and (= :start-turn (:kind normalized-action))
+                    (= :corp (:side normalized-action))
+                    (:corp-phase-12 @state))
+           (game.core.turns/end-phase-12 state :corp nil))
          ;; Auto-resolve optional identity prompts (Zahya "Gain credits?", etc.)
          ;; Also auto-resolve trigger ordering and optional search prompts (Malapert, etc.)
          (doseq [side [:corp :runner]]
