@@ -3986,11 +3986,8 @@ fn applyInstallFromHand(
         return;
     }
 
-    // Non-trojan: spend click immediately
-    try spendClicks(generated, .runner, 1);
-
-    // For programs, check MU BEFORE paying credits (matches Clojure's runner-install-pay flow).
-    // If MU would overflow, show the trash prompt first; install completes after resolution.
+    // For programs, check MU BEFORE spending click/credits (matches Clojure's async install flow).
+    // If MU would overflow, show the trash prompt first; click and install complete after resolution.
     if (card.runner_install.kind == .program) {
         generated.pending_install = .{
             .card = card,
@@ -4001,6 +3998,7 @@ fn applyInstallFromHand(
         generated.pending_install = null;
     }
 
+    try spendClicks(generated, .runner, 1);
     try completeRunnerInstall(generated, card_index, card, install_cost);
 }
 
@@ -7992,6 +7990,8 @@ fn applyMuOverflowChoice(generated: *Game, choice_text: []const u8) !void {
         const pi_card = pending.card;
         const pi_index = pending.card_index;
         const pi_cost = pending.runner_install_cost;
+        // Spend click now (deferred from applyInstallFromHand to match Clojure's async flow)
+        try spendClicks(generated, .runner, 1);
         try completeRunnerInstall(generated, pi_index, pi_card, pi_cost);
         return;
     }
