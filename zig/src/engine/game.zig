@@ -41,6 +41,9 @@ pub const CardSpec = struct {
     card_subroutine_handler: ?CardSubroutineHandler = null,
     trash_cost: ?u16 = null,
     tag_on_rez: u8 = 0, // Ping: give runner N tags when rezzed during a run
+    advanceable: bool = false, // Pharos, Clearinghouse: explicitly advanceable
+    advancement_strength_threshold: u8 = 0, // Pharos: str bonus at N+ counters
+    advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
     can_play: ?*const fn (*const Game) bool = null,
     on_play: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
@@ -652,6 +655,183 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
+    // --- Phase 1: Pharos, Fermenter, Neurospike, Luminal Transubstantiation, Cookbook ---
+    .{ .title = "Pharos", .side = .corp, .code = 30063, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 7, .strength = 5, .advanceable = true, .advancement_strength_threshold = 3, .advancement_strength_bonus = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .give_runner_tags, .amount = 1 },
+        .{ .kind = .end_the_run },
+        .{ .kind = .end_the_run },
+    } },
+    .{ .title = "Fermenter", .side = .runner, .code = 30007, .card_type = "Program", .subtypes = &.{"Virus"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .kind = .trash_for_virus_credits,
+        .click_cost = 1,
+        .trash_for_virus_credits = 2,
+        .virus_on_install = true,
+        .virus_on_turn_start = true,
+    } },
+    .{ .title = "Neurospike", .side = .corp, .code = 30049, .card_type = "Operation", .cost = 3, .corp_play = .{ .kind = .custom },
+        .on_play = &struct {
+            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+                const damage = g.turn_events.agenda_points_scored_this_turn;
+                if (damage > 0) {
+                    try trashRandomRunnerHandCards(g, damage);
+                    updateTerminalState(g);
+                    if (g.game_over) return;
+                }
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
+            }
+        }.play,
+    },
+    .{ .title = "Luminal Transubstantiation", .side = .corp, .code = 30036, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score = .{ .kind = .gain_clicks, .amount = 3 },
+    },
+    .{ .title = "Cookbook", .side = .runner, .code = 30009, .card_type = "Resource", .subtypes = &.{"Virtual"}, .cost = 1, .runner_install = .{ .kind = .resource }, .installed_ability = .{ .bonus_virus_on_install = 1 } },
+    // --- Phase 2: Clearinghouse, Longevity Serum, Malapert Data Vault, Spin Doctor ---
+    .{ .title = "Clearinghouse", .side = .corp, .code = 30061, .card_type = "Asset", .subtypes = &.{"Hostile"}, .cost = 0, .trash_cost = 3, .advanceable = true, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
+        .kind = .trash_for_damage,
+        .click_cost = 1,
+    } },
+    .{ .title = "Longevity Serum", .side = .corp, .code = 30044, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+                // Present prompt to trash cards from HQ, then shuffle up to 3 from Archives into R&D
+                const allocator = g.arena.allocator();
+                if (g.corp_hand.items.len == 0 and g.corp_discard.items.len == 0) return;
+                // Phase 1: Choose cards from HQ to trash (0 or more, up to hand size)
+                // For simplicity, present as "Done" + each card in hand
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                for (g.corp_hand.items, 0..) |card, idx| {
+                    try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                }
+                try choices.append(allocator, stringChoice("Done"));
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "longevity-serum-trash"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = null,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.score,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.corp_prompt_state orelse return error.MissingPrompt;
+
+                if (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-trash")) {
+                    if (std.mem.eql(u8, choice_text, "Done")) {
+                        // Move to shuffle phase: choose up to 3 cards from Archives
+                        if (g.corp_discard.items.len == 0) {
+                            g.corp_prompt_state = null;
+                            g.decision_side = .corp;
+                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                            return;
+                        }
+                        var choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer choices.deinit(allocator);
+                        for (g.corp_discard.items, 0..) |card, idx| {
+                            try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                        }
+                        try choices.append(allocator, stringChoice("Done"));
+                        g.corp_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "longevity-serum-shuffle"),
+                            .choices = try choices.toOwnedSlice(allocator),
+                            .source_card = null,
+                            .min_choices = 0,
+                        };
+                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                        return;
+                    }
+                    // Trash chosen card from hand
+                    for (g.corp_hand.items, 0..) |card, idx| {
+                        if (std.mem.eql(u8, card.title, choice_text)) {
+                            const removed = g.corp_hand.orderedRemove(idx);
+                            try g.corp_discard.append(g.backing_allocator, removed);
+                            break;
+                        }
+                    }
+                    // Rebuild trash choices
+                    var choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices.deinit(allocator);
+                    for (g.corp_hand.items, 0..) |card, idx| {
+                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                    }
+                    try choices.append(allocator, stringChoice("Done"));
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "longevity-serum-trash"),
+                        .choices = try choices.toOwnedSlice(allocator),
+                        .source_card = null,
+                    };
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    return;
+                }
+
+                if (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-shuffle")) {
+                    if (std.mem.eql(u8, choice_text, "Done")) {
+                        try shuffleDeck(g, .corp);
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    }
+                    // Move chosen card from Archives to R&D
+                    for (g.corp_discard.items, 0..) |card, idx| {
+                        if (std.mem.eql(u8, card.title, choice_text)) {
+                            const removed = g.corp_discard.orderedRemove(idx);
+                            try g.corp_deck.append(g.backing_allocator, removed);
+                            break;
+                        }
+                    }
+                    // Check if we've hit 3 shuffles
+                    if (prompt.min_choices >= 2) {
+                        // Already shuffled 3, done
+                        try shuffleDeck(g, .corp);
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    }
+                    if (g.corp_discard.items.len == 0) {
+                        try shuffleDeck(g, .corp);
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    }
+                    // Rebuild shuffle choices
+                    var choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices.deinit(allocator);
+                    for (g.corp_discard.items, 0..) |card, idx| {
+                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                    }
+                    try choices.append(allocator, stringChoice("Done"));
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "longevity-serum-shuffle"),
+                        .choices = try choices.toOwnedSlice(allocator),
+                        .source_card = null,
+                        .min_choices = prompt.min_choices + 1,
+                    };
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    return;
+                }
+                return error.UnsupportedPrompt;
+            }
+        }.choice,
+    },
+    .{ .title = "Malapert Data Vault", .side = .corp, .code = 30066, .card_type = "Upgrade", .cost = 1, .trash_cost = 4, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Spin Doctor", .side = .corp, .code = 30053, .card_type = "Asset", .subtypes = &.{"Character"}, .cost = 0, .trash_cost = 2, .install = .{ .kind = .corp_remote_only } },
+    // --- Phase 3: Consoles ---
+    .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true } },
+    .{ .title = "Pantograph", .side = .runner, .code = 30023, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true } },
+    // --- Phase 4: Ansel 1.0 ---
+    .{ .title = "Ansel 1.0", .side = .corp, .code = 30038, .card_type = "ICE", .subtypes = &.{ "Bioroid", "Sentry", "Destroyer" }, .cost = 6, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .trash_program_or_etr }, // trash 1 installed Runner card
+        .{ .kind = .none }, // install from HQ or Archives (placeholder)
+        .{ .kind = .none }, // no steal/trash for rest of run (placeholder)
+    }, .runner_abilities = &.{
+        .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
+    } },
     .{ .title = "Anoetic Void", .side = .corp, .code = 30050, .card_type = "Upgrade", .cost = 0, .trash_cost = 1, .install = .{ .kind = .corp_remote_only },
         .access = .{ .kind = .corp_pay_etr, .credit_cost = 2 },
         .on_prompt_choice = &struct {
@@ -881,6 +1061,73 @@ pub const system_gateway_advanced = MatchupSpec{
     },
 };
 
+const complete_corp_deck_lines = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 1, .card_code = 30052 }, // Tomorrow's Headline
+    .{ .qty = 1, .card_code = 30060 }, // Above the Law
+    .{ .qty = 1, .card_code = 30036 }, // Luminal Transubstantiation
+    .{ .qty = 1, .card_code = 30044 }, // Longevity Serum
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 1, .card_code = 30071 }, // Regolith Mining License
+    .{ .qty = 1, .card_code = 30045 }, // Urtica Cipher
+    .{ .qty = 1, .card_code = 30061 }, // Clearinghouse
+    .{ .qty = 1, .card_code = 30053 }, // Spin Doctor
+    .{ .qty = 2, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 1, .card_code = 30040 }, // Seamless Launch
+    .{ .qty = 1, .card_code = 30041 }, // Sprint
+    .{ .qty = 1, .card_code = 30048 }, // Hansei Review
+    .{ .qty = 1, .card_code = 30049 }, // Neurospike
+    .{ .qty = 1, .card_code = 30042 }, // Manegarm Skunkworks
+    .{ .qty = 1, .card_code = 30050 }, // Anoetic Void
+    .{ .qty = 1, .card_code = 30066 }, // Malapert Data Vault
+    .{ .qty = 2, .card_code = 30039 }, // Brân 1.0
+    .{ .qty = 2, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30063 }, // Pharos
+    .{ .qty = 2, .card_code = 30055 }, // Ping
+    .{ .qty = 1, .card_code = 30062 }, // Ballista
+    .{ .qty = 2, .card_code = 30074 }, // Whitespace
+    .{ .qty = 2, .card_code = 30047 }, // Karunā
+    .{ .qty = 2, .card_code = 30073 }, // Tithe
+};
+
+const complete_runner_deck_lines = [_]DeckLine{
+    .{ .qty = 2, .card_code = 30020 }, // Creative Commission
+    .{ .qty = 3, .card_code = 30028 }, // Jailbreak
+    .{ .qty = 2, .card_code = 30029 }, // Overclock
+    .{ .qty = 2, .card_code = 30011 }, // Mutual Favor
+    .{ .qty = 2, .card_code = 30002 }, // Wildcat Strike
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble
+    .{ .qty = 2, .card_code = 30012 }, // Tread Lightly
+    .{ .qty = 2, .card_code = 30021 }, // VRcation
+    .{ .qty = 1, .card_code = 30013 }, // Docklands Pass
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond
+    .{ .qty = 1, .card_code = 30018 }, // Red Team
+    .{ .qty = 1, .card_code = 30033 }, // Smartware Distributor
+    .{ .qty = 2, .card_code = 30027 }, // Telework Contract
+    .{ .qty = 1, .card_code = 30034 }, // Verbal Plasticity
+    .{ .qty = 1, .card_code = 30009 }, // Cookbook
+    .{ .qty = 2, .card_code = 30005 }, // Buzzsaw
+    .{ .qty = 2, .card_code = 30025 }, // Echelon
+    .{ .qty = 2, .card_code = 30016 }, // Marjanah
+    .{ .qty = 2, .card_code = 30024 }, // Conduit
+    .{ .qty = 2, .card_code = 30008 }, // Leech
+    .{ .qty = 2, .card_code = 30007 }, // Fermenter
+};
+
+pub const system_gateway_complete = MatchupSpec{
+    .format = "system-gateway",
+    .agenda_point_req = 7,
+    .corp = .{
+        .identity_code = 30077,
+        .deck_lines = &complete_corp_deck_lines,
+    },
+    .runner = .{
+        .identity_code = 30076,
+        .deck_lines = &complete_runner_deck_lines,
+    },
+};
+
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {
         if (spec.code == card_code) return spec;
@@ -928,6 +1175,7 @@ pub const Game = struct {
     winner: ?state.Side = null,
     pending_install: ?state.PendingInstall = null,
     corp_phase_12: bool = false,
+    cannot_score_agendas_this_turn: bool = false, // Luminal Transubstantiation
 
     // Corp scalars
     corp_identity: state.CardInstance = undefined,
@@ -1373,6 +1621,13 @@ pub fn applyStartTurn(
                 }
             }
 
+            // Virus-on-turn-start: Fermenter, Botulus, Tranquilizer
+            for (generated.runner_rig_program.items) |*prog| {
+                if (prog.installed_ability.virus_on_turn_start) {
+                    prog.virus_counter += 1;
+                }
+            }
+
             generated.active_player = .runner;
             generated.end_turn = false;
             generated.decision_side = .runner;
@@ -1603,6 +1858,17 @@ fn applyPromptChoice(
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "jack-out")) {
         try applyJackOutPromptChoice(generated, choice_text);
         return;
+    }
+
+    // Longevity Serum: trash from HQ / shuffle from Archives
+    if (side == .corp and (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-trash") or std.mem.eql(u8, prompt.prompt_type, "longevity-serum-shuffle"))) {
+        if (lookupCardSpecByCode(30044)) |spec| {
+            if (spec.on_prompt_choice) |handler| {
+                try handler(generated, choice_text);
+                return;
+            }
+        }
+        return error.UnsupportedPrompt;
     }
 
     // Anoetic Void: corp chooses to use ability (pay 2cr + trash 2 from HQ → ETR)
@@ -1856,9 +2122,16 @@ fn applyScoreAgendaChoice(
             .give_runner_tag => {
                 addRunnerTag(generated, spec.on_score.amount);
             },
+            .gain_clicks => {
+                generated.corp_click += spec.on_score.amount;
+                generated.cannot_score_agendas_this_turn = true;
+            },
             .none => {},
         }
     }
+
+    // Track agenda points scored this turn (Neurospike)
+    generated.turn_events.agenda_points_scored_this_turn += agenda_points;
 
     updateTerminalState(generated);
     if (generated.game_over) {
@@ -1926,6 +2199,8 @@ fn isAdvanceable(card: state.CardInstance) bool {
     }
     // Assets with net_damage_on_access and adds_advancement (Urtica Cipher)
     if (card.access.adds_advancement) return true;
+    // Explicitly advanceable cards (Pharos, Clearinghouse)
+    if (card.advanceable) return true;
     return false;
 }
 
@@ -2229,6 +2504,10 @@ fn effectiveIceStrength(card: state.CardInstance, server_path: []const []const u
     // Palisade: +N strength on remote servers
     if (card.remote_strength_bonus > 0 and isRemoteServerPath(server_path)) {
         bonus += card.remote_strength_bonus;
+    }
+    // Pharos: +N strength at M+ advancement counters
+    if (card.advancement_strength_threshold > 0 and card.advancement_counter >= card.advancement_strength_threshold) {
+        bonus += card.advancement_strength_bonus;
     }
     const total = @as(i16, base) + @as(i16, bonus) + @as(i16, ice_strength_modifier);
     return if (total > 0) @intCast(total) else 0;
@@ -2970,6 +3249,16 @@ fn completeRunnerInstall(generated: *Game, card_index: u8, card: state.CardInsta
             mem.used += card.runner_install.mu_cost;
             mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
         }
+        // Virus-on-install: place initial virus counter (Fermenter, Botulus, Tranquilizer)
+        if (installed_card.installed_ability.virus_on_install) {
+            // Find the card we just installed and add virus counter
+            if (generated.runner_rig_program.items.len > 0) {
+                var prog = &generated.runner_rig_program.items[generated.runner_rig_program.items.len - 1];
+                prog.virus_counter += 1;
+                // Cookbook: bonus virus counter on virus install
+                prog.virus_counter += runnerCookbookBonus(generated);
+            }
+        }
     }
 
     generated.pending_install = null;
@@ -3361,7 +3650,23 @@ fn applyInstalledAbility(
                     try applyRunFromAbility(generated, "R&D", card.*);
                     return;
                 },
+                .trash_for_virus_credits => {
+                    // Fermenter: click + trash self, gain N credits per virus counter
+                    try spendClicks(generated, .runner, card.installed_ability.click_cost);
+                    const gain = @as(u16, card.virus_counter) * @as(u16, card.installed_ability.trash_for_virus_credits);
+                    generated.runner_credit += gain;
+                    // Trash the program
+                    const program_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len));
+                    const trashed = generated.runner_rig_program.orderedRemove(program_index);
+                    try appendDiscardCard(generated, .runner, trashed);
+                    if (generated.runner_memory) |*mem| {
+                        const mu = trashed.runner_install.mu_cost;
+                        if (mem.used >= mu) mem.used -= mu else mem.used = 0;
+                        mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+                    }
+                },
                 .start_of_turn_credits => return error.UnsupportedAbility, // auto-trigger, not a click action
+                .trash_for_damage => return error.UnsupportedAbility, // corp-only
                 .none => return error.UnsupportedAbility,
             }
 
@@ -3397,7 +3702,23 @@ fn applyInstalledAbility(
                         try appendDiscardCard(generated, .corp, trashed);
                     }
                 },
-                .place_credits, .break_subroutine, .pump_strength, .run_central, .run_rd, .start_of_turn_credits => return error.UnsupportedAbility,
+                .trash_for_damage => {
+                    // Clearinghouse: click + trash self, do 1 meat damage per advancement counter
+                    try spendClicks(generated, .corp, card.installed_ability.click_cost);
+                    const damage = card.advancement_counter;
+                    // Trash the card from the server
+                    const trashed = generated.corp_servers.items[server_index].content.orderedRemove(card_index);
+                    try appendDiscardCard(generated, .corp, trashed);
+                    // Remove server if empty
+                    try removeServerIfEmpty(generated, server_index);
+                    // Do meat damage (mechanically same as net damage)
+                    if (damage > 0) {
+                        try trashRandomRunnerHandCards(generated, damage);
+                        updateTerminalState(generated);
+                        if (generated.game_over) return;
+                    }
+                },
+                .place_credits, .break_subroutine, .pump_strength, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits => return error.UnsupportedAbility,
                 .none => return error.UnsupportedAbility,
             }
 
@@ -5073,7 +5394,7 @@ fn corpOpeningActionsForState(
     if (g.corp_click >= 1) count += 1;
     if (g.corp_click >= 1 and g.corp_deck.items.len > 0) count += 1;
     if (g.corp_click >= 1 and g.corp_credit >= 1) count += 1;
-    if (g.corp_click >= 1 and scoreable_count > 0) count += 1;
+    if (g.corp_click >= 1 and scoreable_count > 0 and !g.cannot_score_agendas_this_turn) count += 1;
     if (g.corp_click >= 3) count += 1;
 
     const actions = try allocator.alloc(state.LegalAction, count);
@@ -5117,7 +5438,7 @@ fn corpOpeningActionsForState(
         actions[next] = try basicAbilityAction(allocator, .corp, .advance_installed, "Advance 1 installed card");
         next += 1;
     }
-    if (g.corp_click >= 1 and scoreable_count > 0) {
+    if (g.corp_click >= 1 and scoreable_count > 0 and !g.cannot_score_agendas_this_turn) {
         actions[next] = try basicAbilityAction(allocator, .corp, .score_agenda, "Score an agenda");
         next += 1;
     }
@@ -5293,6 +5614,8 @@ fn installedAbilityLabel(
         .run_central => allocator.dupe(u8, "Make a run on a central server"),
         .run_rd => allocator.dupe(u8, "Run on R&D"),
         .start_of_turn_credits => allocator.dupe(u8, "Take credits (automatic)"),
+        .trash_for_virus_credits => std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{@as(u16, card.virus_counter) * @as(u16, card.installed_ability.trash_for_virus_credits)}),
+        .trash_for_damage => std.fmt.allocPrint(allocator, "Trash to do {d} meat damage", .{card.advancement_counter}),
         .none => allocator.dupe(u8, "Use ability"),
     };
 }
@@ -5318,6 +5641,11 @@ fn hasRunnerInstalledAbilityAction(card: state.CardInstance, turn_events: state.
         return false;
     }
 
+    // Fermenter: click + trash to gain credits (always available if has virus counters)
+    if (card.installed_ability.kind == .trash_for_virus_credits) {
+        return card.installed_ability.click_cost > 0 and card.virus_counter > 0;
+    }
+
     // For abilities that require clicks, check click cost
     if (card.installed_ability.click_cost > 0) {
         return true;
@@ -5331,6 +5659,8 @@ fn hasCorpInstalledAbilityAction(card: state.CardInstance) bool {
     if (!card.rezzed) return false;
     if (card.installed_ability.click_cost == 0) return false;
     if (card.ability_used_this_turn and card.installed_ability.once_per_turn) return false;
+    // Clearinghouse: trash_for_damage requires advancement counters
+    if (card.installed_ability.kind == .trash_for_damage) return card.advancement_counter > 0;
     return card.credit_counter > 0;
 }
 
@@ -5489,6 +5819,9 @@ fn makeCardInstance(
         .ability_used_this_turn = false,
         .broken_subroutines = 0,
         .tag_on_rez = spec.tag_on_rez,
+        .advanceable = spec.advanceable,
+        .advancement_strength_threshold = spec.advancement_strength_threshold,
+        .advancement_strength_bonus = spec.advancement_strength_bonus,
     };
 }
 
@@ -5600,6 +5933,7 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
 fn endCorpPhase12(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.corp_phase_12 = false;
+    generated.cannot_score_agendas_this_turn = false;
 
     // Corp must draw at start of turn — empty deck means runner wins
     if (generated.corp_deck.items.len == 0) {
@@ -5671,6 +6005,14 @@ fn runnerInstalledFirstProgramDiscount(generated: *const Game) u16 {
         discount += card.installed_ability.first_program_install_discount;
     }
     return discount;
+}
+
+fn runnerCookbookBonus(generated: *const Game) u16 {
+    var bonus: u16 = 0;
+    for (generated.runner_rig_resources.items) |card| {
+        bonus += card.installed_ability.bonus_virus_on_install;
+    }
+    return bonus;
 }
 
 fn runnerInstalledMuBonus(generated: *const Game) u8 {

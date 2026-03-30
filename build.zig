@@ -17,5 +17,9 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run Zig parity fixture tests");
     test_step.dependOn(&run_parity_tests.step);
 
+    // Compile-only step (no run) for quick error checking
+    const check_step = b.step("check", "Compile tests without running");
+    check_step.dependOn(&parity_tests.step);
+
     b.default_step.dependOn(test_step);
 }

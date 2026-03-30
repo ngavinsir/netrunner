@@ -681,6 +681,25 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Longevity Serum: corp picks card from HQ to trash or Archives to shuffle
+        if (std.mem.eql(u8, action.prompt_type.?, "longevity-serum-trash") or
+            std.mem.eql(u8, action.prompt_type.?, "longevity-serum-shuffle"))
+        {
+            try writer.writeByte('{');
+            const kind_name = if (std.mem.eql(u8, action.prompt_type.?, "longevity-serum-trash"))
+                "longevity-serum-trash"
+            else
+                "longevity-serum-shuffle";
+            try writeJsonFieldString(writer, "kind", kind_name, false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Anoetic Void: corp chooses to use ability
         if (std.mem.eql(u8, action.prompt_type.?, "anoetic-void")) {
             try writer.writeByte('{');
@@ -868,6 +887,8 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "ballista-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "above-the-law-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
+    if (std.mem.eql(u8, prompt_type, "longevity-serum-trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";

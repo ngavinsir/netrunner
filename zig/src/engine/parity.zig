@@ -1872,6 +1872,8 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "ballista-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "above-the-law-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
+    if (std.mem.eql(u8, prompt_type, "longevity-serum-trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;
@@ -2022,6 +2024,14 @@ fn filterOracleComparableActions(
         switch (action.kind) {
             .install_from_hand => continue,
             .rez_non_ice => continue, // Zig offers rez actions during runs; Clojure doesn't list them
+            .use_installed_ability => {
+                // Filter auto-resolve toggle abilities (Cookbook's "Toggle auto-resolve" — UI only)
+                if (action.label) |label| {
+                    if (std.mem.startsWith(u8, label, "Toggle auto-resolve")) continue;
+                }
+                try filtered.append(allocator, action);
+                continue;
+            },
             // Skip oracle use_ability actions that don't map to Zig basic actions
             // (e.g., Clojure corp install/play-op/remove-tag abilities, or
             // icebreaker pump/break abilities exported as use_ability with wrong basic_action)
@@ -2807,7 +2817,7 @@ fn findRunActionAny(actions: []const state.LegalAction) ?state.LegalAction {
 fn isSafeInstalledAbility(action: state.LegalAction) bool {
     const ability = action.installed_ability orelse return false;
     return switch (ability) {
-        .take_credits, .place_credits, .run_central, .run_rd, .start_of_turn_credits => true,
+        .take_credits, .place_credits, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits, .trash_for_damage => true,
         .break_subroutine, .pump_strength, .none => false,
     };
 }
@@ -3588,6 +3598,229 @@ test "anoetic void install parity test" {
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+// ============================================================================
+// Complete card parity tests (new cards from system-gateway-complete matchup)
+// ============================================================================
+
+fn findCardInHandBySeed(matchup: generator.MatchupSpec, title: []const u8, side: state.Side, max_seed: u64) ?u64 {
+    var seed: u64 = 1;
+    while (seed <= max_seed) : (seed += 1) {
+        var g = generator.createInitialSnapshot(std.testing.allocator, matchup, seed) catch continue;
+        defer g.deinit();
+        const hand = switch (side) {
+            .corp => g.corp_hand.items,
+            .runner => g.runner_hand.items,
+        };
+        for (hand) |card| {
+            if (std.mem.eql(u8, card.title, title)) return seed;
+        }
+    }
+    return null;
+}
+
+test "pharos install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Pharos", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Pharos"));
+    const install_choice = generated.legal_actions[0];
+    try takeAction(allocator, &actions, &generated, install_choice);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "fermenter install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Fermenter", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Fermenter"));
+    try std.testing.expect(generated.runner_rig_program.items.len >= 1);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "luminal transubstantiation install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Luminal Transubstantiation", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Luminal Transubstantiation"));
+    const install_choice = generated.legal_actions[0];
+    try takeAction(allocator, &actions, &generated, install_choice);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "cookbook install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Cookbook", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Corp plays an action to use up Neurospike from hand (if present)
+    // Just gain credit to advance state
+    if (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |gain_action| {
+        try takeAction(allocator, &actions, &generated, gain_action);
+    }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Cookbook"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "clearinghouse install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Clearinghouse", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Clearinghouse"));
+    const install_choice = generated.legal_actions[0];
+    try takeAction(allocator, &actions, &generated, install_choice);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "neurospike parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Neurospike", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Neurospike is playable (Clojure always offers it) but does 0 damage with no scored agendas
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Neurospike"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "longevity serum install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Longevity Serum", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Longevity Serum"));
+    const install_choice = generated.legal_actions[0];
+    try takeAction(allocator, &actions, &generated, install_choice);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "spin doctor install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Spin Doctor", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Spin Doctor"));
+    const install_choice = generated.legal_actions[0];
+    try takeAction(allocator, &actions, &generated, install_choice);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "malapert data vault install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Malapert Data Vault", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Malapert Data Vault"));
+    const install_choice = generated.legal_actions[0];
+    try takeAction(allocator, &actions, &generated, install_choice);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }

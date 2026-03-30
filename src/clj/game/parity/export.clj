@@ -218,6 +218,46 @@
    (register-advanced-cards!)
    (set-up/init-game (advanced-game seed))))
 
+(defn- register-complete-cards!
+  []
+  (let [corp (prepare-precon-deck "Corp" preconstructed/gateway-complete-corp)
+        runner (prepare-precon-deck "Runner" preconstructed/gateway-complete-runner)
+        corp-cards (into {}
+                         (map (fn [{:keys [card]}]
+                                [(:title card) card]))
+                         (:cards corp))
+        runner-cards (into {}
+                           (map (fn [{:keys [card]}]
+                                  [(:title card) card]))
+                           (:cards runner))
+        identities {(:title (:identity corp)) (:identity corp)
+                    (:title (:identity runner)) (:identity runner)}]
+    (swap! all-cards merge identities corp-cards runner-cards)))
+
+(defn complete-game
+  ([]
+   (complete-game 1))
+  ([seed]
+   (let [corp preconstructed/gateway-complete-corp
+         runner preconstructed/gateway-complete-runner]
+     {:gameid 1
+      :format "system-gateway"
+      :seed seed
+      :players [{:side "Corp"
+                 :user {:username "Corp"}
+                 :deck (prepare-precon-deck "Corp" corp)}
+                {:side "Runner"
+                 :user {:username "Runner"}
+                 :deck (prepare-precon-deck "Runner" runner)}]})))
+
+(defn complete-state
+  ([]
+   (complete-state 1))
+  ([seed]
+   (ensure-card-defs-loaded!)
+   (register-complete-cards!)
+   (set-up/init-game (complete-game seed))))
+
 (defn- canonical-choice
   [choice]
   (cond
@@ -942,6 +982,40 @@
         (when match
           (main/handle-action state :corp "choice" {:choice match})))
 
+      :longevity-serum-trash
+      ;; Longevity Serum: corp picks a card from HQ to trash (or "Done" to stop).
+      (let [choice-text (:choice action)]
+        (if (= choice-text "Done")
+          ;; Click "Done" on the select prompt
+          (let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+                done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
+            (when done-choice
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))
+          ;; Select the card from HQ
+          (let [hand (get-in @state [:corp :hand])
+                card (first (filter #(= choice-text (:title %)) hand))
+                selected (first (get-in @state [:corp :selected]))
+                select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                               (:eid selected))]
+            (when (and card select-eid)
+              (main/handle-action state :corp "select" {:card card :eid select-eid})))))
+
+      :longevity-serum-shuffle
+      ;; Longevity Serum: corp picks a card from Archives to shuffle into R&D (or "Done" to stop).
+      (let [choice-text (:choice action)]
+        (if (= choice-text "Done")
+          (let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+                done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
+            (when done-choice
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))
+          (let [discard (get-in @state [:corp :discard])
+                card (first (filter #(= choice-text (:title %)) discard))
+                selected (first (get-in @state [:corp :selected]))
+                select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                               (:eid selected))]
+            (when (and card select-eid)
+              (main/handle-action state :corp "select" {:card card :eid select-eid})))))
+
       (throw (ex-info "Unsupported parity action" {:action action})))))
 
 (defn- transient-hide-action?
@@ -1094,6 +1168,7 @@
    (let [state (cond
                  (= matchup "system-gateway-intermediate") (intermediate-state seed)
                  (= matchup "system-gateway-advanced") (advanced-state seed)
+                 (= matchup "system-gateway-complete") (complete-state seed)
                  :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [[idx action] (map-indexed vector actions)]

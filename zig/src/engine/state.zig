@@ -102,6 +102,8 @@ pub const InstalledAbilityKind = enum(u8) {
     run_central,
     run_rd, // Conduit: click to run R&D
     start_of_turn_credits, // Nico Campaign: auto-take credits at start of corp turn
+    trash_for_virus_credits, // Fermenter: click + trash to gain N credits per virus counter
+    trash_for_damage, // Clearinghouse: click + trash to do 1 meat damage per advancement counter
 };
 
 pub const SubroutineKind = enum(u8) {
@@ -134,6 +136,7 @@ pub const AgendaEffectKind = enum(u8) {
     draw_cards,
     rez_ice_free,
     give_runner_tag, // Tomorrow's Headline: give runner 1 tag on score/steal
+    gain_clicks, // Luminal Transubstantiation: gain N clicks on score
 };
 
 pub const AgendaEffectSpec = struct {
@@ -221,6 +224,11 @@ pub const InstalledAbilitySpec = struct {
     strength_per_icebreaker: bool = false, // Echelon: +1 strength per installed icebreaker
     break_cost_reduction_if_successful_run: u16 = 0, // Marjanah: -1 break cost if successful run this turn
     hand_size_bonus: u8 = 0, // T400 Memory Diamond: +N max hand size
+    virus_on_install: bool = false, // Fermenter, Botulus, Tranquilizer: place 1 virus on install
+    virus_on_turn_start: bool = false, // Fermenter, Botulus, Tranquilizer: place 1 virus at start of turn
+    trash_for_virus_credits: u8 = 0, // Fermenter: gain N credits per virus counter on click+trash
+    bonus_virus_on_install: u8 = 0, // Cookbook: place N extra virus counters when installing virus programs
+    is_console: bool = false, // Console hardware: only one allowed
 };
 
 pub const CardReference = struct {
@@ -276,6 +284,9 @@ pub const CardInstance = struct {
     used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
     tag_on_rez: u8 = 0, // Ping: give runner N tags when rezzed during a run
+    advanceable: bool = false, // Pharos, Clearinghouse: can be advanced (beyond agendas/Urtica)
+    advancement_strength_threshold: u8 = 0, // Pharos: str bonus starts at this many counters
+    advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
 };
 
 pub const ServerState = struct {
@@ -394,6 +405,7 @@ pub const TurnEvents = struct {
     made_run_on_rnd: bool = false,
     made_run_on_archives: bool = false,
     programs_installed_this_turn: u8 = 0,
+    agenda_points_scored_this_turn: u8 = 0, // Neurospike: track AP scored this turn
 };
 
 pub const LegalAction = struct {
