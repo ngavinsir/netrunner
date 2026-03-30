@@ -1002,6 +1002,64 @@
         (when (and card select-eid)
           (main/handle-action state :runner "select" {:card card :eid select-eid})))
 
+      :tao-swap-ice
+      ;; Tao Salonga: runner picks 2 ICE to swap positions.
+      ;; Clojure creates optional "Swap 2 pieces of ice?" → Yes/No, then multi-select (max 2).
+      ;; Zig sends two separate tao-swap-ice actions (one per ICE).
+      (let [loc (:card-locator action)
+            choice (:choice action)]
+        (if (= choice "Done")
+          ;; Declined — click "No" on the optional prompt
+          (let [prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [:runner :prompt])))
+                choices (:choices prompt)
+                no-choice (first (filter #(= "No" (if (map? %) (:value %) (str %))) choices))]
+            (when no-choice
+              (main/handle-action state :runner "choice" {:choice no-choice})))
+          ;; ICE selection — auto-click "Yes" first if optional prompt, then select
+          (do
+            (let [prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [:runner :prompt])))
+                  choices (:choices prompt)
+                  yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %))) choices))]
+              (when yes-choice
+                (main/handle-action state :runner "choice" {:choice yes-choice})))
+            ;; Now find and select the ICE
+            (let [ice-title (:title loc)
+                  card (when ice-title
+                         (some (fn [[_ server-data]]
+                                 (some #(when (= ice-title (:title %)) %)
+                                       (get server-data :ices)))
+                               (get-in @state [:corp :servers])))
+                  prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:runner :prompt])))
+                  select-eid (or (:eid prompt)
+                                (:eid (first (get-in @state [:runner :selected]))))]
+              (when (and card select-eid)
+                (main/handle-action state :runner "select" {:card card :eid select-eid}))))))
+
+      :malapert-search
+      ;; Malapert Data Vault: corp picks a non-agenda card from R&D after scoring.
+      ;; Trigger ordering is auto-resolved in the post-action loop above.
+      ;; At this point, the optional "Search R&D?" prompt should be active.
+      (let [choice-text (:choice action)]
+        ;; Handle optional "Search R&D?" Yes/No prompt
+        (let [prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [:corp :prompt])))
+              choices (:choices prompt)
+              yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %))) choices))]
+          (when yes-choice
+            (main/handle-action state :corp "choice" {:choice yes-choice})))
+        ;; Select the card from R&D or Done
+        (if (= choice-text "Done")
+          (let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+                done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
+            (when done-choice
+              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))
+          (let [deck (get-in @state [:corp :deck])
+                card (first (filter #(= choice-text (:title %)) deck))
+                selected (first (get-in @state [:corp :selected]))
+                select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                               (:eid selected))]
+            (when (and card select-eid)
+              (main/handle-action state :corp "select" {:card card :eid select-eid})))))
+
       :precision-design-archive
       ;; HB: Precision Design — corp picks a card from Archives to add to HQ
       (let [choice-text (:choice action)]
@@ -1238,6 +1296,7 @@
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
          (apply-action! state normalized-action)
          ;; Auto-resolve optional identity prompts (Zahya "Gain credits?", etc.)
+         ;; Also auto-resolve trigger ordering and optional search prompts (Malapert, etc.)
          (doseq [side [:corp :runner]]
            (when-let [prompt (first (filter #(and (= :waiting (:prompt-type %)) (not= side (:side %)))
                                             (get-in @state [side :prompt])))]

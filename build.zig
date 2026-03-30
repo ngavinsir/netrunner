@@ -12,6 +12,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    if (b.option([]const u8, "filter", "Filter test by name")) |filter| {
+        parity_tests.filters = b.allocator.dupe([]const u8, &.{filter}) catch @panic("OOM");
+    }
+
     const run_parity_tests = b.addRunArtifact(parity_tests);
 
     const test_step = b.step("test", "Run Zig parity fixture tests");

@@ -53,6 +53,7 @@ pub const CardSpec = struct {
     // Event trigger system: identity/card events fire at game events
     event_match: ?*const fn (state.GameEvent) bool = null,
     on_event: ?*const fn (*Game) anyerror!void = null,
+    on_event_server_check: bool = false, // Only fire if event occurred in same server as this card
 };
 
 pub const SideSpec = struct {
@@ -159,7 +160,38 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     },
-    .{ .title = "T\xc4\x81o Salonga: Telepresence Magician", .side = .runner, .code = 30019, .card_type = "Identity" },
+    .{ .title = "T\xc4\x81o Salonga: Telepresence Magician", .side = .runner, .code = 30019, .card_type = "Identity",
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .agenda_scored or e == .agenda_stolen; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                // Count installed ICE across all servers
+                var ice_count: usize = 0;
+                for (g.corp_servers.items) |server| {
+                    ice_count += server.ices.items.len;
+                }
+                if (ice_count < 2) return; // need at least 2 ICE to swap
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                for (g.corp_servers.items, 0..) |server, si| {
+                    for (server.ices.items, 0..) |ice, ii| {
+                        // Format: "server_idx|ice_idx|title"
+                        const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
+                        try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
+                    }
+                }
+                try choices.append(allocator, stringChoice("Done"));
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "tao-swap-ice"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = null,
+                    .min_choices = 0,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+            }
+        }.handle,
+    },
     .{ .title = "Zahya Sadeghi: Versatile Smuggler", .side = .runner, .code = 30010, .card_type = "Identity",
         .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .successful_run_ends; } }.m,
         .on_event = &struct {
@@ -919,7 +951,52 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Malapert Data Vault", .side = .corp, .code = 30066, .card_type = "Upgrade", .cost = 1, .trash_cost = 4, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Malapert Data Vault", .side = .corp, .code = 30066, .card_type = "Upgrade", .cost = 1, .trash_cost = 4, .install = .{ .kind = .corp_remote_only },
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .agenda_scored; } }.m,
+        .on_event_server_check = true,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                // Search R&D for a non-agenda card
+                if (g.corp_deck.items.len == 0) return;
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                for (g.corp_deck.items, 0..) |card, idx| {
+                    if (card.agenda_points != null) continue; // skip agendas
+                    try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                }
+                if (choices.items.len == 0) return; // no non-agenda cards in R&D
+                try choices.append(allocator, stringChoice("Done"));
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "malapert-search"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = null,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.handle,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "Done")) {
+                    // Declined or cancelled — shuffle R&D
+                    try shuffleDeck(g, .corp);
+                    return;
+                }
+                // Clojure: reveal → shuffle R&D → move card to HQ
+                // Shuffle first (before removing), then find and move
+                try shuffleDeck(g, .corp);
+                const allocator = g.arena.allocator();
+                for (g.corp_deck.items, 0..) |card, idx| {
+                    if (std.mem.eql(u8, card.title, choice_text)) {
+                        const removed = g.corp_deck.orderedRemove(idx);
+                        try g.corp_hand.append(allocator, removed);
+                        break;
+                    }
+                }
+            }
+        }.choice,
+    },
     .{ .title = "Spin Doctor", .side = .corp, .code = 30053, .card_type = "Asset", .subtypes = &.{"Character"}, .cost = 0, .trash_cost = 2, .install = .{ .kind = .corp_remote_only },
         .on_rez = &struct {
             fn rez(g: *Game) anyerror!void {
@@ -1343,6 +1420,8 @@ pub const Game = struct {
     pending_install: ?state.PendingInstall = null,
     corp_phase_12: bool = false,
     cannot_score_agendas_this_turn: bool = false, // Luminal Transubstantiation
+    last_scored_server_index: ?usize = null, // Server from which last agenda was scored
+    tao_first_ice: ?[]const u8 = null, // Tao: first ICE selection (server_idx|ice_idx|title)
 
     // Corp scalars
     corp_identity: state.CardInstance = undefined,
@@ -2046,6 +2125,12 @@ fn applyPromptChoice(
         return;
     }
 
+    // Tao Salonga: swap 2 pieces of ICE
+    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "tao-swap-ice")) {
+        try applyTaoSwapIceChoice(generated, choice_text);
+        return;
+    }
+
     // Trojan: runner selects ICE to host on
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "trojan-host")) {
         try applyTrojanHostChoice(generated, choice_text);
@@ -2083,6 +2168,20 @@ fn applyPromptChoice(
         generated.decision_side = .corp;
         generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
         return;
+    }
+
+    // Malapert Data Vault: search R&D for non-agenda card
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "malapert-search")) {
+        if (lookupCardSpecByCode(30066)) |spec| {
+            if (spec.on_prompt_choice) |handler| {
+                try handler(generated, choice_text);
+                generated.corp_prompt_state = null;
+                generated.decision_side = .corp;
+                generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+                return;
+            }
+        }
+        return error.UnsupportedPrompt;
     }
 
     // Longevity Serum: trash from HQ / shuffle from Archives
@@ -2315,6 +2414,7 @@ fn applyScoreAgendaChoice(
     const requirement = agenda.advancement_requirement orelse return error.UnsupportedChoice;
     if (agenda.advancement_counter < requirement) return error.UnsupportedChoice;
 
+    generated.last_scored_server_index = target.server_index;
     const scored_agenda = removeServerContentCard(generated, target.server_index, @intCast(target.card_index));
     try generated.corp_scored.append(generated.backing_allocator, scored_agenda);
     try removeServerIfEmpty(generated, target.server_index);
@@ -2370,7 +2470,7 @@ fn applyScoreAgendaChoice(
         }
     }
 
-    // Fire agenda_scored event (HB: Precision Design trigger)
+    // Fire agenda_scored event (HB: Precision Design, Malapert, Pantograph triggers)
     if (try fireEvent(generated, .agenda_scored)) return;
 
     generated.corp_prompt_state = null;
@@ -2692,7 +2792,84 @@ fn fireEvent(generated: *Game, event: state.GameEvent) !bool {
             }
         }
     }
+    // Check corp installed cards in servers (upgrades/assets with event triggers)
+    for (generated.corp_servers.items, 0..) |server, server_idx| {
+        for (server.content.items) |card| {
+            if (!card.rezzed) continue;
+            if (cardMatchesEvent(card.code, event)) {
+                if (lookupCardSpecByCode(card.code.?)) |spec| {
+                    if (spec.on_event) |handler| {
+                        if (spec.on_event_server_check) {
+                            // Only fire if event occurred in this server
+                            if (generated.last_scored_server_index != server_idx) continue;
+                        }
+                        try handler(generated);
+                        if (generated.corp_prompt_state) |ps| {
+                            if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
     return false;
+}
+
+fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
+    if (std.mem.eql(u8, choice_text, "Done")) {
+        // Declined to swap
+        generated.tao_first_ice = null;
+        generated.runner_prompt_state = null;
+        // Return to whoever was deciding before
+        generated.decision_side = .corp;
+        generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+        return;
+    }
+
+    if (generated.tao_first_ice == null) {
+        // First ICE selected — store it and present second pick (excluding the first)
+        generated.tao_first_ice = choice_text;
+        const allocator = generated.arena.allocator();
+        var choices: std.ArrayList(state.PromptChoice) = .empty;
+        defer choices.deinit(allocator);
+        for (generated.corp_servers.items, 0..) |server, si| {
+            for (server.ices.items, 0..) |ice, ii| {
+                const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
+                if (std.mem.eql(u8, text, choice_text)) continue; // skip the first pick
+                try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
+            }
+        }
+        try choices.append(allocator, stringChoice("Done"));
+        generated.runner_prompt_state = .{
+            .prompt_type = try allocator.dupe(u8, "tao-swap-ice"),
+            .choices = try choices.toOwnedSlice(allocator),
+            .source_card = null,
+            .min_choices = 1,
+        };
+        generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+        return;
+    }
+
+    // Second ICE selected — perform the swap
+    const first_text = generated.tao_first_ice.?;
+    var pieces_a = std.mem.splitScalar(u8, first_text, '|');
+    const srv_a = try std.fmt.parseInt(usize, pieces_a.next() orelse return error.UnsupportedChoice, 10);
+    const idx_a = try std.fmt.parseInt(usize, pieces_a.next() orelse return error.UnsupportedChoice, 10);
+
+    var pieces_b = std.mem.splitScalar(u8, choice_text, '|');
+    const srv_b = try std.fmt.parseInt(usize, pieces_b.next() orelse return error.UnsupportedChoice, 10);
+    const idx_b = try std.fmt.parseInt(usize, pieces_b.next() orelse return error.UnsupportedChoice, 10);
+
+    // Swap the two ICE cards
+    const ice_a = generated.corp_servers.items[srv_a].ices.items[idx_a];
+    const ice_b = generated.corp_servers.items[srv_b].ices.items[idx_b];
+    generated.corp_servers.items[srv_a].ices.items[idx_a] = ice_b;
+    generated.corp_servers.items[srv_b].ices.items[idx_b] = ice_a;
+
+    generated.tao_first_ice = null;
+    generated.runner_prompt_state = null;
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
@@ -4275,11 +4452,16 @@ fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !vo
         }
     }
 
-    // After rezzing, corp still has priority — regenerate actions with updated state
-    const run = &generated.run;
-    if (run.* == null) return error.NoRunInProgress;
-    generated.decision_side = .corp;
-    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
+    // After rezzing, regenerate actions with updated state
+    if (generated.run != null) {
+        // During a run: corp still has priority
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
+    } else {
+        // Outside of a run: return to normal corp actions
+        generated.decision_side = .corp;
+        generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
+    }
 }
 
 const ApproachedIceTarget = struct {

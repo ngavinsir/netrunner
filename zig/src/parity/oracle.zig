@@ -728,6 +728,51 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Tao Salonga: runner picks ICE to swap
+        if (std.mem.eql(u8, action.prompt_type.?, "tao-swap-ice")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "tao-swap-ice", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    if (!std.mem.eql(u8, text, "Done")) {
+                        // Parse "server_idx|ice_idx|title" and write as card locator
+                        var pieces = std.mem.splitScalar(u8, text, '|');
+                        const server_text = pieces.next() orelse "";
+                        const ice_text = pieces.next() orelse "";
+                        const title = pieces.rest();
+                        try writer.writeByte(',');
+                        try writeJsonString(writer, "card-locator");
+                        try writer.writeByte(':');
+                        try writer.writeByte('{');
+                        try writeJsonFieldString(writer, "zone", "ice", false);
+                        try writeJsonFieldString(writer, "server", server_text, true);
+                        try writeJsonFieldString(writer, "index", ice_text, true);
+                        if (title.len > 0) {
+                            try writeJsonFieldString(writer, "title", title, true);
+                        }
+                        try writer.writeByte('}');
+                    } else {
+                        try writeJsonFieldString(writer, "choice", "Done", true);
+                    }
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
+        // Malapert Data Vault: corp picks non-agenda from R&D
+        if (std.mem.eql(u8, action.prompt_type.?, "malapert-search")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "malapert-search", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // HB: Precision Design: corp picks card from Archives to add to HQ
         if (std.mem.eql(u8, action.prompt_type.?, "precision-design-archive")) {
             try writer.writeByte('{');
@@ -944,6 +989,8 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "longevity-serum-trash")) return "select";
     if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
+    if (std.mem.eql(u8, prompt_type, "malapert-search")) return "select";
+    if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
