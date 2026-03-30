@@ -990,6 +990,7 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
     if (std.mem.eql(u8, prompt_type, "malapert-search")) return "select";
+    if (std.mem.eql(u8, prompt_type, "ansel-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";

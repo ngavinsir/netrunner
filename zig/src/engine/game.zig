@@ -1393,6 +1393,74 @@ pub const system_gateway_tao = MatchupSpec{
     .runner = .{ .identity_code = 30019, .deck_lines = &complete_runner_deck_lines }, // Tao
 };
 
+// Full pack deck: includes Ansel 1.0 and Carnivore (swaps some duplicates)
+// Full pack: complete deck + Ansel 1.0 in corp, + Carnivore in runner (replacing 1 Fermenter)
+// Must match Clojure oracle's fullpack deck construction exactly.
+const fullpack_corp_deck_lines = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 1, .card_code = 30052 }, // Tomorrow's Headline
+    .{ .qty = 1, .card_code = 30060 }, // Above the Law
+    .{ .qty = 1, .card_code = 30036 }, // Luminal Transubstantiation
+    .{ .qty = 1, .card_code = 30044 }, // Longevity Serum
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 1, .card_code = 30071 }, // Regolith Mining License
+    .{ .qty = 1, .card_code = 30045 }, // Urtica Cipher
+    .{ .qty = 1, .card_code = 30061 }, // Clearinghouse
+    .{ .qty = 1, .card_code = 30053 }, // Spin Doctor
+    .{ .qty = 2, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 1, .card_code = 30040 }, // Seamless Launch
+    .{ .qty = 1, .card_code = 30041 }, // Sprint
+    .{ .qty = 1, .card_code = 30048 }, // Hansei Review
+    .{ .qty = 1, .card_code = 30049 }, // Neurospike
+    .{ .qty = 1, .card_code = 30042 }, // Manegarm Skunkworks
+    .{ .qty = 1, .card_code = 30050 }, // Anoetic Void
+    .{ .qty = 1, .card_code = 30066 }, // Malapert Data Vault
+    .{ .qty = 2, .card_code = 30039 }, // Brân 1.0
+    .{ .qty = 2, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30063 }, // Pharos
+    .{ .qty = 2, .card_code = 30055 }, // Ping
+    .{ .qty = 1, .card_code = 30062 }, // Ballista
+    .{ .qty = 2, .card_code = 30074 }, // Whitespace
+    .{ .qty = 2, .card_code = 30047 }, // Karunā
+    .{ .qty = 2, .card_code = 30073 }, // Tithe
+    .{ .qty = 1, .card_code = 30038 }, // Ansel 1.0 (appended to match Clojure conj order)
+};
+
+const fullpack_runner_deck_lines = [_]DeckLine{
+    .{ .qty = 2, .card_code = 30020 }, // Creative Commission
+    .{ .qty = 3, .card_code = 30028 }, // Jailbreak
+    .{ .qty = 2, .card_code = 30029 }, // Overclock
+    .{ .qty = 2, .card_code = 30011 }, // Mutual Favor
+    .{ .qty = 2, .card_code = 30002 }, // Wildcat Strike
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble
+    .{ .qty = 2, .card_code = 30012 }, // Tread Lightly
+    .{ .qty = 2, .card_code = 30021 }, // VRcation
+    .{ .qty = 1, .card_code = 30013 }, // Docklands Pass
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond
+    .{ .qty = 1, .card_code = 30018 }, // Red Team
+    .{ .qty = 1, .card_code = 30033 }, // Smartware Distributor
+    .{ .qty = 2, .card_code = 30027 }, // Telework Contract
+    .{ .qty = 1, .card_code = 30034 }, // Verbal Plasticity
+    .{ .qty = 1, .card_code = 30009 }, // Cookbook
+    .{ .qty = 2, .card_code = 30005 }, // Buzzsaw
+    .{ .qty = 2, .card_code = 30025 }, // Echelon
+    .{ .qty = 2, .card_code = 30016 }, // Marjanah
+    .{ .qty = 2, .card_code = 30024 }, // Conduit
+    .{ .qty = 2, .card_code = 30008 }, // Leech
+    .{ .qty = 1, .card_code = 30007 }, // Fermenter (reduced from 2 to fit Carnivore)
+    .{ .qty = 1, .card_code = 30023 }, // Pantograph
+    .{ .qty = 1, .card_code = 30004 }, // Botulus
+    .{ .qty = 1, .card_code = 30017 }, // Tranquilizer
+    .{ .qty = 1, .card_code = 30003 }, // Carnivore (appended to match Clojure conj order)
+};
+
+pub const system_gateway_fullpack = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30077, .deck_lines = &fullpack_corp_deck_lines },
+    .runner = .{ .identity_code = 30019, .deck_lines = &fullpack_runner_deck_lines }, // Tao
+};
+
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {
         if (spec.code == card_code) return spec;
@@ -2234,6 +2302,12 @@ fn applyPromptChoice(
             }
         }
         return error.UnsupportedPrompt;
+    }
+
+    // Ansel 1.0: corp chooses a card from HQ/Archives to install
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "ansel-install")) {
+        try applyAnselInstallChoice(generated, choice_text);
+        return;
     }
 
     // Ballista: corp chooses a program to trash during subroutine
@@ -5111,9 +5185,8 @@ fn resolveEncounteredIceSubroutines(
             },
             .corp_install_from_hq_archives => {
                 // Ansel 1.0 sub 2: corp installs a card from HQ or Archives
-                // For simplicity, auto-skip if no installable cards
-                // (Full implementation would create a select prompt for corp to choose a card)
-                // TODO: Full implementation with card selection prompt
+                try beginAnselInstallPrompt(generated, server_index, ice_index, @intCast(idx));
+                return;
             },
             .prevent_steal_trash => {
                 // Ansel 1.0 sub 3: prevent stealing/trashing for rest of run
@@ -5241,6 +5314,112 @@ fn beginBranInstallIcePrompt(
 
     generated.decision_side = .corp;
     generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+}
+
+fn beginAnselInstallPrompt(
+    generated: *Game,
+    server_index: usize,
+    ice_index: usize,
+    subroutine_index: u8,
+) !void {
+    const allocator = generated.arena.allocator();
+    const run = &generated.run.?;
+
+    // Build list of installable cards from HQ and Archives
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+
+    // Add installable cards from HQ (anything except Operations)
+    for (generated.corp_hand.items, 0..) |card, idx| {
+        const ct = card.card_type orelse continue;
+        if (std.mem.eql(u8, ct, "Operation")) continue;
+        try choices.append(allocator, .{
+            .kind = .string,
+            .text = try std.fmt.allocPrint(allocator, "HQ|{d}|{s}", .{ idx, card.title }),
+        });
+    }
+
+    // Add installable cards from Archives
+    for (generated.corp_discard.items, 0..) |card, idx| {
+        const ct = card.card_type orelse continue;
+        if (std.mem.eql(u8, ct, "Operation")) continue;
+        try choices.append(allocator, .{
+            .kind = .string,
+            .text = try std.fmt.allocPrint(allocator, "Archives|{d}|{s}", .{ idx, card.title }),
+        });
+    }
+
+    if (choices.items.len == 0) {
+        // No installable cards — skip subroutine, continue to next
+        return;
+    }
+
+    // Store continuation state
+    run.pending_subroutine = .{
+        .server_index = @intCast(server_index),
+        .ice_index = @intCast(ice_index),
+        .subroutine_index = subroutine_index,
+    };
+
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "ansel-install"),
+        .choices = try choices.toOwnedSlice(allocator),
+    };
+
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+}
+
+fn applyAnselInstallChoice(
+    generated: *Game,
+    choice_text: []const u8,
+) !void {
+    const allocator = generated.arena.allocator();
+    const run = generated.run orelse return error.NoRunInProgress;
+    const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
+
+    // Parse choice: "HQ|index|title" or "Archives|index|title"
+    var pieces = std.mem.splitScalar(u8, choice_text, '|');
+    const zone = pieces.next() orelse return error.UnsupportedChoice;
+    const index_text = pieces.next() orelse return error.UnsupportedChoice;
+    const card_index = try std.fmt.parseInt(usize, index_text, 10);
+
+    var card_to_install: state.CardInstance = undefined;
+    if (std.mem.eql(u8, zone, "HQ")) {
+        if (card_index >= generated.corp_hand.items.len) return error.InvalidCardIndex;
+        card_to_install = generated.corp_hand.orderedRemove(card_index);
+    } else if (std.mem.eql(u8, zone, "Archives")) {
+        if (card_index >= generated.corp_discard.items.len) return error.InvalidCardIndex;
+        card_to_install = generated.corp_discard.orderedRemove(card_index);
+    } else return error.UnsupportedChoice;
+
+    // Install the card: ICE goes on the current server, non-ICE goes into the server content
+    const ct = card_to_install.card_type orelse "";
+    const target_server = &generated.corp_servers.items[pending.server_index];
+    card_to_install.installed_this_turn = true;
+    if (std.mem.eql(u8, ct, "ICE")) {
+        try target_server.ices.insert(generated.backing_allocator, 0, card_to_install);
+    } else {
+        try target_server.content.append(generated.backing_allocator, card_to_install);
+    }
+
+    generated.corp_prompt_state = null;
+
+    // Resume subroutine resolution from next subroutine
+    const ansel_ice_index = if (std.mem.eql(u8, ct, "ICE")) pending.ice_index + 1 else pending.ice_index;
+    const ansel_ice = target_server.ices.items[ansel_ice_index];
+    try resolveEncounteredIceSubroutines(generated, ansel_ice, pending.server_index, ansel_ice_index, pending.subroutine_index + 1);
+
+    generated.run.?.pending_subroutine = null;
+    if (generated.run == null) return;
+    if (generated.corp_prompt_state != null) return;
+
+    const current_run = &generated.run.?;
+    if (current_run.position > 0) current_run.position -= 1;
+    current_run.phase = try allocator.dupe(u8, "movement");
+    current_run.jack_out_available = true;
+    current_run.no_action = null;
+    generated.decision_side = .runner;
+    generated.legal_actions = try continueActionsForRun(allocator, .runner, current_run.*);
 }
 
 fn applyBranInstallIceChoice(

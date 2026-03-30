@@ -1002,6 +1002,26 @@
         (when (and card select-eid)
           (main/handle-action state :runner "select" {:card card :eid select-eid})))
 
+      :ansel-install
+      ;; Ansel 1.0 sub 2: corp chooses a card from HQ or Archives to install.
+      ;; Clojure creates a select prompt for installable cards.
+      (let [choice-text (:choice action)]
+        ;; Parse "HQ|idx|title" or "Archives|idx|title"
+        (let [parts (clojure.string/split choice-text #"\|" 3)
+              zone (first parts)
+              card-title (nth parts 2 nil)
+              zone-key (if (= zone "HQ") :hand :discard)
+              cards (get-in @state [:corp zone-key])
+              card (when card-title (first (filter #(= card-title (:title %)) cards)))
+              prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
+              select-eid (or (:eid prompt) (:eid (first (get-in @state [:corp :selected]))))]
+          (when (and card select-eid)
+            (main/handle-action state :corp "select" {:card card :eid select-eid})
+            ;; Auto-select install location if prompted
+            (when-let [install-prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [:corp :prompt])))]
+              (when-let [first-choice (first (:choices install-prompt))]
+                (main/handle-action state :corp "choice" {:choice first-choice}))))))
+
       :tao-swap-ice
       ;; Tao Salonga: runner picks 2 ICE to swap positions.
       ;; Clojure creates optional "Swap 2 pieces of ice?" → Yes/No, then multi-select (max 2).
@@ -1288,6 +1308,22 @@
                  (= matchup "system-gateway-zahya") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30010 "Zahya Sadeghi: Versatile Smuggler")
                  (= matchup "system-gateway-loup") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30001 "René \"Loup\" Arcemont: Party Animal")
                  (= matchup "system-gateway-tao") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30019 "Tāo Salonga: Telepresence Magician")
+                 (= matchup "system-gateway-fullpack")
+                 (let [_ (ensure-card-defs-loaded!)
+                       _ (register-complete-cards!)
+                       corp-deck (assoc preconstructed/gateway-complete-corp
+                                        :identity {:title "The Syndicate: Profit over Principle" :side "Corp" :code 30077}
+                                        :cards (conj (vec (:cards preconstructed/gateway-complete-corp))
+                                                     {:qty 1 :card "Ansel 1.0"}))
+                       runner-deck (assoc preconstructed/gateway-complete-runner
+                                          :identity {:title "Tāo Salonga: Telepresence Magician" :side "Runner" :code 30019}
+                                          :cards (-> (vec (:cards preconstructed/gateway-complete-runner))
+                                                     (conj {:qty 1 :card "Carnivore"})
+                                                     ;; Remove 1 Fermenter to keep deck size balanced
+                                                     (#(mapv (fn [c] (if (= "Fermenter" (:card c)) (assoc c :qty 1) c)) %))))]
+                   (set-up/init-game {:gameid 1 :format "system-gateway" :seed seed
+                                      :players [{:side "Corp" :user {:username "Corp"} :deck (prepare-precon-deck "Corp" corp-deck)}
+                                                 {:side "Runner" :user {:username "Runner"} :deck (prepare-precon-deck "Runner" runner-deck)}]}))
                  :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [[idx action] (map-indexed vector actions)]

@@ -1876,6 +1876,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
     if (std.mem.eql(u8, prompt_type, "malapert-search")) return "select";
+    if (std.mem.eql(u8, prompt_type, "ansel-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
@@ -2639,6 +2640,16 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     if (findPromptText(actions, "Pay")) |a| return a;
     // For jack-out prompts during encounter, decline (don't jack out)
     if (findPromptText(actions, "No action")) |a| return a;
+
+    // Tao swap-ice prompt: decline (pick "Done") to keep things simple
+    if (gen.runner_prompt_state) |ps| {
+        if (std.mem.eql(u8, ps.prompt_type, "tao-swap-ice")) {
+            if (findPromptText(actions, "Done")) |a| return a;
+        }
+    }
+
+    // Carnivore: prefer "Trash card" during access if available (exercises the ability)
+    if (findPromptText(actions, "Trash card")) |a| return a;
 
     // Any other prompt: first choice
     for (actions) |a| {
@@ -4505,3 +4516,72 @@ test "e2e intermediate game plays to completion with oracle parity" {
     try std.testing.expect(generated.winner != null);
 }
 
+
+test "e2e fullpack game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 7;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var step_counter: u32 = 0;
+    const max_steps: u32 = 1000;
+    var last_turn: u16 = 0;
+
+    while (step_counter < max_steps) : (step_counter += 1) {
+        if (generated.game_over) break;
+        if (generated.legal_actions.len == 0) break;
+
+        if (generated.corp_phase_12) {
+            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
+            try flow.applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
+            continue;
+        }
+
+        if (generated.turn != last_turn and generated.turn > 0) {
+            var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-fullpack") catch |err| {
+                std.debug.print("\n=== FULLPACK REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step_counter, actions.items.len });
+                return err;
+            };
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== FULLPACK DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step_counter, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d} deck={d}/{d}\n", .{
+                    replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
+                    replay.snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    replay.snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
+                    replay.snapshot.state.corp.deck.len, gen_snapshot.state.corp.deck.len,
+                });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                const s = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                for (actions.items[s..], s..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.choice) |c| {
+                        if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    }
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            last_turn = generated.turn;
+        }
+
+        const action = pickE2eAction(&generated);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== FULLPACK ERROR at step {d} turn {d} ===\n", .{ step_counter, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" title={s}", .{t});
+            std.debug.print("\n", .{});
+            return err;
+        };
+    }
+
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
+}
