@@ -229,6 +229,9 @@ pub const InstalledAbilitySpec = struct {
     trash_for_virus_credits: u8 = 0, // Fermenter: gain N credits per virus counter on click+trash
     bonus_virus_on_install: u8 = 0, // Cookbook: place N extra virus counters when installing virus programs
     is_console: bool = false, // Console hardware: only one allowed
+    is_trojan: bool = false, // Botulus, Tranquilizer: install on ICE
+    trojan_break_any: bool = false, // Botulus: spend virus counter to break any subroutine
+    trojan_derez_threshold: u8 = 0, // Tranquilizer: derez host ICE at N+ virus counters
 };
 
 pub const CardReference = struct {
@@ -287,6 +290,8 @@ pub const CardInstance = struct {
     advanceable: bool = false, // Pharos, Clearinghouse: can be advanced (beyond agendas/Urtica)
     advancement_strength_threshold: u8 = 0, // Pharos: str bonus starts at this many counters
     advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
+    hosted_on_ice_server: ?u8 = null, // Trojan: server index of host ICE
+    hosted_on_ice_index: ?u8 = null, // Trojan: ice index within server (from outermost)
 };
 
 pub const ServerState = struct {
@@ -407,6 +412,8 @@ pub const TurnEvents = struct {
     programs_installed_this_turn: u8 = 0,
     agenda_points_scored_this_turn: u8 = 0, // Neurospike: track AP scored this turn
     zahya_triggered_this_turn: bool = false, // Zahya: 1/turn trigger tracking
+    loup_triggered_this_turn: bool = false, // Loup: first trash-on-access trigger
+    reality_plus_triggered_this_turn: bool = false, // NBN Reality Plus: first tag trigger
 };
 
 pub const LegalAction = struct {

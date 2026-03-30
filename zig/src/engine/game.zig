@@ -831,7 +831,20 @@ pub const all_cards = [_]CardSpec{
     // --- Phase 3: Consoles ---
     .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true } },
     .{ .title = "Pantograph", .side = .runner, .code = 30023, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware }, .installed_ability = .{ .mu_provided = 1, .is_console = true } },
-    // --- Phase 4: Ansel 1.0 ---
+    // --- Phase 4: Trojans ---
+    .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .is_trojan = true,
+        .trojan_break_any = true,
+        .virus_on_install = true,
+        .virus_on_turn_start = true,
+    } },
+    .{ .title = "Tranquilizer", .side = .runner, .code = 30017, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .is_trojan = true,
+        .trojan_derez_threshold = 3,
+        .virus_on_install = true,
+        .virus_on_turn_start = true,
+    } },
+    // --- Phase 5: Ansel 1.0 ---
     .{ .title = "Ansel 1.0", .side = .corp, .code = 30038, .card_type = "ICE", .subtypes = &.{ "Bioroid", "Sentry", "Destroyer" }, .cost = 6, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .trash_program_or_etr }, // trash 1 installed Runner card
         .{ .kind = .none }, // install from HQ or Archives (placeholder)
@@ -1638,6 +1651,16 @@ pub fn applyStartTurn(
             for (generated.runner_rig_program.items) |*prog| {
                 if (prog.installed_ability.virus_on_turn_start) {
                     prog.virus_counter += 1;
+                    // Tranquilizer: derez host ICE when virus counters >= threshold
+                    if (prog.installed_ability.trojan_derez_threshold > 0 and prog.virus_counter >= prog.installed_ability.trojan_derez_threshold) {
+                        if (prog.hosted_on_ice_server) |si| {
+                            if (prog.hosted_on_ice_index) |ii| {
+                                if (si < generated.corp_servers.items.len and ii < generated.corp_servers.items[si].ices.items.len) {
+                                    generated.corp_servers.items[si].ices.items[ii].rezzed = false;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2164,6 +2187,17 @@ fn applyScoreAgendaChoice(
         }
     }
 
+    // HB: Precision Design — add 1 card from Archives to HQ when scoring
+    if (generated.corp_identity.code != null and generated.corp_identity.code.? == 30035) {
+        if (generated.corp_discard.items.len > 0) {
+            // Auto-resolve: take the first card from Archives (top card)
+            // Full implementation would show a select prompt, but this matches
+            // the oracle's auto-resolve behavior for competitive play
+            const card = generated.corp_discard.orderedRemove(0);
+            try generated.corp_hand.append(generated.backing_allocator, card);
+        }
+    }
+
     generated.corp_prompt_state = null;
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
@@ -2425,11 +2459,21 @@ fn is_runner_tagged(tag: ?state.TagState) bool {
 }
 
 fn addRunnerTag(generated: *Game, count: u8) void {
+    const was_tagged = is_runner_tagged(generated.runner_tag);
     if (generated.runner_tag == null) {
         generated.runner_tag = .{ .base = 0, .total = count, .is_tagged = count > 0 };
     } else {
         generated.runner_tag.?.total += count;
         generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
+    }
+    // NBN: Reality Plus — first tag each turn: gain 2cr (auto-resolve)
+    // Full implementation would need a prompt (gain 2cr or draw 2), but auto-resolving
+    // to 2cr matches competitive play and avoids complex flow interruption.
+    if (!was_tagged and count > 0 and !generated.turn_events.reality_plus_triggered_this_turn) {
+        if (generated.corp_identity.code != null and generated.corp_identity.code.? == 30051) {
+            generated.corp_credit += 2;
+            generated.turn_events.reality_plus_triggered_this_turn = true;
+        }
     }
 }
 
@@ -2680,6 +2724,14 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     const spec = lookupCardSpec(accessed) orelse return error.UnsupportedAccessTarget;
     const trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
     try spendCredits(generated, .runner, trash_cost);
+    // Loup: first trash-on-access each turn: gain 1cr, draw 1
+    if (generated.runner_identity.code != null and generated.runner_identity.code.? == 30001) {
+        if (!generated.turn_events.loup_triggered_this_turn) {
+            generated.runner_credit += 1;
+            try drawCards(generated, .runner, 1);
+            generated.turn_events.loup_triggered_this_turn = true;
+        }
+    }
     // AMAZE Amusements: if trashed during a run, record pending tags
     if (accessed.installed_ability.tags_on_agenda_steal_from_server > 0) {
         if (generated.run) |*mutable_run| {
@@ -3246,6 +3298,54 @@ fn applyInstallFromHand(
     if (card.runner_install.kind == .program) {
         const dzmz_discount = runnerInstalledFirstProgramDiscount(generated);
         install_cost = if (install_cost >= dzmz_discount) install_cost - dzmz_discount else 0;
+    }
+
+    // Trojan: install on ICE instead of in rig
+    if (card.installed_ability.is_trojan) {
+        try spendCredits(generated, .runner, install_cost);
+        var installed_card = try removeCardFromHand(generated, .runner, card_index);
+        installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
+        installed_card.ability_used_this_turn = false;
+        // Auto-select: install on the first rezzed ICE found (or first ICE if none rezzed)
+        var target_server: ?u8 = null;
+        var target_ice: ?u8 = null;
+        for (generated.corp_servers.items, 0..) |server, si| {
+            for (server.ices.items, 0..) |_, ii| {
+                if (target_server == null) {
+                    target_server = @intCast(si);
+                    target_ice = @intCast(ii);
+                }
+            }
+        }
+        if (target_server != null) {
+            installed_card.hosted_on_ice_server = target_server;
+            installed_card.hosted_on_ice_index = target_ice;
+        }
+        // Virus-on-install
+        if (installed_card.installed_ability.virus_on_install) {
+            installed_card.virus_counter += 1;
+            installed_card.virus_counter += @intCast(runnerCookbookBonus(generated));
+        }
+        try generated.runner_rig_program.append(generated.backing_allocator, installed_card);
+        generated.turn_events.programs_installed_this_turn += 1;
+        if (generated.runner_memory) |*mem| {
+            mem.used += card.runner_install.mu_cost;
+            mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+        }
+        // Tranquilizer: check derez threshold immediately after install
+        if (installed_card.installed_ability.trojan_derez_threshold > 0 and installed_card.virus_counter >= installed_card.installed_ability.trojan_derez_threshold) {
+            if (target_server) |si| {
+                if (target_ice) |ii| {
+                    if (si < generated.corp_servers.items.len and ii < generated.corp_servers.items[si].ices.items.len) {
+                        generated.corp_servers.items[si].ices.items[ii].rezzed = false;
+                    }
+                }
+            }
+        }
+        generated.pending_install = null;
+        generated.decision_side = .runner;
+        generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), generated);
+        return;
     }
 
     // For programs, check MU BEFORE paying credits (matches Clojure's runner-install-pay flow).
@@ -5278,6 +5378,7 @@ fn encounterActionsForState(
     var bioroid_ability_count: usize = 0;
     var pump_count: usize = 0;
     var leech_count: usize = 0;
+    var botulus_count: usize = 0;
     if (unbroken_count > 0) {
         for (ice.runner_abilities) |ability| {
             if (ability.kind == .bioroid_break and generated.runner_click >= ability.click_cost) {
@@ -5295,10 +5396,24 @@ fn encounterActionsForState(
             if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
                 leech_count += 1;
             }
+            // Botulus: trojan hosted on current ICE with virus counters can break any sub
+            if (card.installed_ability.trojan_break_any and card.virus_counter > 0) {
+                // Check if this Botulus is hosted on the current ICE
+                if (card.hosted_on_ice_server != null and card.hosted_on_ice_index != null) {
+                    const run_2 = generated.run orelse continue;
+                    const target_2 = findMutableServerByRunPath(generated.corp_servers.items, run_2.server) catch continue;
+                    const ice_count_2 = target_2.server.ices.items.len;
+                    const current_ice_idx_2 = run_2.current_ice_index orelse continue;
+                    const actual_ice_idx_2 = ice_count_2 - 1 - current_ice_idx_2;
+                    if (card.hosted_on_ice_server.? == @as(u8, @intCast(target_2.index)) and card.hosted_on_ice_index.? == @as(u8, @intCast(actual_ice_idx_2))) {
+                        botulus_count += 1;
+                    }
+                }
+            }
         }
     }
 
-    const total_actions = 1 + breaker_count + bioroid_ability_count + pump_count + leech_count;
+    const total_actions = 1 + breaker_count + bioroid_ability_count + pump_count + leech_count + botulus_count;
     const actions = try allocator.alloc(state.LegalAction, total_actions);
 
     // Continue action (let unbroken subs fire)
@@ -5381,6 +5496,30 @@ fn encounterActionsForState(
                 };
                 next += 1;
             }
+        }
+
+        // Botulus: trojan break any subroutine (hosted on current ICE)
+        for (generated.runner_rig_program.items, 0..) |card, card_idx| {
+            if (!card.installed_ability.trojan_break_any or card.virus_counter == 0) continue;
+            if (card.hosted_on_ice_server == null or card.hosted_on_ice_index == null) continue;
+            const run_3 = generated.run orelse continue;
+            const target_3 = findMutableServerByRunPath(generated.corp_servers.items, run_3.server) catch continue;
+            const ice_count_3 = target_3.server.ices.items.len;
+            const current_ice_idx_3 = run_3.current_ice_index orelse continue;
+            const actual_ice_idx_3 = ice_count_3 - 1 - current_ice_idx_3;
+            if (card.hosted_on_ice_server.? != @as(u8, @intCast(target_3.index))) continue;
+            if (card.hosted_on_ice_index.? != @as(u8, @intCast(actual_ice_idx_3))) continue;
+
+            const combined_idx = generated.runner_rig_resources.items.len + card_idx;
+            actions[next] = .{
+                .kind = .use_installed_ability,
+                .side = .runner,
+                .card_index = @intCast(combined_idx),
+                .card_title = try allocator.dupe(u8, card.title),
+                .installed_ability = .break_subroutine,
+                .label = try std.fmt.allocPrint(allocator, "Break 1 subroutine with {s}", .{card.title}),
+            };
+            next += 1;
         }
     }
 
