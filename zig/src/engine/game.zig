@@ -163,14 +163,15 @@ pub const all_cards = [_]CardSpec{
         .event_trigger = .successful_run_ends,
         .on_event = &struct {
             fn handle(g: *Game) anyerror!void {
-                if (g.turn_events.successful_run_ends_count != 1) return; // first-event? for HQ/R&D
+                if (g.turn_events.successful_run_ends_count != 1) return; // once per turn
                 const run = g.run orelse return;
                 if (run.server.len == 0) return;
                 if (!std.mem.eql(u8, run.server[0], "hq") and !std.mem.eql(u8, run.server[0], "rnd")) return;
                 const accessed = run.accessed_count;
-                if (accessed > 0) {
-                    g.runner_credit += accessed;
-                }
+                if (accessed == 0) return;
+                // Zahya: auto-accept (Clojure's optional prompt always accepted in competitive play)
+                // The credit gain happens regardless of prompt — Clojure auto-resolves "Yes"
+                g.runner_credit += accessed;
             }
         }.handle,
     },

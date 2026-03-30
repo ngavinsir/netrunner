@@ -1233,6 +1233,18 @@
          (auto-resolve-optional-virus-prompts! state)
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
          (apply-action! state normalized-action)
+         ;; Auto-resolve optional identity prompts (Zahya "Gain credits?", etc.)
+         (doseq [side [:corp :runner]]
+           (when-let [prompt (first (filter #(and (= :waiting (:prompt-type %)) (not= side (:side %)))
+                                            (get-in @state [side :prompt])))]
+             ;; Skip waiting prompts
+             nil)
+           (when-let [prompt (first (filter #(not= :waiting (:prompt-type %))
+                                            (get-in @state [side :prompt])))]
+             (when-let [yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %)))
+                                                  (:choices prompt)))]
+               (when (re-find #"Gain \d+ \[Credits\]" (or (:msg prompt) (:prompt prompt) ""))
+                 (main/handle-action state side "choice" {:choice yes-choice})))))
          ;; After end-turn, auto-resolve discard-to-hand-size select prompts.
          ;; Clojure's end-turn async chain handles discards internally; the waiting
          ;; prompt eid mismatch prevents proper cleanup via effect-completed.

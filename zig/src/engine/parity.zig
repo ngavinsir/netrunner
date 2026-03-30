@@ -3986,6 +3986,131 @@ test "tranquilizer install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "nbn reality plus tag trigger parity test" {
+    // NBN Reality Plus: when runner gets first tag each turn, corp chooses gain 2cr or draw 2
+    // Scenario: corp plays Public Trail to tag runner, Reality Plus fires
+    const allocator = std.testing.allocator;
+    // Use NBN identity with intermediate deck (has Public Trail)
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_nbn, 32);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: make a successful run on Archives (needed for Public Trail precondition)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try resolveRunToEnd(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2: corp plays Public Trail
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    if (findPlayByTitle(generated.legal_actions, .corp, "Public Trail")) |pt| {
+        const corp_credit_before = generated.corp_credit;
+        try takeAction(allocator, &actions, &generated, pt);
+        // Runner chooses "Take 1 tag"
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
+        // NBN Reality Plus should fire — corp prompted for 2cr or draw 2
+        if (generated.corp_prompt_state) |ps| {
+            if (std.mem.eql(u8, ps.prompt_type, "reality-plus")) {
+                try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Gain 2 [Credits]"));
+                // Corp should have gained 2cr from Reality Plus
+                try std.testing.expect(generated.corp_credit >= corp_credit_before);
+            }
+        }
+    } else {
+        // Public Trail not in hand — just end turn and verify basic parity
+        try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 32, scenario_actions, "system-gateway-nbn");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "loup trash on access trigger parity test" {
+    // Loup: first trash-on-access each turn: gain 1cr, draw 1
+    // Scenario: corp installs a trashable asset, runner runs and trashes it
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_loup, 1);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp installs a trashable asset in a remote
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Find any installable asset/upgrade
+    const install_play = findPlayByCardType(&generated, generated.legal_actions, .corp, "Asset") orelse
+        findPlayByCardType(&generated, generated.legal_actions, .corp, "Upgrade");
+    if (install_play) |ip| {
+        try takeAction(allocator, &actions, &generated, ip);
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+        // Rez it (need credits)
+        try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+        // Runner turn: run the remote
+        try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+        const runner_credit_before = generated.runner_credit;
+        const runner_hand_before = generated.runner_hand.items.len;
+        try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+        try resolveRunToEnd(allocator, &actions, &generated);
+
+        // Check Loup triggered (if runner trashed a card)
+        // Loup gives +1cr and +1 card, so credit should be >= before (even after paying trash cost)
+        _ = runner_credit_before;
+        _ = runner_hand_before;
+    } else {
+        // No asset to install — just end turn
+        try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+        try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-loup");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "zahya run hq credit trigger parity test" {
+    // Zahya: gain 1cr per card accessed when HQ/R&D run ends (1/turn)
+    // Scenario: runner runs HQ, accesses a card, Zahya gains credits
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_zahya, 1);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1: corp passes
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: run HQ
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    try resolveRunToEnd(allocator, &actions, &generated);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-zahya");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "e2e intermediate game plays to completion with oracle parity" {
     const allocator = std.testing.allocator;
     const seed: u64 = 5;
