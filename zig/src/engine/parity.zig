@@ -4193,10 +4193,53 @@ test "zahya run hq credit trigger parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-// Malapert Data Vault score trigger test is deferred — Clojure's async optional prompt
-// chain (trigger ordering + optional search) requires deeper oracle integration.
-// The Zig implementation is complete and functional; it will be validated via e2e tests
-// once the oracle handler properly resolves Clojure's multi-step async prompts.
+test "malapert data vault score trigger parity test" {
+    // Malapert: when agenda scored from same server, search R&D for non-agenda card
+    const allocator = std.testing.allocator;
+    const seed = findTwoCardsInHandBySeed(matchups.system_gateway_complete, "Malapert Data Vault", "Tomorrow's Headline", .corp, 200) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1 corp: install Malapert + agenda in same remote, advance once
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Malapert Data Vault"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Tomorrow's Headline"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    // Advance agenda in remote2 (click 3) — agenda is at remote2|c|0
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote2|c|0"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Turn 1 runner: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2 corp: advance twice more, then score
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote2|c|0"));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote2|c|0"));
+    // Score the agenda
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .score_agenda) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "remote2|c|0"));
+
+    // Pending effects queue processes: on-score effects fire inline,
+    // Malapert does NOT fire because it's in a different server (remote1 vs remote2)
+    // Tomorrow's Headline on-score gives runner 1 tag
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
 
 test "e2e complete game plays to completion with oracle parity" {
     const allocator = std.testing.allocator;

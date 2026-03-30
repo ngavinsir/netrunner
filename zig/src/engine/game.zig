@@ -56,6 +56,22 @@ pub const CardSpec = struct {
     on_event_server_check: bool = false, // Only fire if event occurred in same server as this card
 };
 
+/// Deferred effect for the async continuation queue.
+/// When multiple effects trigger simultaneously (e.g., scoring an agenda triggers
+/// on-score effects + event handlers from multiple cards), they are queued here
+/// and processed one at a time. If any effect opens a prompt, processing pauses
+/// until the prompt resolves, then continues with the next effect.
+pub const PendingEffect = union(enum) {
+    event_handler: u32, // card code — look up spec and call on_event
+    on_score_gain_credits: u16,
+    on_score_draw_cards: struct { amount: u8, card_code: u32 },
+    on_score_give_runner_tag: u8,
+    on_score_gain_clicks: u8,
+    on_score_rez_ice_free: state.CardInstance, // the scored agenda
+    on_score_fn: state.CardInstance, // the scored agenda — look up spec and call on_score_fn
+    finish_score: void, // terminal: updateTerminalState + return to corp actions
+};
+
 pub const SideSpec = struct {
     identity_code: u32,
     deck_lines: []const DeckLine,
@@ -1422,6 +1438,7 @@ pub const Game = struct {
     cannot_score_agendas_this_turn: bool = false, // Luminal Transubstantiation
     last_scored_server_index: ?usize = null, // Server from which last agenda was scored
     tao_first_ice: ?[]const u8 = null, // Tao: first ICE selection (server_idx|ice_idx|title)
+    pending_effects: std.ArrayListUnmanaged(PendingEffect) = .empty, // Async effect continuation queue
 
     // Corp scalars
     corp_identity: state.CardInstance = undefined,
@@ -1477,6 +1494,7 @@ pub const Game = struct {
         self.runner_rig_hardware.deinit(self.backing_allocator);
         self.runner_rig_program.deinit(self.backing_allocator);
         self.runner_rig_resources.deinit(self.backing_allocator);
+        self.pending_effects.deinit(self.backing_allocator);
         self.arena.deinit();
         self.* = undefined;
     }
@@ -2142,6 +2160,7 @@ fn applyPromptChoice(
         if (lookupCardSpecByCode(30051)) |spec| {
             if (spec.on_prompt_choice) |handler| {
                 try handler(generated, choice_text);
+                if (try resumePendingEffects(generated)) return;
                 return;
             }
         }
@@ -2152,6 +2171,7 @@ fn applyPromptChoice(
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "precision-design-archive")) {
         if (std.mem.eql(u8, choice_text, "Done")) {
             generated.corp_prompt_state = null;
+            if (try resumePendingEffects(generated)) return;
             generated.decision_side = .corp;
             generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
             return;
@@ -2165,6 +2185,7 @@ fn applyPromptChoice(
             }
         }
         generated.corp_prompt_state = null;
+        if (try resumePendingEffects(generated)) return;
         generated.decision_side = .corp;
         generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
         return;
@@ -2176,6 +2197,8 @@ fn applyPromptChoice(
             if (spec.on_prompt_choice) |handler| {
                 try handler(generated, choice_text);
                 generated.corp_prompt_state = null;
+                // Resume pending effects chain (remaining on-score effects, other triggers)
+                if (try resumePendingEffects(generated)) return;
                 generated.decision_side = .corp;
                 generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
                 return;
@@ -2420,62 +2443,39 @@ fn applyScoreAgendaChoice(
     try removeServerIfEmpty(generated, target.server_index);
 
     generated.corp_agenda_point += agenda_points;
-    // On-score agenda effects
-    if (lookupCardSpec(scored_agenda)) |spec| {
-        if (spec.on_score_fn) |handler| {
-            try handler(generated, scored_agenda);
-            if (generated.game_over) {
-                generated.corp_prompt_state = null;
-                return;
-            }
-        }
-        switch (spec.on_score.kind) {
-            .gain_credits => {
-                generated.corp_credit += spec.on_score.amount;
-            },
-            .draw_cards => {
-                try drawCards(generated, .corp, spec.on_score.amount);
-                // Superconducting Hub: +2 corp hand size while scored
-                if (spec.code == 30070) {
-                    generated.corp_hand_size.base += 2;
-                    generated.corp_hand_size.total += 2;
-                }
-            },
-            .rez_ice_free => {
-                // rez_ice_free after game-over check below
-            },
-            .give_runner_tag => {
-                _ = try addRunnerTag(generated, spec.on_score.amount);
-            },
-            .gain_clicks => {
-                generated.corp_click += spec.on_score.amount;
-                generated.cannot_score_agendas_this_turn = true;
-            },
-            .none => {},
-        }
-    }
 
     // Track agenda points scored this turn (Neurospike)
     generated.turn_events.agenda_points_scored_this_turn += agenda_points;
 
-    updateTerminalState(generated);
-    if (generated.game_over) {
-        generated.corp_prompt_state = null;
-        return;
-    }
+    // Queue all score effects + event handlers into the pending effects queue.
+    // They will be processed one at a time via drainPendingEffects, pausing
+    // whenever a prompt is opened and resuming when it resolves.
+    const allocator = generated.backing_allocator;
 
     if (lookupCardSpec(scored_agenda)) |spec| {
-        if (spec.on_score.kind == .rez_ice_free) {
-            if (try beginRezIceFreePromptForScore(generated, scored_agenda)) return;
+        // Queue on_score_fn (e.g. Orbital Superiority meat damage)
+        if (spec.on_score_fn != null) {
+            try generated.pending_effects.append(allocator, .{ .on_score_fn = scored_agenda });
+        }
+        // Queue on-score effects
+        switch (spec.on_score.kind) {
+            .gain_credits => try generated.pending_effects.append(allocator, .{ .on_score_gain_credits = spec.on_score.amount }),
+            .draw_cards => try generated.pending_effects.append(allocator, .{ .on_score_draw_cards = .{ .amount = spec.on_score.amount, .card_code = spec.code } }),
+            .give_runner_tag => try generated.pending_effects.append(allocator, .{ .on_score_give_runner_tag = spec.on_score.amount }),
+            .gain_clicks => try generated.pending_effects.append(allocator, .{ .on_score_gain_clicks = spec.on_score.amount }),
+            .rez_ice_free => try generated.pending_effects.append(allocator, .{ .on_score_rez_ice_free = scored_agenda }),
+            .none => {},
         }
     }
 
-    // Fire agenda_scored event (HB: Precision Design, Malapert, Pantograph triggers)
-    if (try fireEvent(generated, .agenda_scored)) return;
+    // Collect event handlers (appends to pending_effects without draining)
+    try collectEventHandlers(generated, .agenda_scored);
 
-    generated.corp_prompt_state = null;
-    generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    // Terminal: check game state and return to corp actions
+    try generated.pending_effects.append(allocator, .{ .finish_score = {} });
+
+    // Start processing the queue
+    if (try drainPendingEffects(generated)) return;
 }
 
 fn beginRunAnyServerPrompt(generated: *Game) !void {
@@ -2759,60 +2759,151 @@ fn cardMatchesEvent(code: ?u32, event: state.GameEvent) bool {
     return matcher(event);
 }
 
-fn fireEvent(generated: *Game, event: state.GameEvent) !bool {
-    // Check corp identity
+/// Process queued pending effects one at a time. Stops when an effect opens
+/// a prompt (the prompt handler will call this again after resolving).
+/// Returns true if a prompt was opened (caller should return).
+fn drainPendingEffects(generated: *Game) !bool {
+    while (generated.pending_effects.items.len > 0) {
+        const effect = generated.pending_effects.orderedRemove(0);
+        switch (effect) {
+            .event_handler => |card_code| {
+                if (lookupCardSpecByCode(card_code)) |spec| {
+                    if (spec.on_event) |handler| {
+                        try handler(generated);
+                        if (hasActivePrompt(generated)) return true;
+                    }
+                }
+            },
+            .on_score_gain_credits => |amount| {
+                generated.corp_credit += amount;
+            },
+            .on_score_draw_cards => |info| {
+                try drawCards(generated, .corp, info.amount);
+                if (info.card_code == 30070) { // Superconducting Hub
+                    generated.corp_hand_size.base += 2;
+                    generated.corp_hand_size.total += 2;
+                }
+            },
+            .on_score_give_runner_tag => |amount| {
+                // Add tag directly (don't use addRunnerTag which calls fireEvent recursively)
+                if (generated.runner_tag == null) {
+                    generated.runner_tag = .{ .base = 0, .total = amount, .is_tagged = amount > 0 };
+                } else {
+                    generated.runner_tag.?.total += amount;
+                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
+                }
+                if (amount > 0) {
+                    generated.turn_events.runner_gain_tag_count += 1;
+                    // Queue event handlers for runner_gain_tag (instead of calling fireEvent)
+                    try collectEventHandlers(generated, .runner_gain_tag);
+                }
+            },
+            .on_score_gain_clicks => |amount| {
+                generated.corp_click += amount;
+                generated.cannot_score_agendas_this_turn = true;
+            },
+            .on_score_rez_ice_free => |scored_agenda| {
+                if (try beginRezIceFreePromptForScore(generated, scored_agenda)) return true;
+            },
+            .on_score_fn => |scored_agenda| {
+                if (lookupCardSpec(scored_agenda)) |spec| {
+                    if (spec.on_score_fn) |handler| {
+                        try handler(generated, scored_agenda);
+                        if (generated.game_over) return true;
+                        if (hasActivePrompt(generated)) return true;
+                    }
+                }
+            },
+            .finish_score => {
+                updateTerminalState(generated);
+                if (generated.game_over) {
+                    generated.corp_prompt_state = null;
+                    return true;
+                }
+                generated.corp_prompt_state = null;
+                generated.decision_side = .corp;
+                generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+                return false;
+            },
+        }
+    }
+    return false;
+}
+
+/// Resume pending effects after a prompt resolves.
+/// Call this instead of returning directly to corp/runner opening actions
+/// when the prompt was triggered by a queued effect.
+/// Returns true if another prompt was opened (caller should return).
+fn resumePendingEffects(generated: *Game) !bool {
+    if (generated.pending_effects.items.len > 0) {
+        return try drainPendingEffects(generated);
+    }
+    return false;
+}
+
+fn hasActivePrompt(generated: *const Game) bool {
+    if (generated.corp_prompt_state) |ps| {
+        if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
+    }
+    if (generated.runner_prompt_state) |ps| {
+        if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
+    }
+    return false;
+}
+
+/// Collect all matching event handlers into the pending effects queue.
+/// Does NOT drain — caller decides when to drain.
+fn collectEventHandlers(generated: *Game, event: state.GameEvent) !void {
+    const allocator = generated.backing_allocator;
+
+    // Corp identity
     if (cardMatchesEvent(generated.corp_identity.code, event)) {
         if (lookupCardSpecByCode(generated.corp_identity.code.?)) |spec| {
-            if (spec.on_event) |handler| {
-                try handler(generated);
-                if (generated.corp_prompt_state) |ps| {
-                    if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
-                }
+            if (spec.on_event != null) {
+                try generated.pending_effects.append(allocator, .{ .event_handler = spec.code });
             }
         }
     }
-    // Check runner identity
+    // Runner identity
     if (cardMatchesEvent(generated.runner_identity.code, event)) {
         if (lookupCardSpecByCode(generated.runner_identity.code.?)) |spec| {
-            if (spec.on_event) |handler| {
-                try handler(generated);
-                if (generated.runner_prompt_state) |ps| {
-                    if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
-                }
+            if (spec.on_event != null) {
+                try generated.pending_effects.append(allocator, .{ .event_handler = spec.code });
             }
         }
     }
-    // Check runner installed hardware
+    // Runner installed hardware
     for (generated.runner_rig_hardware.items) |hw| {
         if (cardMatchesEvent(hw.code, event)) {
             if (lookupCardSpecByCode(hw.code.?)) |spec| {
-                if (spec.on_event) |handler| {
-                    try handler(generated);
+                if (spec.on_event != null) {
+                    try generated.pending_effects.append(allocator, .{ .event_handler = spec.code });
                 }
             }
         }
     }
-    // Check corp installed cards in servers (upgrades/assets with event triggers)
+    // Corp installed cards in servers (upgrades/assets with event triggers)
     for (generated.corp_servers.items, 0..) |server, server_idx| {
         for (server.content.items) |card| {
             if (!card.rezzed) continue;
             if (cardMatchesEvent(card.code, event)) {
                 if (lookupCardSpecByCode(card.code.?)) |spec| {
-                    if (spec.on_event) |handler| {
+                    if (spec.on_event != null) {
                         if (spec.on_event_server_check) {
-                            // Only fire if event occurred in this server
                             if (generated.last_scored_server_index != server_idx) continue;
                         }
-                        try handler(generated);
-                        if (generated.corp_prompt_state) |ps| {
-                            if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
-                        }
+                        try generated.pending_effects.append(allocator, .{ .event_handler = spec.code });
                     }
                 }
             }
         }
     }
-    return false;
+}
+
+/// Collect event handlers and immediately drain (for non-scoring event sites like addRunnerTag).
+fn fireEvent(generated: *Game, event: state.GameEvent) !bool {
+    try collectEventHandlers(generated, event);
+    return try drainPendingEffects(generated);
 }
 
 fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
@@ -2820,7 +2911,7 @@ fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
         // Declined to swap
         generated.tao_first_ice = null;
         generated.runner_prompt_state = null;
-        // Return to whoever was deciding before
+        if (try resumePendingEffects(generated)) return;
         generated.decision_side = .corp;
         generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
         return;
@@ -2868,6 +2959,7 @@ fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
 
     generated.tao_first_ice = null;
     generated.runner_prompt_state = null;
+    if (try resumePendingEffects(generated)) return;
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
