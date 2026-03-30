@@ -3945,7 +3945,7 @@ fn applyInstallFromHand(
         for (generated.corp_servers.items, 0..) |server, si| {
             for (server.ices.items, 0..) |ice, ii| {
                 const label = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
-                try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
+                try choices.append(allocator, .{ .kind = .card, .text = label, .card = .{ .title = ice.title, .printed_title = ice.title, .code = ice.code, .side = .corp } });
             }
         }
         if (choices.items.len == 0) {

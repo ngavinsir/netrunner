@@ -2071,10 +2071,10 @@ fn filterOracleComparableActions(
                 // prompts from both oracle and Zig sides.
                 if (action.prompt_type) |pt| {
                     // Clojure select prompts use card-click, not choice lists
-                    if (std.mem.eql(u8, pt, "trojan-host") or
-                        std.mem.eql(u8, pt, "mu-overflow") or
-                        std.mem.eql(u8, pt, "access-cleanup") or
-                        std.mem.eql(u8, pt, "select"))
+                    // Filter prompts that map to Clojure's select/choice model —
+                    // the choice format differs between engines
+                    const normalized = normalizePromptTypeForComparison(pt);
+                    if (std.mem.eql(u8, normalized, "select"))
                         continue;
                 }
                 try filtered.append(allocator, action);

@@ -559,28 +559,6 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
         try writer.writeByte('}');
         return;
     }
-    // Translate trojan-host prompt_choice into a "trojan-host" action for Clojure
-    if (action.kind == .prompt_choice and action.prompt_type != null and
-        std.mem.eql(u8, action.prompt_type.?, "trojan-host"))
-    {
-        try writer.writeByte('{');
-        try writeJsonFieldString(writer, "kind", "trojan-host", false);
-        try writeJsonFieldString(writer, "side", sideName(action.side), true);
-        if (action.choice) |choice| {
-            if (choice.card) |card| {
-                // Send card-locator with ICE title for the trojan host
-                try writer.writeByte(',');
-                try writeJsonString(writer, "card-locator");
-                try writer.writeAll(":{");
-                if (card.title) |title| {
-                    try writeJsonFieldString(writer, "title", title, false);
-                }
-                try writer.writeByte('}');
-            }
-        }
-        try writer.writeByte('}');
-        return;
-    }
     // Translate prompt_choice actions for Clojure
     if (action.kind == .prompt_choice and action.prompt_type != null) {
         // Translate discard prompt_choice into a "select" action for Clojure
@@ -723,30 +701,13 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
-        // Trojan: runner selects ICE to host on
+        // Trojan host selection — send as custom kind with card choice
         if (std.mem.eql(u8, action.prompt_type.?, "trojan-host")) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "trojan-host", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
             if (action.choice) |choice| {
-                if (choice.text) |text| {
-                    // Parse "server_idx|ice_idx|title" and write as card locator
-                    var pieces = std.mem.splitScalar(u8, text, '|');
-                    const server_text = pieces.next() orelse "";
-                    const ice_text = pieces.next() orelse "";
-                    const title = pieces.rest();
-                    try writer.writeByte(',');
-                    try writeJsonString(writer, "card-locator");
-                    try writer.writeByte(':');
-                    try writer.writeByte('{');
-                    try writeJsonFieldString(writer, "zone", "ice", false);
-                    try writeJsonFieldString(writer, "server", server_text, true);
-                    try writeJsonFieldString(writer, "index", ice_text, true);
-                    if (title.len > 0) {
-                        try writeJsonFieldString(writer, "title", title, true);
-                    }
-                    try writer.writeByte('}');
-                }
+                try writeChoiceJsonField(writer, "choice", choice, true);
             }
             try writer.writeByte('}');
             return;
@@ -1004,7 +965,6 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
-    if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
@@ -1044,7 +1004,12 @@ fn writeCardReferenceJsonField(writer: anytype, key: []const u8, card: state.Car
         wrote_field = true;
     }
     if (card.side) |side| {
-        try writeJsonFieldString(writer, "side", sideName(side), wrote_field);
+        // Capitalize to match Clojure's card side format ("Corp"/"Runner")
+        const side_str = switch (side) {
+            .corp => "Corp",
+            .runner => "Runner",
+        };
+        try writeJsonFieldString(writer, "side", side_str, wrote_field);
     }
     try writer.writeByte('}');
 }
