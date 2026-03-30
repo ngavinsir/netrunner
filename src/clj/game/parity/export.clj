@@ -1287,6 +1287,7 @@
                  (= matchup "system-gateway-weyland") (make-identity-state 30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker")
                  (= matchup "system-gateway-zahya") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30010 "Zahya Sadeghi: Versatile Smuggler")
                  (= matchup "system-gateway-loup") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30001 "René \"Loup\" Arcemont: Party Animal")
+                 (= matchup "system-gateway-tao") (make-identity-state 30077 "The Syndicate: Profit over Principle" 30019 "Tāo Salonga: Telepresence Magician")
                  :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [[idx action] (map-indexed vector actions)]

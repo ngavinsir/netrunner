@@ -1387,6 +1387,11 @@ pub const system_gateway_loup = MatchupSpec{
     .corp = .{ .identity_code = 30077, .deck_lines = &complete_corp_deck_lines },
     .runner = .{ .identity_code = 30001, .deck_lines = &complete_runner_deck_lines }, // Loup
 };
+pub const system_gateway_tao = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30077, .deck_lines = &complete_corp_deck_lines },
+    .runner = .{ .identity_code = 30019, .deck_lines = &complete_runner_deck_lines }, // Tao
+};
 
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {

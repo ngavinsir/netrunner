@@ -4241,6 +4241,97 @@ test "malapert data vault score trigger parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "tao salonga score trigger parity test" {
+    // Tao: when agenda scored, runner may swap 2 installed ICE
+    // Scenario: corp installs 2 ICE and scores, Tao gets swap prompt, declines
+    const allocator = std.testing.allocator;
+    // Find seed where corp has an agenda + 2 ICE in hand
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s <= 200) : (s += 1) {
+            var g = generator.createInitialSnapshot(allocator, matchups.system_gateway_tao, s) catch continue;
+            defer g.deinit();
+            var ice_count: u8 = 0;
+            var has_agenda = false;
+            for (g.corp_hand.items) |card| {
+                if (card.agenda_points != null) has_agenda = true;
+                const ct = card.card_type orelse continue;
+                if (std.mem.eql(u8, ct, "ICE")) ice_count += 1;
+            }
+            if (has_agenda and ice_count >= 2) break :blk s;
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_tao, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Turn 1 corp: install 2 ICE on different servers, install agenda
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install first ICE
+    if (findPlayByCardType(&generated, generated.legal_actions, .corp, "ICE")) |ice_play| {
+        try takeAction(allocator, &actions, &generated, ice_play);
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "HQ"));
+    }
+    // Install second ICE
+    if (findPlayByCardType(&generated, generated.legal_actions, .corp, "ICE")) |ice_play| {
+        try takeAction(allocator, &actions, &generated, ice_play);
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "R&D"));
+    }
+    // Install agenda
+    if (findPlayByCardType(&generated, generated.legal_actions, .corp, "Agenda")) |agenda_play| {
+        try takeAction(allocator, &actions, &generated, agenda_play);
+        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner passes turns while corp advances
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Turn 2-4 corp: advance agenda to scoring threshold
+    var turn: u8 = 0;
+    while (turn < 3) : (turn += 1) {
+        try takeCorpStartTurn(allocator, &actions, &generated);
+        // Advance as many times as we have clicks
+        while (generated.corp_click > 0) {
+            if (findBasicAction(generated.legal_actions, .corp, .advance_installed)) |adv| {
+                try takeAction(allocator, &actions, &generated, adv);
+                // Pick the agenda (first advanceable card)
+                try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
+            } else break;
+        }
+        // Try to score
+        if (findBasicAction(generated.legal_actions, .corp, .score_agenda)) |score| {
+            try takeAction(allocator, &actions, &generated, score);
+            try takeAction(allocator, &actions, &generated, generated.legal_actions[0]); // pick agenda
+
+            // Tao should fire — runner gets swap prompt
+            if (generated.runner_prompt_state) |ps| {
+                if (std.mem.eql(u8, ps.prompt_type, "tao-swap-ice")) {
+                    // Decline the swap
+                    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Done"));
+                    break;
+                }
+            }
+            break;
+        }
+        try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+        try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+        try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-tao");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "e2e complete game plays to completion with oracle parity" {
     const allocator = std.testing.allocator;
     const seed: u64 = 3;
