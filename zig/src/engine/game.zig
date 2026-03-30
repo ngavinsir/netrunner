@@ -218,9 +218,30 @@ pub const all_cards = [_]CardSpec{
                 if (!std.mem.eql(u8, run.server[0], "hq") and !std.mem.eql(u8, run.server[0], "rnd")) return;
                 const accessed = run.accessed_count;
                 if (accessed == 0) return;
-                // Zahya: auto-accept (Clojure's optional prompt always accepted in competitive play)
-                // The credit gain happens regardless of prompt — Clojure auto-resolves "Yes"
-                g.runner_credit += accessed;
+                // Optional prompt: can decline to save once-per-turn ability for later run
+                const allocator = g.arena.allocator();
+                const choices = try allocator.alloc(state.PromptChoice, 2);
+                choices[0] = stringChoice("Yes");
+                choices[1] = stringChoice("No");
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "zahya-gain"),
+                    .choices = choices,
+                    .source_card = g.runner_identity,
+                    .min_choices = @intCast(accessed), // stash accessed count for resolution
+                };
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+            }
+        }.handle,
+        .on_prompt_choice = &struct {
+            fn handle(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "Yes")) {
+                    const accessed = g.runner_prompt_state.?.min_choices;
+                    g.runner_credit += accessed;
+                }
+                g.runner_prompt_state = null;
+                g.decision_side = .runner;
+                g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
             }
         }.handle,
     },
@@ -2255,16 +2276,27 @@ fn applyPromptChoice(
         return;
     }
 
-    // NBN: Reality Plus: handled by card spec on_prompt_choice via generic handler below
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "reality-plus")) {
-        if (lookupCardSpecByCode(30051)) |spec| {
-            if (spec.on_prompt_choice) |handler| {
-                try handler(generated, choice_text);
-                if (try resumePendingEffects(generated)) return;
-                return;
+    // Generic source-card-based prompt dispatch: if the prompt has a source card with
+    // on_prompt_choice, use it. Only for card-specific prompt types (not standard access/choice
+    // prompts which have their own handlers).
+    if (prompt.source_card) |sc| {
+        const is_standard_prompt = std.mem.eql(u8, prompt.prompt_type, prompt_access_choice) or
+            std.mem.eql(u8, prompt.prompt_type, "net-damage-on-access") or
+            std.mem.eql(u8, prompt.prompt_type, prompt_discard) or
+            std.mem.eql(u8, prompt.prompt_type, "mulligan") or
+            std.mem.eql(u8, prompt.prompt_type, prompt_install_destination);
+        if (!is_standard_prompt) {
+            if (sc.code) |code| {
+                if (lookupCardSpecByCode(code)) |spec| {
+                    if (spec.on_prompt_choice) |handler| {
+                        try handler(generated, choice_text);
+                        if (try resumePendingEffects(generated)) return;
+                        // Handler is responsible for setting decision_side and legal_actions
+                        return;
+                    }
+                }
             }
         }
-        return error.UnsupportedPrompt;
     }
 
     // HB: Precision Design: select card from Archives to add to HQ
@@ -5699,18 +5731,18 @@ fn completeRunWithoutAccess(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
+    // Clear prompts before firing events so we can detect if an event sets a new one
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
     try applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
-    generated.corp_prompt_state = null;
-    generated.runner_prompt_state = null;
     generated.runner_run_credit = 0;
+    // If an event handler (e.g., Zahya) set a prompt, preserve it
+    if (generated.runner_prompt_state != null) return;
     generated.decision_side = .runner;
-    generated.legal_actions = try runnerOpeningActionsForState(
-        allocator,
-        generated,
-    );
+    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
 
 fn completeRunAfterAccess(generated: *Game) !void {
@@ -5719,18 +5751,18 @@ fn completeRunAfterAccess(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
+    // Clear prompts before firing events so we can detect if an event sets a new one
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
     try applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
-    generated.corp_prompt_state = null;
-    generated.runner_prompt_state = null;
     generated.runner_run_credit = 0;
+    // If an event handler (e.g., Zahya) set a prompt, preserve it
+    if (generated.runner_prompt_state != null) return;
     generated.decision_side = .runner;
-    generated.legal_actions = try runnerOpeningActionsForState(
-        allocator,
-        generated,
-    );
+    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
 
 fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
@@ -5739,12 +5771,12 @@ fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     try applySourceCardOnSuccessfulRun(generated);
     applyVirusCountersOnSuccessfulRun(generated);
     applyPennyshaverOnSuccessfulRun(generated);
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
     try applyIdentityOnSuccessfulRun(generated);
     applyAmazeTagsOnRunEnd(generated);
     endOfRunCleanup(generated);
     generated.run = null;
-    generated.corp_prompt_state = null;
-    generated.runner_prompt_state = null;
     generated.runner_run_credit = 0;
     generated.decision_side = .corp;
     generated.legal_actions = try continueActions(allocator, .corp);

@@ -1072,28 +1072,27 @@
 
       :malapert-search
       ;; Malapert Data Vault: corp picks a non-agenda card from R&D after scoring.
-      ;; Trigger ordering is auto-resolved in the post-action loop above.
       ;; At this point, the optional "Search R&D?" prompt should be active.
-      (let [choice-text (:choice action)]
-        ;; Handle optional "Search R&D?" Yes/No prompt
-        (let [prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [:corp :prompt])))
-              choices (:choices prompt)
-              yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %))) choices))]
-          (when yes-choice
-            (main/handle-action state :corp "choice" {:choice yes-choice})))
-        ;; Select the card from R&D or Done
+      (let [choice-text (:choice action)
+            prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [:corp :prompt])))
+            choices (:choices prompt)]
         (if (= choice-text "Done")
-          (let [prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt])))
-                done-choice (first (filter #(= "Done" (:value %)) (:choices prompt)))]
-            (when done-choice
-              (main/handle-action state :corp "choice" {:choice {:uuid (:uuid done-choice)}})))
-          (let [deck (get-in @state [:corp :deck])
-                card (first (filter #(= choice-text (:title %)) deck))
-                selected (first (get-in @state [:corp :selected]))
-                select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
-                               (:eid selected))]
-            (when (and card select-eid)
-              (main/handle-action state :corp "select" {:card card :eid select-eid})))))
+          ;; Declined — click "No" on the optional prompt
+          (let [no-choice (first (filter #(= "No" (if (map? %) (:value %) (str %))) choices))]
+            (when no-choice
+              (main/handle-action state :corp "choice" {:choice no-choice})))
+          ;; Accepted — click "Yes", then select the card
+          (do
+            (let [yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %))) choices))]
+              (when yes-choice
+                (main/handle-action state :corp "choice" {:choice yes-choice})))
+            (let [deck (get-in @state [:corp :deck])
+                  card (first (filter #(= choice-text (:title %)) deck))
+                  selected (first (get-in @state [:corp :selected]))
+                  select-eid (or (:eid (first (filter #(= :select (:prompt-type %)) (get-in @state [:corp :prompt]))))
+                                 (:eid selected))]
+              (when (and card select-eid)
+                (main/handle-action state :corp "select" {:card card :eid select-eid}))))))
 
       :precision-design-archive
       ;; HB: Precision Design — corp picks a card from Archives to add to HQ
@@ -1368,18 +1367,8 @@
                     (:corp-phase-12 @state))
            (game.core.turns/end-phase-12 state :corp nil))
          ;; Auto-resolve optional identity prompts (Zahya "Gain credits?", etc.)
-         ;; Also auto-resolve trigger ordering and optional search prompts (Malapert, etc.)
-         (doseq [side [:corp :runner]]
-           (when-let [prompt (first (filter #(and (= :waiting (:prompt-type %)) (not= side (:side %)))
-                                            (get-in @state [side :prompt])))]
-             ;; Skip waiting prompts
-             nil)
-           (when-let [prompt (first (filter #(not= :waiting (:prompt-type %))
-                                            (get-in @state [side :prompt])))]
-             (when-let [yes-choice (first (filter #(= "Yes" (if (map? %) (:value %) (str %)))
-                                                  (:choices prompt)))]
-               (when (re-find #"Gain \d+ \[Credits\]" (or (:msg prompt) (:prompt prompt) ""))
-                 (main/handle-action state side "choice" {:choice yes-choice})))))
+         ;; Auto-resolve trigger ordering prompts (but NOT optional identity/card abilities
+         ;; like Zahya or Malapert — those are handled by explicit actions from Zig)
          ;; After end-turn, auto-resolve discard-to-hand-size select prompts.
          ;; Clojure's end-turn async chain handles discards internally; the waiting
          ;; prompt eid mismatch prevents proper cleanup via effect-completed.

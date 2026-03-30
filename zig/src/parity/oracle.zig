@@ -978,6 +978,7 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
+    if (std.mem.eql(u8, prompt_type, "zahya-gain")) return "other";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";

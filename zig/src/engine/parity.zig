@@ -1903,6 +1903,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
+    if (std.mem.eql(u8, prompt_type, "zahya-gain")) return "other";
     return prompt_type;
 }
 
@@ -4280,6 +4281,8 @@ test "zahya run hq credit trigger parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
     try resolveRunToEnd(allocator, &actions, &generated);
+    // Zahya's optional prompt: accept the credit gain
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Yes"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
