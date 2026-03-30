@@ -7208,67 +7208,28 @@ fn iceInstallChoices(
     game: *const Game,
 ) ![]const state.PromptChoice {
     // ICE can be installed on any server (centrals + existing remotes + "New remote")
-    // Filter out servers where the install cost exceeds available credits
+    // Show all servers regardless of affordability (matching Clojure)
     // Order must match oracle: Archives, HQ, New remote, R&D, Server 1, Server 2, ...
-    var count: usize = 0;
-    // Centrals
-    const central_names = [_]struct { name: []const u8, index: usize }{
-        .{ .name = "Archives", .index = 2 },
-        .{ .name = "HQ", .index = 0 },
-    };
-    for (central_names) |entry| {
-        if (entry.index < game.corp_servers.items.len) {
-            const ice_count: u16 = @intCast(game.corp_servers.items[entry.index].ices.items.len);
-            if (game.corp_credit >= ice_count) count += 1;
-        }
-    }
-    count += 1; // "New remote" always affordable
-    // R&D
-    if (1 < game.corp_servers.items.len) {
-        const rnd_ice: u16 = @intCast(game.corp_servers.items[1].ices.items.len);
-        if (game.corp_credit >= rnd_ice) count += 1;
-    }
-    // Existing remotes
     var remote_count: usize = 0;
-    for (game.corp_servers.items, 0..) |server, si| {
-        if (si >= 3) {
-            const ice_count: u16 = @intCast(server.ices.items.len);
-            if (game.corp_credit >= ice_count) {
-                remote_count += 1;
-            }
-        }
+    for (game.corp_servers.items, 0..) |_, si| {
+        if (si >= 3) remote_count += 1;
     }
-    count += remote_count;
-
+    const count: usize = 4 + remote_count;
     const choices = try allocator.alloc(state.PromptChoice, count);
     var next: usize = 0;
-    for (central_names) |entry| {
-        if (entry.index < game.corp_servers.items.len) {
-            const ice_count: u16 = @intCast(game.corp_servers.items[entry.index].ices.items.len);
-            if (game.corp_credit >= ice_count) {
-                choices[next] = stringChoice(entry.name);
-                next += 1;
-            }
-        }
-    }
+    choices[next] = stringChoice("Archives");
+    next += 1;
+    choices[next] = stringChoice("HQ");
+    next += 1;
     choices[next] = stringChoice("New remote");
     next += 1;
-    if (1 < game.corp_servers.items.len) {
-        const rnd_ice: u16 = @intCast(game.corp_servers.items[1].ices.items.len);
-        if (game.corp_credit >= rnd_ice) {
-            choices[next] = stringChoice("R&D");
-            next += 1;
-        }
-    }
-    // Existing remotes as "Server 1", "Server 2", ...
+    choices[next] = stringChoice("R&D");
+    next += 1;
     var remote_num: usize = 1;
-    for (game.corp_servers.items, 0..) |server, si| {
+    for (game.corp_servers.items, 0..) |_, si| {
         if (si >= 3) {
-            const ice_count: u16 = @intCast(server.ices.items.len);
-            if (game.corp_credit >= ice_count) {
-                choices[next] = stringChoice(try std.fmt.allocPrint(allocator, "Server {}", .{remote_num}));
-                next += 1;
-            }
+            choices[next] = stringChoice(try std.fmt.allocPrint(allocator, "Server {}", .{remote_num}));
+            next += 1;
             remote_num += 1;
         }
     }

@@ -2710,6 +2710,13 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     // Carnivore: prefer "Trash card" during access if available (exercises the ability)
     if (findPromptText(actions, "Trash card")) |a| return a;
 
+    // Install-destination: prefer "New remote" (always affordable)
+    if (gen.corp_prompt_state) |ps| {
+        if (std.mem.eql(u8, ps.prompt_type, "install-destination")) {
+            if (findPromptText(actions, "New remote")) |a| return a;
+        }
+    }
+
     // Any other prompt: first choice
     for (actions) |a| {
         if (a.kind == .prompt_choice) return a;
