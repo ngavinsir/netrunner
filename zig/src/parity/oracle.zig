@@ -700,6 +700,34 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Trojan: runner selects ICE to host on
+        if (std.mem.eql(u8, action.prompt_type.?, "trojan-host")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "trojan-host", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    // Parse "server_idx|ice_idx|title" and write as card locator
+                    var pieces = std.mem.splitScalar(u8, text, '|');
+                    const server_text = pieces.next() orelse "";
+                    const ice_text = pieces.next() orelse "";
+                    const title = pieces.rest();
+                    try writer.writeByte(',');
+                    try writeJsonString(writer, "card-locator");
+                    try writer.writeByte(':');
+                    try writer.writeByte('{');
+                    try writeJsonFieldString(writer, "zone", "ice", false);
+                    try writeJsonFieldString(writer, "server", server_text, true);
+                    try writeJsonFieldString(writer, "index", ice_text, true);
+                    if (title.len > 0) {
+                        try writeJsonFieldString(writer, "title", title, true);
+                    }
+                    try writer.writeByte('}');
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // HB: Precision Design: corp picks card from Archives to add to HQ
         if (std.mem.eql(u8, action.prompt_type.?, "precision-design-archive")) {
             try writer.writeByte('{');
@@ -917,6 +945,7 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
+    if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "discard")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";

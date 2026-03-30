@@ -184,12 +184,7 @@ pub const all_cards = [_]CardSpec{
                     try trashRandomRunnerHandCards(g, 4);
                     updateTerminalState(g);
                 } else {
-                    if (g.runner_tag == null) {
-                        g.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
-                    } else {
-                        g.runner_tag.?.total += 1;
-                        g.runner_tag.?.is_tagged = true;
-                    }
+                    _ = try addRunnerTag(g, 1);
                 }
             }
         }.score,
@@ -279,12 +274,7 @@ pub const all_cards = [_]CardSpec{
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
-                    if (g.runner_tag == null) {
-                        g.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
-                    } else {
-                        g.runner_tag.?.total += 1;
-                        g.runner_tag.?.is_tagged = g.runner_tag.?.total > 0;
-                    }
+                    if (try addRunnerTag(g, 1)) return; // Event handler opened prompt
                 } else if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
                     try spendCredits(g, .runner, 8);
                 } else return error.UnsupportedChoice;
@@ -440,7 +430,7 @@ pub const all_cards = [_]CardSpec{
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
-                    addRunnerTag(g, 1);
+                    if (try addRunnerTag(g, 1)) return; // Event handler opened prompt
                     g.runner_prompt_state = null;
                     // Continue encounter normally
                     const run = g.run orelse return error.NoRunInProgress;
@@ -1235,6 +1225,8 @@ const complete_runner_deck_lines = [_]DeckLine{
     .{ .qty = 2, .card_code = 30008 }, // Leech
     .{ .qty = 2, .card_code = 30007 }, // Fermenter
     .{ .qty = 1, .card_code = 30023 }, // Pantograph
+    .{ .qty = 1, .card_code = 30004 }, // Botulus
+    .{ .qty = 1, .card_code = 30017 }, // Tranquilizer
 };
 
 pub const system_gateway_complete = MatchupSpec{
@@ -2033,6 +2025,12 @@ fn applyPromptChoice(
         return;
     }
 
+    // Trojan: runner selects ICE to host on
+    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "trojan-host")) {
+        try applyTrojanHostChoice(generated, choice_text);
+        return;
+    }
+
     // NBN: Reality Plus: handled by card spec on_prompt_choice via generic handler below
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "reality-plus")) {
         if (lookupCardSpecByCode(30051)) |spec| {
@@ -2326,7 +2324,7 @@ fn applyScoreAgendaChoice(
                 // rez_ice_free after game-over check below
             },
             .give_runner_tag => {
-                addRunnerTag(generated, spec.on_score.amount);
+                _ = try addRunnerTag(generated, spec.on_score.amount);
             },
             .gain_clicks => {
                 generated.corp_click += spec.on_score.amount;
@@ -2614,7 +2612,9 @@ fn is_runner_tagged(tag: ?state.TagState) bool {
     return false;
 }
 
-fn addRunnerTag(generated: *Game, count: u8) void {
+/// Give the runner tags and fire the runner_gain_tag event.
+/// Returns true if an event handler opened a prompt (caller should return).
+fn addRunnerTag(generated: *Game, count: u8) !bool {
     if (generated.runner_tag == null) {
         generated.runner_tag = .{ .base = 0, .total = count, .is_tagged = count > 0 };
     } else {
@@ -2623,7 +2623,9 @@ fn addRunnerTag(generated: *Game, count: u8) void {
     }
     if (count > 0) {
         generated.turn_events.runner_gain_tag_count += 1;
+        return try fireEvent(generated, .runner_gain_tag);
     }
+    return false;
 }
 
 
@@ -2660,6 +2662,45 @@ fn fireEvent(generated: *Game, event: state.GameEvent) !bool {
         }
     }
     return false;
+}
+
+fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
+    const pending = generated.pending_install orelse return error.MissingPendingInstall;
+    // Parse "server_idx|ice_idx|title"
+    var pieces = std.mem.splitScalar(u8, choice_text, '|');
+    const server_text = pieces.next() orelse return error.UnsupportedChoice;
+    const ice_text = pieces.next() orelse return error.UnsupportedChoice;
+    const server_idx = try std.fmt.parseInt(usize, server_text, 10);
+    const ice_idx = try std.fmt.parseInt(usize, ice_text, 10);
+
+    try spendCredits(generated, .runner, pending.runner_install_cost);
+    var installed_card = try removeCardFromHand(generated, .runner, pending.card_index);
+    installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
+    installed_card.ability_used_this_turn = false;
+    installed_card.hosted_on_ice_server = @intCast(server_idx);
+    installed_card.hosted_on_ice_index = @intCast(ice_idx);
+
+    // Virus-on-install
+    if (installed_card.installed_ability.virus_on_install) {
+        installed_card.virus_counter += 1;
+        installed_card.virus_counter += @intCast(runnerCookbookBonus(generated));
+    }
+    try generated.runner_rig_program.append(generated.backing_allocator, installed_card);
+    generated.turn_events.programs_installed_this_turn += 1;
+    if (generated.runner_memory) |*mem| {
+        mem.used += pending.card.runner_install.mu_cost;
+        mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+    }
+    // Tranquilizer: check derez threshold immediately after install
+    if (installed_card.installed_ability.trojan_derez_threshold > 0 and installed_card.virus_counter >= installed_card.installed_ability.trojan_derez_threshold) {
+        if (server_idx < generated.corp_servers.items.len and ice_idx < generated.corp_servers.items[server_idx].ices.items.len) {
+            generated.corp_servers.items[server_idx].ices.items[ice_idx].rezzed = false;
+        }
+    }
+    generated.pending_install = null;
+    generated.runner_prompt_state = null;
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn runner_had_successful_run_last_turn(generated: *const Game) bool {
@@ -2972,7 +3013,7 @@ fn applyStealAgendaChoice(
                 if (try beginRezIceFreePrompt(generated, accessed)) return;
             },
             .give_runner_tag => {
-                addRunnerTag(generated, spec.on_steal.amount);
+                _ = try addRunnerTag(generated, spec.on_steal.amount);
             },
             .none => {},
             else => {},
@@ -3480,51 +3521,35 @@ fn applyInstallFromHand(
         install_cost = if (install_cost >= dzmz_discount) install_cost - dzmz_discount else 0;
     }
 
-    // Trojan: install on ICE instead of in rig
+    // Trojan: install on ICE — show ICE selection prompt
     if (card.installed_ability.is_trojan) {
-        try spendCredits(generated, .runner, install_cost);
-        var installed_card = try removeCardFromHand(generated, .runner, card_index);
-        installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
-        installed_card.ability_used_this_turn = false;
-        // Auto-select: install on the first rezzed ICE found (or first ICE if none rezzed)
-        var target_server: ?u8 = null;
-        var target_ice: ?u8 = null;
+        const allocator = generated.arena.allocator();
+        // Build list of all installed ICE as choices
+        var choices: std.ArrayList(state.PromptChoice) = .empty;
+        defer choices.deinit(allocator);
         for (generated.corp_servers.items, 0..) |server, si| {
-            for (server.ices.items, 0..) |_, ii| {
-                if (target_server == null) {
-                    target_server = @intCast(si);
-                    target_ice = @intCast(ii);
-                }
+            for (server.ices.items, 0..) |ice, ii| {
+                const label = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
+                try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
             }
         }
-        if (target_server != null) {
-            installed_card.hosted_on_ice_server = target_server;
-            installed_card.hosted_on_ice_index = target_ice;
+        if (choices.items.len == 0) {
+            // No ICE to host on — can't install trojan
+            // Refund click (already spent)
+            return error.UnsupportedRunnerInstall;
         }
-        // Virus-on-install
-        if (installed_card.installed_ability.virus_on_install) {
-            installed_card.virus_counter += 1;
-            installed_card.virus_counter += @intCast(runnerCookbookBonus(generated));
-        }
-        try generated.runner_rig_program.append(generated.backing_allocator, installed_card);
-        generated.turn_events.programs_installed_this_turn += 1;
-        if (generated.runner_memory) |*mem| {
-            mem.used += card.runner_install.mu_cost;
-            mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
-        }
-        // Tranquilizer: check derez threshold immediately after install
-        if (installed_card.installed_ability.trojan_derez_threshold > 0 and installed_card.virus_counter >= installed_card.installed_ability.trojan_derez_threshold) {
-            if (target_server) |si| {
-                if (target_ice) |ii| {
-                    if (si < generated.corp_servers.items.len and ii < generated.corp_servers.items[si].ices.items.len) {
-                        generated.corp_servers.items[si].ices.items[ii].rezzed = false;
-                    }
-                }
-            }
-        }
-        generated.pending_install = null;
+        generated.pending_install = .{
+            .card = card,
+            .card_index = card_index,
+            .runner_install_cost = install_cost,
+        };
+        generated.runner_prompt_state = .{
+            .prompt_type = try allocator.dupe(u8, "trojan-host"),
+            .choices = try choices.toOwnedSlice(allocator),
+            .source_card = card,
+        };
         generated.decision_side = .runner;
-        generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), generated);
+        generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
         return;
     }
 
@@ -4156,7 +4181,7 @@ fn applyRezWindowChoice(
         generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
         // Ping: give runner tags when rezzed during a run
         if (target.ice.tag_on_rez > 0) {
-            addRunnerTag(generated, target.ice.tag_on_rez);
+            if (try addRunnerTag(generated, target.ice.tag_on_rez)) return;
         }
     } else if (!std.mem.eql(u8, choice_text, "No rez")) {
         return error.UnsupportedChoice;
@@ -4556,12 +4581,7 @@ fn resolveEncounteredIceSubroutines(
                 if (generated.game_over) return;
             },
             .tag_runner => {
-                if (generated.runner_tag == null) {
-                    generated.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
-                } else {
-                    generated.runner_tag.?.total += 1;
-                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
-                }
+                _ = try addRunnerTag(generated, 1);
             },
             .trace_tag => {
                 const run = &(generated.run orelse return error.NoRunInProgress);
@@ -4587,14 +4607,7 @@ fn resolveEncounteredIceSubroutines(
                 return;
             },
             .give_runner_tags => {
-                const tags = sub.amount;
-
-                if (generated.runner_tag == null) {
-                    generated.runner_tag = .{ .base = 0, .total = tags, .is_tagged = tags > 0 };
-                } else {
-                    generated.runner_tag.?.total += tags;
-                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
-                }
+                _ = try addRunnerTag(generated, sub.amount);
             },
             .runner_loses_credits => {
                 const loss = @min(sub.amount, @as(u8, @intCast(generated.runner_credit)));
@@ -4956,12 +4969,7 @@ fn applyBallistaTrashChoice(generated: *Game, choice_text: []const u8) !void {
 fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8) !void {
     _ = side;
     if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
-        if (generated.runner_tag == null) {
-            generated.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
-        } else {
-            generated.runner_tag.?.total += 1;
-            generated.runner_tag.?.is_tagged = true;
-        }
+        _ = try addRunnerTag(generated, 1);
     } else if (std.mem.startsWith(u8, choice_text, "Pay ")) {
         var iter = std.mem.splitScalar(u8, choice_text, ' ');
         _ = iter.next(); // "Pay"
@@ -5843,7 +5851,7 @@ fn runnerOpeningActionsForState(
 
     var playable_hand_count: usize = 0;
     for (g.runner_hand.items) |card| {
-        if (isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g), runnerHasConsoleInstalled(g))) playable_hand_count += 1;
+        if (isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g), runnerHasConsoleInstalled(g), corpHasInstalledIce(g))) playable_hand_count += 1;
     }
     const resource_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_resources.items, g.turn_events);
     const hardware_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_hardware.items, g.turn_events);
@@ -5859,7 +5867,7 @@ fn runnerOpeningActionsForState(
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
     for (g.runner_hand.items, 0..) |card, idx| {
-        if (!isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g), runnerHasConsoleInstalled(g))) continue;
+        if (!isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g), runnerHasConsoleInstalled(g), corpHasInstalledIce(g))) continue;
         actions[next] = .{
             .kind = .play_from_hand,
             .side = .runner,
@@ -6390,7 +6398,7 @@ fn applyAmazeTagsOnRunEnd(game: *Game) void {
     tags += run.tags_pending_on_steal;
 
     if (tags > 0) {
-        addRunnerTag(game, tags);
+        _ = addRunnerTag(game, tags) catch {};
     }
 }
 
@@ -6568,6 +6576,13 @@ fn runnerHasConsoleInstalled(g: *const Game) bool {
     return false;
 }
 
+fn corpHasInstalledIce(g: *const Game) bool {
+    for (g.corp_servers.items) |server| {
+        if (server.ices.items.len > 0) return true;
+    }
+    return false;
+}
+
 fn isRunnerCardPlayableFromHand(
     click: u8,
     credit: u16,
@@ -6575,11 +6590,14 @@ fn isRunnerCardPlayableFromHand(
     successful_run_this_turn: bool,
     first_program_discount: u16,
     has_console: bool,
+    has_ice: bool,
 ) bool {
     if (click < 1) return false;
     if (card.runner_install.kind != .none) {
         // Console restriction: can't install a console if one is already installed
         if (card.installed_ability.is_console and has_console) return false;
+        // Trojan restriction: can't install trojan if no ICE exists
+        if (card.installed_ability.is_trojan and !has_ice) return false;
         var cost = card.cost orelse 0;
         if (card.runner_install.install_cost_reduction_if_successful_run > 0 and successful_run_this_turn) {
             cost = if (cost >= card.runner_install.install_cost_reduction_if_successful_run)

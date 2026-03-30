@@ -252,7 +252,9 @@
            {:qty 2 :card "Conduit"}
            {:qty 2 :card "Leech"}
            {:qty 2 :card "Fermenter"}
-           {:qty 1 :card "Pantograph"}]})
+           {:qty 1 :card "Pantograph"}
+           {:qty 1 :card "Botulus"}
+           {:qty 1 :card "Tranquilizer"}]})
 
 (def system-gateway-complete
   (matchup

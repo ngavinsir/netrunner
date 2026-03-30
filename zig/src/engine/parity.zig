@@ -1876,6 +1876,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
+    if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     return prompt_type;
@@ -1919,7 +1920,19 @@ fn expectSnapshotMatches(expected: state.GameSnapshot, actual: state.GameSnapsho
     try expectSameTitles(expected.state.runner.hand, actual.state.runner.hand);
     try expectSameTitles(expected.state.runner.deck, actual.state.runner.deck);
     try expectSameTitles(expected.state.runner.rig_hardware, actual.state.runner.rig_hardware);
-    try expectSameTitles(expected.state.runner.rig_program, actual.state.runner.rig_program);
+    // Filter out trojans (hosted on ICE) from program comparison — Clojure tracks them on the ICE host
+    const actual_programs = blk: {
+        var non_trojan: std.ArrayList(state.CardInstance) = .empty;
+        defer non_trojan.deinit(std.testing.allocator);
+        for (actual.state.runner.rig_program) |prog| {
+            if (prog.hosted_on_ice_server == null) {
+                try non_trojan.append(std.testing.allocator, prog);
+            }
+        }
+        break :blk try non_trojan.toOwnedSlice(std.testing.allocator);
+    };
+    defer std.testing.allocator.free(actual_programs);
+    try expectSameTitles(expected.state.runner.rig_program, actual_programs);
     try expectInstalledResources(expected.state.runner.rig_resources, actual.state.runner.rig_resources);
 }
 
@@ -3912,6 +3925,63 @@ test "hb precision design hand size parity test" {
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-hb");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "botulus install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Botulus", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Corp installs ICE so Botulus has a target
+    if (findPlayByCardType(&generated, generated.legal_actions, .corp, "ICE")) |ice_play| {
+        try takeAction(allocator, &actions, &generated, ice_play);
+        try takeAction(allocator, &actions, &generated, generated.legal_actions[0]); // Install on server
+    }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Botulus"));
+    // Trojan host selection: pick first available ICE
+    try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "tranquilizer install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Tranquilizer", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    if (findPlayByCardType(&generated, generated.legal_actions, .corp, "ICE")) |ice_play| {
+        try takeAction(allocator, &actions, &generated, ice_play);
+        try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
+    }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Tranquilizer"));
+    // Trojan host selection: pick first available ICE
+    try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }

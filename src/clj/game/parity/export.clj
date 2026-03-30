@@ -982,6 +982,22 @@
         (when match
           (main/handle-action state :corp "choice" {:choice match})))
 
+      :trojan-host
+      ;; Trojan (Botulus/Tranquilizer): runner selects ICE to host on
+      (let [loc (:card-locator action)
+            ice-title (:title loc)
+            ;; Find the ICE by title across all servers
+            card (when ice-title
+                   (some (fn [[_ server-data]]
+                           (some #(when (= ice-title (:title %)) %)
+                                 (get server-data :ices)))
+                         (get-in @state [:corp :servers])))
+            prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [:runner :prompt])))
+            select-eid (or (:eid prompt)
+                          (:eid (first (get-in @state [:runner :selected]))))]
+        (when (and card select-eid)
+          (main/handle-action state :runner "select" {:card card :eid select-eid})))
+
       :precision-design-archive
       ;; HB: Precision Design — corp picks a card from Archives to add to HQ
       (let [choice-text (:choice action)]
