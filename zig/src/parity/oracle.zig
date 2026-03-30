@@ -712,6 +712,19 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Sprint: corp picks a card from HQ to shuffle into R&D
+        if (std.mem.eql(u8, action.prompt_type.?, "sprint-shuffle")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "sprint-shuffle", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    try writeJsonFieldString(writer, "choice", text, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Tao Salonga: runner picks ICE to swap
         if (std.mem.eql(u8, action.prompt_type.?, "tao-swap-ice")) {
             try writer.writeByte('{');
