@@ -96,6 +96,7 @@ pub const ActionExpectation = struct {
     card_index: ?u8 = null,
     card_title: ?[]const u8 = null,
     ability_index: ?u8 = null,
+    basic_action: ?state.BasicAction = null,
     label: ?[]const u8 = null,
 };
 
@@ -507,25 +508,11 @@ fn waitForUnixSocket(socket_path: []const u8) !void {
 }
 
 fn shouldSkipAction(action: state.LegalAction) bool {
-    // Skip score_agenda and advance_installed basic actions — in Clojure these are
-    // single commands with card context, not two-step prompt flows.
-    // The subsequent prompt_choice is translated to the proper action.
-    if (action.basic_action) |ba| {
-        if (ba == .score_agenda or ba == .advance_installed) return true;
-    }
     // Skip discard-to-hand-size selects — Clojure's end-turn async chain creates a
     // :waiting prompt on the other side that doesn't get cleaned up by effect-completed
     // (eid mismatch in continue-ability). Sending discard as separate actions leaves orphaned state.
     if (action.kind == .prompt_choice and action.prompt_type != null) {
         if (std.mem.eql(u8, action.prompt_type.?, "discard")) return true;
-        // Skip "No rez" from rez-window — Clojure's auto-no-action handles approach passing.
-        if (std.mem.eql(u8, action.prompt_type.?, "rez-window")) {
-            if (action.choice) |choice| {
-                if (choice.text) |text| {
-                    if (std.mem.eql(u8, text, "No rez")) return true;
-                }
-            }
-        }
     }
     return false;
 }
@@ -538,20 +525,64 @@ fn isPhase12Continue(action: state.LegalAction) bool {
 }
 
 fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
-    // Translate score-agenda prompt_choice into a "score" action for Clojure
-    if (action.kind == .prompt_choice and action.prompt_type != null) {
-        if (std.mem.eql(u8, action.prompt_type.?, "score-agenda")) {
-            try writer.writeByte('{');
-            try writeJsonFieldString(writer, "kind", "score", false);
-            try writeJsonFieldString(writer, "side", sideName(action.side), true);
-            if (action.choice) |choice| {
-                if (choice.text) |text| {
-                    try writeCorpServerCardLocator(writer, text, true);
-                }
+    // Translate advance action into an "advance" action for Clojure
+    if (action.kind == .advance) {
+        try writer.writeByte('{');
+        try writeJsonFieldString(writer, "kind", "advance", false);
+        try writeJsonFieldString(writer, "side", sideName(action.side), true);
+        if (action.choice) |choice| {
+            if (choice.text) |text| {
+                try writeCorpServerCardLocator(writer, text, true);
             }
-            try writer.writeByte('}');
-            return;
         }
+        try writer.writeByte('}');
+        return;
+    }
+    // Translate score action into a "score" action for Clojure
+    if (action.kind == .score) {
+        try writer.writeByte('{');
+        try writeJsonFieldString(writer, "kind", "score", false);
+        try writeJsonFieldString(writer, "side", sideName(action.side), true);
+        if (action.choice) |choice| {
+            if (choice.text) |text| {
+                try writeCorpServerCardLocator(writer, text, true);
+            }
+        }
+        try writer.writeByte('}');
+        return;
+    }
+    // Translate rez_ice action into a "rez-ice" action for Clojure
+    if (action.kind == .rez_ice) {
+        try writer.writeByte('{');
+        try writeJsonFieldString(writer, "kind", "rez-ice", false);
+        try writeJsonFieldString(writer, "side", sideName(action.side), true);
+        try writer.writeByte('}');
+        return;
+    }
+    // Translate trojan-host prompt_choice into a "trojan-host" action for Clojure
+    if (action.kind == .prompt_choice and action.prompt_type != null and
+        std.mem.eql(u8, action.prompt_type.?, "trojan-host"))
+    {
+        try writer.writeByte('{');
+        try writeJsonFieldString(writer, "kind", "trojan-host", false);
+        try writeJsonFieldString(writer, "side", sideName(action.side), true);
+        if (action.choice) |choice| {
+            if (choice.card) |card| {
+                // Send card-locator with ICE title for the trojan host
+                try writer.writeByte(',');
+                try writeJsonString(writer, "card-locator");
+                try writer.writeAll(":{");
+                if (card.title) |title| {
+                    try writeJsonFieldString(writer, "title", title, false);
+                }
+                try writer.writeByte('}');
+            }
+        }
+        try writer.writeByte('}');
+        return;
+    }
+    // Translate prompt_choice actions for Clojure
+    if (action.kind == .prompt_choice and action.prompt_type != null) {
         // Translate discard prompt_choice into a "select" action for Clojure
         if (std.mem.eql(u8, action.prompt_type.?, "discard")) {
             try writer.writeByte('{');
@@ -581,14 +612,6 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
                     }
                 }
             }
-            try writer.writeByte('}');
-            return;
-        }
-        // Translate rez-window "Rez approached ice" into a "rez-ice" action for Clojure
-        if (std.mem.eql(u8, action.prompt_type.?, "rez-window")) {
-            try writer.writeByte('{');
-            try writeJsonFieldString(writer, "kind", "rez-ice", false);
-            try writeJsonFieldString(writer, "side", sideName(action.side), true);
             try writer.writeByte('}');
             return;
         }
@@ -825,19 +848,6 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
-        // Translate advance-installed prompt_choice into an "advance" action for Clojure
-        if (std.mem.eql(u8, action.prompt_type.?, "advance-installed")) {
-            try writer.writeByte('{');
-            try writeJsonFieldString(writer, "kind", "advance", false);
-            try writeJsonFieldString(writer, "side", sideName(action.side), true);
-            if (action.choice) |choice| {
-                if (choice.text) |text| {
-                    try writeCorpServerCardLocator(writer, text, true);
-                }
-            }
-            try writer.writeByte('}');
-            return;
-        }
     }
 
     // Translate rez_non_ice into a "rez" action with card-locator for Clojure
@@ -992,6 +1002,7 @@ fn oraclePromptType(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "malapert-search")) return "select";
     if (std.mem.eql(u8, prompt_type, "ansel-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
+    if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
     if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
     if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
@@ -1084,6 +1095,9 @@ fn actionKindName(kind: state.ActionKind) []const u8 {
         .jack_out => "jack-out",
         .run => "run",
         .rez_non_ice => "rez",
+        .rez_ice => "rez-ice",
+        .advance => "advance",
+        .score => "score",
     };
 }
 
@@ -1671,6 +1685,10 @@ fn parseActionExpectations(
             null;
         const raw_kind = try parseActionKind(try getRequired(.string, action, "kind"));
 
+        const basic_action = if (raw_kind == .use_ability and ability_index != null)
+            parseBasicAction(side, ability_index.?)
+        else
+            null;
         parsed[idx] = .{
             .kind = if (raw_kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .use_installed_ability else raw_kind,
             .side = side,
@@ -1679,6 +1697,7 @@ fn parseActionExpectations(
             .card_index = installed_resource_index orelse try parseOptionalCardIndex(action),
             .card_title = try dupeOptionalString(allocator, try getOptional(.string, action, "card-title")),
             .ability_index = ability_index,
+            .basic_action = basic_action,
             .label = try dupeOptionalString(allocator, try getOptional(.string, action, "label")),
         };
     }

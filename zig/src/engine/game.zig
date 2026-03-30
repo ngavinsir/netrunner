@@ -1687,7 +1687,6 @@ const prompt_run_target = "run-target";
 const prompt_run_any_server_basic = "run-any-server-basic";
 const prompt_run_central = "run-central";
 const prompt_hq_access = "hq-access";
-const prompt_rez_window = "rez-window";
 const prompt_discard = "discard";
 const prompt_manegarm_tax = "manegarm-tax";
 
@@ -1879,6 +1878,19 @@ pub fn applyAction(
             const card_index = action.card_index orelse return error.MissingCardIndex;
             const server = action.server orelse return error.MissingServer;
             try applyRezNonIce(generated, server, card_index);
+        },
+        .rez_ice => {
+            try applyRezApproachedIce(generated);
+        },
+        .advance => {
+            const choice = action.choice orelse return error.MissingChoice;
+            const choice_text = choice.text orelse return error.MissingChoice;
+            try applyAdvanceInstalledChoice(generated, choice_text);
+        },
+        .score => {
+            const choice = action.choice orelse return error.MissingChoice;
+            const choice_text = choice.text orelse return error.MissingChoice;
+            try applyScoreAgendaChoice(generated, choice_text);
         },
         else => return error.UnsupportedAction,
     }
@@ -2152,11 +2164,6 @@ fn applyPromptChoice(
 
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_rez_ice_free_score) and prompt.source_card != null) {
         try applyRezIceFreeScoreChoice(generated, choice_text);
-        return;
-    }
-
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_rez_window)) {
-        try applyRezWindowChoice(generated, choice_text);
         return;
     }
 
@@ -3052,6 +3059,8 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     const server_idx = try std.fmt.parseInt(usize, server_text, 10);
     const ice_idx = try std.fmt.parseInt(usize, ice_text, 10);
 
+    // Click was deferred from applyInstallFromHand for trojans (Clojure spends it on resolution)
+    try spendClicks(generated, .runner, 1);
     try spendCredits(generated, .runner, pending.runner_install_cost);
     var installed_card = try removeCardFromHand(generated, .runner, pending.card_index);
     installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
@@ -3239,7 +3248,7 @@ fn applyCorpPlayFromHand(
             .choices = if (is_ice)
                 try iceInstallChoices(allocator, generated)
             else
-                try installChoicesForCard(allocator, card.install.kind),
+                try installChoicesForCard(allocator, card.install.kind, generated),
             .source_card = card,
         };
         generated.pending_install = .{
@@ -3915,7 +3924,6 @@ fn applyInstallFromHand(
     const card = generated.runner_hand.items[card_index];
     if (card.runner_install.kind == .none) return error.UnsupportedRunnerInstall;
 
-    try spendClicks(generated, .runner, 1);
     var install_cost: u16 = card.cost orelse 0;
     if (card.runner_install.install_cost_reduction_if_successful_run > 0 and generated.runner_successful_run_this_turn) {
         install_cost = if (install_cost >= card.runner_install.install_cost_reduction_if_successful_run)
@@ -3929,7 +3937,7 @@ fn applyInstallFromHand(
         install_cost = if (install_cost >= dzmz_discount) install_cost - dzmz_discount else 0;
     }
 
-    // Trojan: install on ICE — show ICE selection prompt
+    // Trojan: install on ICE — show ICE selection prompt (click deferred until host selected)
     if (card.installed_ability.is_trojan) {
         const allocator = generated.arena.allocator();
         // Build list of all installed ICE as choices
@@ -3960,6 +3968,9 @@ fn applyInstallFromHand(
         generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
         return;
     }
+
+    // Non-trojan: spend click immediately
+    try spendClicks(generated, .runner, 1);
 
     // For programs, check MU BEFORE paying credits (matches Clojure's runner-install-pay flow).
     // If MU would overflow, show the trash prompt first; install completes after resolution.
@@ -4513,25 +4524,7 @@ fn applyContinue(
 
     if (std.mem.eql(u8, run.*.?.phase, "success")) return try advanceSuccessPhase(generated, side);
 
-    // Handle movement phase jack-out window
-    if (std.mem.eql(u8, run.*.?.phase, "movement") and run.*.?.jack_out_available) {
-        if (run.*.?.no_action == null) {
-            // First pass - if runner, they had chance to jack out
-            // Now corp gets to pass
-            run.*.?.no_action = side;
-            generated.decision_side = otherSide(side);
-            generated.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
-            return;
-        }
-        // Both players passed on jack-out - clear flag and continue
-        run.*.?.no_action = null;
-        return try advanceMovementPhase(generated);
-    }
-
     if (run.*.?.no_action == null) {
-        if (side == .corp and std.mem.eql(u8, run.*.?.phase, "approach-ice")) {
-            if (try maybeOpenRezWindowPrompt(generated)) return;
-        }
         run.*.?.no_action = side;
         generated.decision_side = otherSide(side);
         generated.legal_actions = try continueActionsForRunWithRez(allocator, otherSide(side), run.*, generated);
@@ -4549,80 +4542,31 @@ fn applyContinue(
     return error.UnsupportedRunPhase;
 }
 
-fn maybeOpenRezWindowPrompt(generated: *Game) !bool {
-    if (generated.corp_prompt_state) |prompt_state| {
-        if (!std.mem.eql(u8, prompt_state.prompt_type, "run")) {
-            return false;
-        }
-    } else {
-        return false;
-    }
-    if (generated.run == null) {
-        return false;
-    }
-    const target = try currentApproachedIce(generated) orelse {
-        return false;
-    };
-    if (target.ice.rezzed) {
-        return false;
-    }
-    if (generated.corp_credit < (target.ice.cost orelse 0)) {
-        return false;
-    }
-
-    generated.corp_prompt_state = .{
-        .prompt_type = try generated.arena.allocator().dupe(u8, prompt_rez_window),
-        .choices = try rezWindowChoices(generated.arena.allocator()),
-        .source_card = target.ice,
-    };
-    generated.decision_side = .corp;
-    generated.legal_actions = try promptChoiceActions(
-        generated.arena.allocator(),
-        .corp,
-        generated.corp_prompt_state.?,
-    );
-    return true;
-}
-
-fn rezWindowChoices(allocator: std.mem.Allocator) ![]const state.PromptChoice {
-    const choices = try allocator.alloc(state.PromptChoice, 2);
-    choices[0] = stringChoice("Rez approached ice");
-    choices[1] = stringChoice("No rez");
-    return choices;
-}
-
-fn applyRezWindowChoice(
-    generated: *Game,
-    choice_text: []const u8,
-) !void {
-    if (std.mem.eql(u8, choice_text, "Rez approached ice")) {
-        const target = (try currentApproachedIce(generated)) orelse return error.UnsupportedChoice;
-        if (target.ice.rezzed) return error.UnsupportedChoice;
-        const rez_cost = target.ice.cost orelse 0;
-        const run = generated.run orelse return error.NoRunInProgress;
-        const adjusted_cost = rez_cost + run.rez_cost_bonus;
-        try spendCredits(generated, .corp, adjusted_cost);
-        generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
-        // Ping: give runner tags when rezzed during a run
-        if (target.ice.tag_on_rez > 0) {
-            if (try addRunnerTag(generated, target.ice.tag_on_rez)) return;
-        }
-    } else if (!std.mem.eql(u8, choice_text, "No rez")) {
-        return error.UnsupportedChoice;
-    }
-
-    // Restore "run" prompt state (run is still in progress)
+fn applyRezApproachedIce(generated: *Game) !void {
     const allocator = generated.arena.allocator();
-    generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "run"),
-        .choices = &.{},
-        .source_card = null,
-    };
-    const run = &generated.run;
-    if (run.* == null) return error.NoRunInProgress;
-    run.*.?.no_action = .corp;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+    const target = (try currentApproachedIce(generated)) orelse return error.UnsupportedChoice;
+    if (target.ice.rezzed) return error.UnsupportedChoice;
+    const rez_cost = target.ice.cost orelse 0;
+    const run_val = generated.run orelse return error.NoRunInProgress;
+    const adjusted_cost = rez_cost + run_val.rez_cost_bonus;
+    try spendCredits(generated, .corp, adjusted_cost);
+    generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
+    // Ping: give runner tags when rezzed during a run
+    if (target.ice.tag_on_rez > 0) {
+        if (try addRunnerTag(generated, target.ice.tag_on_rez)) return;
+    }
+    // On-rez trigger
+    const ice = &generated.corp_servers.items[target.server_index].ices.items[target.ice_index];
+    if (ice.code) |code| {
+        if (lookupCardSpecByCode(code)) |spec| {
+            if (spec.on_rez) |handler| {
+                try handler(generated);
+            }
+        }
+    }
+    // Corp still has priority during approach — regenerate actions
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
 }
 
 fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !void {
@@ -4820,8 +4764,9 @@ fn advanceApproachIcePhase(generated: *Game) !void {
     run.phase = try allocator.dupe(u8, "movement");
     run.jack_out_available = true;
     run.no_action = null;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+    // Corp gets priority first in movement phase (matching Clojure)
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
 }
 
 const prompt_break_sub = "break-sub";
@@ -4974,8 +4919,9 @@ fn advanceEncounterPhase(generated: *Game) !void {
     run.current_ice_index = null;
     run.jack_out_available = true;
     run.no_action = null;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+    // Corp gets priority first in movement phase (matching Clojure)
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
 }
 
 fn resolveEncounteredIceSubroutines(
@@ -5418,8 +5364,9 @@ fn applyAnselInstallChoice(
     current_run.phase = try allocator.dupe(u8, "movement");
     current_run.jack_out_available = true;
     current_run.no_action = null;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, current_run.*);
+    // Corp gets priority first in movement phase (matching Clojure)
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, current_run.*, generated);
 }
 
 fn applyBranInstallIceChoice(
@@ -5477,8 +5424,9 @@ fn applyBranInstallIceChoice(
     current_run.phase = try allocator.dupe(u8, "movement");
     current_run.jack_out_available = true;
     current_run.no_action = null;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, current_run.*);
+    // Corp gets priority first in movement phase (matching Clojure)
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, current_run.*, generated);
 }
 
 fn applyBallistaTrashChoice(generated: *Game, choice_text: []const u8) !void {
@@ -5519,8 +5467,9 @@ fn applyBallistaTrashChoice(generated: *Game, choice_text: []const u8) !void {
     current_run.phase = try allocator.dupe(u8, "movement");
     current_run.jack_out_available = true;
     current_run.no_action = null;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, current_run.*);
+    // Corp gets priority first in movement phase (matching Clojure)
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, current_run.*, generated);
 }
 
 fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8) !void {
@@ -5563,8 +5512,9 @@ fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8)
     next_run.current_ice_index = null;
     next_run.jack_out_available = true;
     next_run.no_action = null;
-    generated.decision_side = .runner;
-    generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
+    // Corp gets priority first in movement phase (matching Clojure)
+    generated.decision_side = .corp;
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, next_run.*, generated);
 }
 
 fn applyJackOutPromptChoice(generated: *Game, choice_text: []const u8) !void {
@@ -5608,8 +5558,9 @@ fn applyJackOutPromptChoice(generated: *Game, choice_text: []const u8) !void {
         next_run.current_ice_index = null;
         next_run.jack_out_available = true;
         next_run.no_action = null;
-        generated.decision_side = .runner;
-        generated.legal_actions = try continueActionsForRun(allocator, .runner, next_run.*);
+        // Corp gets priority first in movement phase (matching Clojure)
+        generated.decision_side = .corp;
+        generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, next_run.*, generated);
         return;
     }
 
@@ -6065,15 +6016,34 @@ fn continueActionsForRunWithRez(
         .corp => blk: {
             // Check if corp can rez any non-ICE cards in the run target server
             const rez_actions = if (game) |g| try corpRezNonIceActions(allocator, g) else &[_]state.LegalAction{};
-            if (rez_actions.len == 0) break :blk &corp_continue_actions;
+            // Check if corp can rez approached ICE
+            const has_ice_rez = if (game) |g| try canRezApproachedIce(g) else false;
+            const extra = rez_actions.len + @as(usize, if (has_ice_rez) 1 else 0);
+            if (extra == 0) break :blk &corp_continue_actions;
             // Combine continue + rez actions
-            var combined = try allocator.alloc(state.LegalAction, 1 + rez_actions.len);
+            var combined = try allocator.alloc(state.LegalAction, 1 + extra);
             combined[0] = corp_continue_actions[0]; // continue action
-            @memcpy(combined[1..], rez_actions);
+            @memcpy(combined[1 .. 1 + rez_actions.len], rez_actions);
+            if (has_ice_rez) {
+                combined[1 + rez_actions.len] = .{
+                    .kind = .rez_ice,
+                    .side = .corp,
+                };
+            }
             break :blk combined;
         },
         .runner => runnerContinueActions(allocator, run != null and run.?.jack_out_available),
     };
+}
+
+fn canRezApproachedIce(game: *const Game) !bool {
+    const run = game.run orelse return false;
+    if (!std.mem.eql(u8, run.phase, "approach-ice")) return false;
+    const target = try currentApproachedIce(@constCast(game)) orelse return false;
+    if (target.ice.rezzed) return false;
+    const rez_cost = target.ice.cost orelse 0;
+    const adjusted_cost = rez_cost + run.rez_cost_bonus;
+    return game.corp_credit >= adjusted_cost;
 }
 
 fn corpRezNonIceActions(allocator: std.mem.Allocator, game: *const Game) ![]const state.LegalAction {
@@ -6327,12 +6297,12 @@ fn corpOpeningActionsForState(
     }
 
     const installed_ability_count = countCorpInstalledAbilityActions(servers);
-    var count: usize = playable_hand_count + installed_ability_count;
-    if (g.corp_click >= 1) count += 1;
-    if (g.corp_click >= 1 and g.corp_deck.items.len > 0) count += 1;
-    if (g.corp_click >= 1 and g.corp_credit >= 1) count += 1;
-    if (g.corp_click >= 1 and scoreable_count > 0 and !g.cannot_score_agendas_this_turn) count += 1;
-    if (g.corp_click >= 3) count += 1;
+    const advanceable_count = if (g.corp_click >= 1 and g.corp_credit >= 1) countInstalledCards(servers) else 0;
+    var count: usize = playable_hand_count + installed_ability_count + advanceable_count;
+    if (g.corp_click >= 1) count += 1; // gain credit
+    if (g.corp_click >= 1 and g.corp_deck.items.len > 0) count += 1; // draw card
+    if (g.corp_click >= 1 and scoreable_count > 0 and !g.cannot_score_agendas_this_turn) count += scoreable_count;
+    if (g.corp_click >= 3) count += 1; // purge viruses
 
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
@@ -6371,13 +6341,50 @@ fn corpOpeningActionsForState(
         actions[next] = try basicAbilityAction(allocator, .corp, .draw_card, "Draw 1 card");
         next += 1;
     }
+    // Per-card advance actions
     if (g.corp_click >= 1 and g.corp_credit >= 1) {
-        actions[next] = try basicAbilityAction(allocator, .corp, .advance_installed, "Advance 1 installed card");
-        next += 1;
+        for (servers) |server| {
+            for (server.ices.items, 0..) |_, card_index| {
+                const text = try std.fmt.allocPrint(allocator, "{s}|i|{d}", .{ server.name, card_index });
+                actions[next] = .{
+                    .kind = .advance,
+                    .side = .corp,
+                    .choice = stringChoice(text),
+                    .basic_action = .advance_installed,
+                };
+                next += 1;
+            }
+            for (server.content.items, 0..) |_, card_index| {
+                const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
+                actions[next] = .{
+                    .kind = .advance,
+                    .side = .corp,
+                    .choice = stringChoice(text),
+                    .basic_action = .advance_installed,
+                };
+                next += 1;
+            }
+        }
     }
+    // Per-agenda score actions
     if (g.corp_click >= 1 and scoreable_count > 0 and !g.cannot_score_agendas_this_turn) {
-        actions[next] = try basicAbilityAction(allocator, .corp, .score_agenda, "Score an agenda");
-        next += 1;
+        for (servers, 0..) |server, server_index| {
+            if (server_index < 3) continue;
+            for (server.content.items, 0..) |card, card_index| {
+                if (card.agenda_points == null) continue;
+                if (card.advancement_requirement == null) continue;
+                if (card.advancement_counter < card.advancement_requirement.?) continue;
+                const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
+                actions[next] = .{
+                    .kind = .score,
+                    .side = .corp,
+                    .choice = stringChoice(text),
+                    .card_title = try allocator.dupe(u8, card.title),
+                    .basic_action = .score_agenda,
+                };
+                next += 1;
+            }
+        }
     }
     if (g.corp_click >= 3) {
         actions[next] = try basicAbilityAction(allocator, .corp, .purge_viruses, "Purge virus counters");
@@ -7272,6 +7279,7 @@ fn iceInstallChoices(
 fn installChoicesForCard(
     allocator: std.mem.Allocator,
     install_kind: state.InstallKind,
+    game: ?*const Game,
 ) ![]const state.PromptChoice {
     return switch (install_kind) {
         .corp_server_choice => blk: {
@@ -7283,8 +7291,26 @@ fn installChoicesForCard(
             break :blk choices;
         },
         .corp_remote_only => blk: {
-            const choices = try allocator.alloc(state.PromptChoice, 1);
+            // Count existing remote servers (index >= 3 are remotes)
+            var remote_count: usize = 0;
+            if (game) |g| {
+                for (g.corp_servers.items, 0..) |_, si| {
+                    if (si >= 3) remote_count += 1;
+                }
+            }
+            const choices = try allocator.alloc(state.PromptChoice, 1 + remote_count);
             choices[0] = stringChoice("New remote");
+            if (game) |g| {
+                var idx: usize = 1;
+                var remote_num: usize = 1;
+                for (g.corp_servers.items, 0..) |_, si| {
+                    if (si >= 3) {
+                        choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Server {d}", .{remote_num}));
+                        idx += 1;
+                        remote_num += 1;
+                    }
+                }
+            }
             break :blk choices;
         },
         .none => error.UnsupportedCardType,
@@ -7551,12 +7577,12 @@ test "action index stepping matches corp opening flow" {
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .runner });
     try std.testing.expectEqual(state.Side.corp, currentPlayer(&generated));
-    try std.testing.expectEqual(@as(usize, 10), legalActionCount(&generated));
+    try std.testing.expectEqual(@as(usize, 9), legalActionCount(&generated));
 
     try applyActionByIndex(&generated, 0);
     try std.testing.expectEqual(@as(u16, 9), generated.corp_credit);
     try std.testing.expectEqual(@as(u8, 2), generated.corp_click);
-    try std.testing.expectEqual(@as(usize, 8), legalActionCount(&generated));
+    try std.testing.expectEqual(@as(usize, 7), legalActionCount(&generated));
 
     var install_generated = try createInitialSnapshot(
         std.testing.allocator,
@@ -7701,20 +7727,20 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
     const run_action = findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction;
     try applyAction(&generated, run_action);
 
-    var found_rez_prompt = false;
+    var found_rez_action = false;
     var guard: usize = 0;
     while (guard < 12 and generated.run != null) : (guard += 1) {
         if (generated.decision_side == .corp) {
-            if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice")) |rez_action| {
+            if (findActionByKind(generated.legal_actions, .rez_ice, .corp)) |rez_action| {
                 try applyAction(&generated, rez_action);
-                found_rez_prompt = true;
+                found_rez_action = true;
                 break;
             }
         }
         const continue_action = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse return error.MissingAction;
         try applyAction(&generated, continue_action);
     }
-    try std.testing.expect(found_rez_prompt);
+    try std.testing.expect(found_rez_action);
 
     try std.testing.expect(iceIsRezzed(generated.corp_servers.items, ice_title));
 }
@@ -7782,12 +7808,6 @@ test "offworld office on-score grants credits" {
     const credit_before = generated.corp_credit;
     const score_action = findBasicAbilityAction(generated.legal_actions, .corp, .score_agenda) orelse return error.MissingAction;
     try applyAction(&generated, score_action);
-    try applyAction(&generated, .{
-        .kind = .prompt_choice,
-        .side = .corp,
-        .prompt_type = prompt_score_agenda,
-        .choice = stringChoice("remote1|c|0"),
-    });
 
     try std.testing.expectEqual(@as(u8, 2), generated.corp_agenda_point);
     try std.testing.expectEqual(@as(u16, credit_before + 7), generated.corp_credit);
@@ -8004,7 +8024,10 @@ fn findActionByKind(actions: []const state.LegalAction, kind: state.ActionKind, 
 
 fn findBasicAbilityAction(actions: []const state.LegalAction, side: state.Side, basic_action: state.BasicAction) ?state.LegalAction {
     for (actions) |action| {
-        if (action.kind == .use_ability and action.side == side and action.basic_action != null and action.basic_action.? == basic_action) return action;
+        if (action.side != side) continue;
+        if (basic_action == .advance_installed and action.kind == .advance) return action;
+        if (basic_action == .score_agenda and action.kind == .score) return action;
+        if (action.kind == .use_ability and action.basic_action != null and action.basic_action.? == basic_action) return action;
     }
     return null;
 }
@@ -8134,12 +8157,6 @@ test "jack out is available after passing ice" {
                 }
             }
             if (found_jack_out) break;
-        }
-
-        // Handle rez window - corp should decline
-        if (findPromptChoiceAction(generated.legal_actions, .corp, "No rez")) |no_rez| {
-            try applyAction(&generated, no_rez);
-            continue;
         }
 
         // Continue through the run
@@ -8309,11 +8326,11 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
 
     // Run through to approach-ice phase
     var guard: usize = 0;
-    var found_rez_prompt = false;
+    var found_rez_action = false;
     while (guard < 20 and generated.run != null) : (guard += 1) {
-        // Look for rez window prompt
-        if (findPromptChoiceAction(generated.legal_actions, .corp, "Rez approached ice")) |rez_action| {
-            found_rez_prompt = true;
+        // Look for rez_ice action
+        if (findActionByKind(generated.legal_actions, .rez_ice, .corp)) |rez_action| {
+            found_rez_action = true;
             // Corp has 20 credits, should be able to rez regardless of ice cost
             try std.testing.expect(generated.corp_credit >= 4);
             try applyAction(&generated, rez_action);
@@ -8323,7 +8340,7 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
         try applyAction(&generated, continue_action);
     }
 
-    try std.testing.expect(found_rez_prompt);
+    try std.testing.expect(found_rez_action);
     // ICE should be rezzed
     try std.testing.expect(iceIsRezzed(generated.corp_servers.items, ice_title));
 }

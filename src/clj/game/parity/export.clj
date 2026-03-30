@@ -1331,6 +1331,19 @@
          (auto-dismiss-hide-prompts! state)
          (auto-resolve-optional-virus-prompts! state)
          (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
+         ;; Clear stale prompt-states when no run is active
+         (when-not (:run @state)
+           (doseq [side [:corp :runner]]
+             (when-let [ps (get-in @state [side :prompt-state])]
+               (when (#{:run :waiting} (:prompt-type ps))
+                 (swap! state assoc-in [side :prompt-state] nil)))
+             ;; Also clear stale prompt queue entries
+             (let [prompts (get-in @state [side :prompt])]
+               (when (seq prompts)
+                 (let [cleaned (vec (remove #(#{:run :waiting} (:prompt-type %)) prompts))]
+                   (when (not= (count cleaned) (count prompts))
+                     (swap! state assoc-in [side :prompt] cleaned)
+                     (swap! state assoc-in [side :prompt-state] (first cleaned))))))))
          (apply-action! state normalized-action)
          ;; Auto-resolve optional identity prompts (Zahya "Gain credits?", etc.)
          ;; Also auto-resolve trigger ordering and optional search prompts (Malapert, etc.)

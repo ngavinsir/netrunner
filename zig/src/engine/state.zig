@@ -33,6 +33,9 @@ pub const ActionKind = enum {
     jack_out,
     run,
     rez_non_ice,
+    rez_ice,
+    advance,
+    score,
 };
 
 pub const BasicAction = enum(u8) {
