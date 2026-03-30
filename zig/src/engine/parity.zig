@@ -2640,6 +2640,8 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
     if (findPromptText(actions, "Pay")) |a| return a;
     // For jack-out prompts during encounter, decline (don't jack out)
     if (findPromptText(actions, "No action")) |a| return a;
+    // Rez window: always decline (matches oracle's auto-no-action)
+    if (findPromptText(actions, "No rez")) |a| return a;
 
     // Tao swap-ice prompt: decline (pick "Done") to keep things simple
     if (gen.runner_prompt_state) |ps| {
@@ -4540,9 +4542,8 @@ test "e2e fullpack game plays to completion with oracle parity" {
             continue;
         }
 
-        // Per-action parity check: replay ALL actions so far and compare
-        // Only check every 5 actions to keep it fast, and skip during phase_12
-        if (actions.items.len > 0 and actions.items.len % 5 == 0 and !generated.corp_phase_12) {
+        // Per-action parity check starting from action 30 (every action)
+        if (actions.items.len >= 30 and !generated.corp_phase_12) {
             var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-fullpack") catch |err| {
                 std.debug.print("\n=== FULLPACK REPLAY FAILED at step {d} ({d} actions) ===\n", .{ step_counter, actions.items.len });
                 return err;
