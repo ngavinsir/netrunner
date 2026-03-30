@@ -251,7 +251,8 @@
            {:qty 2 :card "Marjanah"}
            {:qty 2 :card "Conduit"}
            {:qty 2 :card "Leech"}
-           {:qty 2 :card "Fermenter"}]})
+           {:qty 2 :card "Fermenter"}
+           {:qty 1 :card "Pantograph"}]})
 
 (def system-gateway-complete
   (matchup

@@ -3825,6 +3825,29 @@ test "malapert data vault install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "pantograph install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Pantograph", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Pantograph"));
+    try std.testing.expect(generated.runner_rig_hardware.items.len >= 1);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "e2e intermediate game plays to completion with oracle parity" {
     const allocator = std.testing.allocator;
     const seed: u64 = 5;

@@ -1113,6 +1113,7 @@ const complete_runner_deck_lines = [_]DeckLine{
     .{ .qty = 2, .card_code = 30024 }, // Conduit
     .{ .qty = 2, .card_code = 30008 }, // Leech
     .{ .qty = 2, .card_code = 30007 }, // Fermenter
+    .{ .qty = 1, .card_code = 30023 }, // Pantograph
 };
 
 pub const system_gateway_complete = MatchupSpec{
@@ -5492,7 +5493,7 @@ fn runnerOpeningActionsForState(
 
     var playable_hand_count: usize = 0;
     for (g.runner_hand.items) |card| {
-        if (isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g))) playable_hand_count += 1;
+        if (isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g), runnerHasConsoleInstalled(g))) playable_hand_count += 1;
     }
     const resource_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_resources.items, g.turn_events);
     const hardware_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_hardware.items, g.turn_events);
@@ -5508,7 +5509,7 @@ fn runnerOpeningActionsForState(
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
     for (g.runner_hand.items, 0..) |card, idx| {
-        if (!isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g))) continue;
+        if (!isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit, card, g.runner_successful_run_this_turn, runnerInstalledFirstProgramDiscount(g), runnerHasConsoleInstalled(g))) continue;
         actions[next] = .{
             .kind = .play_from_hand,
             .side = .runner,
@@ -6205,15 +6206,25 @@ fn isCorpCardPlayableFromHand(
     return card.install.kind != .none;
 }
 
+fn runnerHasConsoleInstalled(g: *const Game) bool {
+    for (g.runner_rig_hardware.items) |card| {
+        if (card.installed_ability.is_console) return true;
+    }
+    return false;
+}
+
 fn isRunnerCardPlayableFromHand(
     click: u8,
     credit: u16,
     card: state.CardInstance,
     successful_run_this_turn: bool,
     first_program_discount: u16,
+    has_console: bool,
 ) bool {
     if (click < 1) return false;
     if (card.runner_install.kind != .none) {
+        // Console restriction: can't install a console if one is already installed
+        if (card.installed_ability.is_console and has_console) return false;
         var cost = card.cost orelse 0;
         if (card.runner_install.install_cost_reduction_if_successful_run > 0 and successful_run_this_turn) {
             cost = if (cost >= card.runner_install.install_cost_reduction_if_successful_run)
