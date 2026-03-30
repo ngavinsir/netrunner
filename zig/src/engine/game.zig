@@ -693,30 +693,46 @@ pub const all_cards = [_]CardSpec{
         }.play,
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                // Find the card in hand and move it to deck
-                for (g.corp_hand.items, 0..) |card, idx| {
-                    if (std.mem.eql(u8, card.title, choice_text)) {
-                        const removed = g.corp_hand.orderedRemove(idx);
-                        try g.corp_deck.append(g.backing_allocator, removed);
-                        break;
-                    }
-                }
+                // Mark the card as selected (don't move yet — batch like Clojure)
+                // Track selected card titles in pending_sprint_selections
+                try g.pending_sprint_selections.append(g.backing_allocator, choice_text);
+
                 // Check if we need to pick one more
                 if (g.corp_prompt_state) |*ps| {
                     if (ps.min_choices > 1) {
                         ps.min_choices -= 1;
-                        // Rebuild choices with updated hand
+                        // Rebuild choices excluding already-selected cards
                         const allocator = g.arena.allocator();
                         var choices: std.ArrayList(state.PromptChoice) = .empty;
                         defer choices.deinit(allocator);
                         for (g.corp_hand.items, 0..) |card, idx| {
-                            try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                            var already_selected = false;
+                            for (g.pending_sprint_selections.items) |sel| {
+                                if (std.mem.eql(u8, card.title, sel)) {
+                                    already_selected = true;
+                                    break;
+                                }
+                            }
+                            if (!already_selected) {
+                                try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                            }
                         }
                         ps.choices = try choices.toOwnedSlice(allocator);
                         g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                         return;
                     }
                 }
+                // All selected — now move all selected cards from hand to deck
+                for (g.pending_sprint_selections.items) |sel_title| {
+                    for (g.corp_hand.items, 0..) |card, idx| {
+                        if (std.mem.eql(u8, card.title, sel_title)) {
+                            const removed = g.corp_hand.orderedRemove(idx);
+                            try g.corp_deck.append(g.backing_allocator, removed);
+                            break;
+                        }
+                    }
+                }
+                g.pending_sprint_selections.clearRetainingCapacity();
                 // Done — shuffle R&D and return to corp actions
                 try shuffleDeck(g, .corp);
                 g.corp_prompt_state = null;
@@ -1511,6 +1527,7 @@ pub const Game = struct {
     last_scored_server_index: ?usize = null, // Server from which last agenda was scored
     tao_first_ice: ?[]const u8 = null, // Tao: first ICE selection (server_idx|ice_idx|title)
     pending_effects: std.ArrayListUnmanaged(PendingEffect) = .empty, // Async effect continuation queue
+    pending_sprint_selections: std.ArrayListUnmanaged([]const u8) = .empty, // Sprint batched card selections
 
     // Corp scalars
     corp_identity: state.CardInstance = undefined,
@@ -1567,6 +1584,7 @@ pub const Game = struct {
         self.runner_rig_program.deinit(self.backing_allocator);
         self.runner_rig_resources.deinit(self.backing_allocator);
         self.pending_effects.deinit(self.backing_allocator);
+        self.pending_sprint_selections.deinit(self.backing_allocator);
         self.arena.deinit();
         self.* = undefined;
     }

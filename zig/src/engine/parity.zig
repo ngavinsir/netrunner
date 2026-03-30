@@ -3540,12 +3540,10 @@ test "sprint draw and shuffle parity test" {
     try std.testing.expect(generated.corp_prompt_state != null);
     try std.testing.expectEqualStrings("sprint-shuffle", generated.corp_prompt_state.?.prompt_type);
 
-    // Pick first card to shuffle back
-    const first_pick = generated.corp_hand.items[0].title;
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, first_pick));
-    // Pick second card
-    const second_pick = generated.corp_hand.items[0].title;
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, second_pick));
+    // Pick first card to shuffle back (first prompt choice)
+    try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
+    // Pick second card (first available prompt choice after excluding first pick)
+    try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
     try std.testing.expectEqual(hand_before, generated.corp_hand.items.len);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
