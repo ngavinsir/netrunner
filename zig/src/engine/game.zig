@@ -1052,8 +1052,8 @@ pub const all_cards = [_]CardSpec{
     // --- Phase 5: Ansel 1.0 ---
     .{ .title = "Ansel 1.0", .side = .corp, .code = 30038, .card_type = "ICE", .subtypes = &.{ "Bioroid", "Sentry", "Destroyer" }, .cost = 6, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .trash_program_or_etr }, // trash 1 installed Runner card
-        .{ .kind = .none }, // install from HQ or Archives (placeholder)
-        .{ .kind = .none }, // no steal/trash for rest of run (placeholder)
+        .{ .kind = .corp_install_from_hq_archives }, // install a card from HQ or Archives
+        .{ .kind = .prevent_steal_trash }, // prevent stealing/trashing for rest of run
     }, .runner_abilities = &.{
         .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
     } },
@@ -3242,6 +3242,11 @@ fn applyAccessPromptChoice(
         try applyTrashOnAccess(generated, accessed);
         return;
     }
+    // Carnivore: trash 2 from hand to trash accessed card at no cost
+    if (std.mem.eql(u8, choice_text, "Trash card")) {
+        try applyCarnivoreTrash(generated, accessed);
+        return;
+    }
     switch (accessed.access.kind) {
         .steal_agenda => try applyStealAgendaChoice(generated, accessed, choice_text),
         .net_damage_on_access => return error.UnsupportedAccessTarget,
@@ -3249,6 +3254,29 @@ fn applyAccessPromptChoice(
         .corp_pay_etr => return error.UnsupportedAccessTarget,
         .none => return error.UnsupportedAccessTarget,
     }
+}
+
+fn applyCarnivoreTrash(generated: *Game, accessed: state.CardInstance) !void {
+    // Trash 2 cards from runner hand (front of hand, deterministic)
+    var trashed: u8 = 0;
+    while (trashed < 2 and generated.runner_hand.items.len > 0) : (trashed += 1) {
+        const card = generated.runner_hand.orderedRemove(0);
+        try generated.runner_discard.append(generated.backing_allocator, card);
+    }
+    // Mark Carnivore as used this turn
+    for (generated.runner_rig_hardware.items) |*hw| {
+        if (hw.code != null and hw.code.? == 30003) {
+            hw.ability_used_this_turn = true;
+            break;
+        }
+    }
+    // Trash the accessed card at no credit cost
+    generated.turn_events.runner_trash_corp_card_count += 1;
+    if (try fireEvent(generated, .runner_trash_corp_card)) return;
+    const run = generated.run orelse return error.NoRunInProgress;
+    try removeAccessedCard(generated, run);
+    try appendDiscardCard(generated, .corp, accessed);
+    try finishAccessCard(generated);
 }
 
 fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
@@ -4740,6 +4768,8 @@ fn subroutineLabel(allocator: std.mem.Allocator, sub: state.SubroutineSpec, idx:
         .runner_loses_credits_or_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
         .do_net_damage_then_jack_out => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
         .trash_program_or_etr => std.fmt.allocPrint(allocator, "Trash 1 program or end the run", .{}),
+        .corp_install_from_hq_archives => std.fmt.allocPrint(allocator, "Install a card from HQ or Archives", .{}),
+        .prevent_steal_trash => std.fmt.allocPrint(allocator, "The Runner cannot steal or trash Corp cards for the remainder of this run", .{}),
         .none => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
     };
 }
@@ -5078,6 +5108,18 @@ fn resolveEncounteredIceSubroutines(
                 generated.decision_side = .corp;
                 generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
                 return;
+            },
+            .corp_install_from_hq_archives => {
+                // Ansel 1.0 sub 2: corp installs a card from HQ or Archives
+                // For simplicity, auto-skip if no installable cards
+                // (Full implementation would create a select prompt for corp to choose a card)
+                // TODO: Full implementation with card selection prompt
+            },
+            .prevent_steal_trash => {
+                // Ansel 1.0 sub 3: prevent stealing/trashing for rest of run
+                if (generated.run) |*mutable_run| {
+                    mutable_run.no_steal_or_trash = true;
+                }
             },
             .none => {},
         }
@@ -5557,8 +5599,13 @@ fn beginAccessFlow(
     accessed: state.CardInstance,
 ) !bool {
     const allocator = generated.arena.allocator();
+    const no_steal_or_trash = if (generated.run) |r| r.no_steal_or_trash else false;
     switch (accessed.access.kind) {
         .steal_agenda => {
+            if (no_steal_or_trash) {
+                // Ansel 1.0: can't steal — show "No action" only
+                return try beginNoActionAccessPrompt(generated, accessed);
+            }
             generated.runner_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, prompt_access_choice),
                 .choices = try singleStringChoice(allocator, "Steal"),
@@ -5585,17 +5632,33 @@ fn beginNoActionAccessPrompt(generated: *Game, accessed: state.CardInstance) !bo
     return true;
 }
 
+fn hasCarnivoreAvailable(generated: *const Game) bool {
+    if (generated.runner_hand.items.len < 2) return false;
+    for (generated.runner_rig_hardware.items) |hw| {
+        if (hw.code != null and hw.code.? == 30003 and !hw.ability_used_this_turn) return true;
+    }
+    return false;
+}
+
 fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
     const spec = lookupCardSpec(accessed) orelse return false;
     const trash_cost = spec.trash_cost orelse return false;
     const allocator = generated.arena.allocator();
+    const no_steal_or_trash = if (generated.run) |r| r.no_steal_or_trash else false;
 
-    const can_afford = generated.runner_credit >= trash_cost;
-    const choice_count: usize = if (can_afford) 2 else 1;
+    const can_afford = generated.runner_credit >= trash_cost and !no_steal_or_trash;
+    const carnivore = hasCarnivoreAvailable(generated) and !no_steal_or_trash;
+    var choice_count: usize = 1; // "No action"
+    if (can_afford) choice_count += 1;
+    if (carnivore) choice_count += 1;
     const choices = try allocator.alloc(state.PromptChoice, choice_count);
     var idx: usize = 0;
     if (can_afford) {
         choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Pay {d} [Credits] to trash", .{trash_cost}));
+        idx += 1;
+    }
+    if (carnivore) {
+        choices[idx] = stringChoice("Trash card");
         idx += 1;
     }
     choices[idx] = stringChoice("No action");

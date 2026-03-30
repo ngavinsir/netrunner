@@ -123,6 +123,8 @@ pub const SubroutineKind = enum(u8) {
     do_net_damage_then_jack_out, // Do N net damage, then runner may jack out
     give_tag_or_pay_credits, // Funhouse: give 1 tag unless runner pays N credits
     trash_program_or_etr, // Ballista: trash 1 program, or ETR if no programs
+    corp_install_from_hq_archives, // Ansel 1.0: install a card from HQ or Archives
+    prevent_steal_trash, // Ansel 1.0: prevent stealing/trashing for rest of run
 };
 
 pub const SubroutineSpec = struct {
@@ -359,6 +361,7 @@ pub const RunState = struct {
     ice_strength_modifier: i8 = 0, // Leech: temporary ICE strength reduction
     did_steal_this_run: bool = false, // AMAZE: track if agenda was stolen during run
     tags_pending_on_steal: u8 = 0, // AMAZE: tags to give if agenda stolen (survives card trash)
+    no_steal_or_trash: bool = false, // Ansel 1.0: prevent stealing/trashing for rest of run
 };
 
 pub const HandSize = struct {
