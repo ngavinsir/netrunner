@@ -4630,6 +4630,25 @@ test "e2e fullpack game plays to completion with oracle parity" {
                     std.debug.print(" {s}(mu_prov={d})", .{ h.title, h.installed_ability.mu_provided });
                 }
                 std.debug.print("\n", .{});
+                // Print filtered action comparison
+                const dbg_fe = try filterOracleComparableActions(std.testing.allocator, replay.snapshot.legal_actions);
+                defer std.testing.allocator.free(dbg_fe);
+                const dbg_fa = try filterOracleComparableActions(std.testing.allocator, gen_snapshot.legal_actions);
+                defer std.testing.allocator.free(dbg_fa);
+                std.debug.print("  filtered oracle ({d}):\n", .{dbg_fe.len});
+                for (dbg_fe) |a| {
+                    std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
+                    if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    std.debug.print("\n", .{});
+                }
+                std.debug.print("  filtered zig ({d}):\n", .{dbg_fa.len});
+                for (dbg_fa) |a| {
+                    std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
+                    if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    std.debug.print("\n", .{});
+                }
                 std.debug.print("  last 30 actions:\n", .{});
                 const s = if (actions.items.len > 30) actions.items.len - 30 else 0;
                 for (actions.items[s..], s..) |sa, ai| {
