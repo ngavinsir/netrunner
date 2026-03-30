@@ -883,7 +883,7 @@ test "send-a-message steal scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    // After movement completes, runner gets access prompt directly (no corp success continue)
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
@@ -915,7 +915,7 @@ test "send-a-message cleanup-done scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    // After movement completes, runner gets access prompt directly (no corp success continue)
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
@@ -1102,7 +1102,7 @@ test "runner overclock run credits are attached and cleared through run flow" {
     try std.testing.expectEqual(@as(u16, 5), run_after_success.temporary_run_credits);
     try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 
-    try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    // After movement completes, runner gets access prompt directly (no corp success continue)
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
@@ -1164,7 +1164,7 @@ test "runner overclock cleanup-done scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
+    // After movement completes, runner gets access prompt directly (no corp success continue)
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
@@ -4605,6 +4605,18 @@ test "e2e fullpack game plays to completion with oracle parity" {
                         if (replay.snapshot.state.run) |r| r.phase else "null",
                         if (gen_snapshot.state.run) |r| r.phase else "null",
                     });
+                std.debug.print("  oracle prompts: corp={s} runner={s}\n", .{
+                    if (replay.snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
+                    if (replay.snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
+                });
+                std.debug.print("  zig prompts: corp={s} runner={s}\n", .{
+                    if (gen_snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
+                    if (gen_snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
+                });
+                std.debug.print("  oracle actions={d} zig actions={d}\n", .{
+                    replay.snapshot.legal_actions.len,
+                    gen_snapshot.legal_actions.len,
+                });
                 std.debug.print("  last 30 actions:\n", .{});
                 const s = if (actions.items.len > 30) actions.items.len - 30 else 0;
                 for (actions.items[s..], s..) |sa, ai| {

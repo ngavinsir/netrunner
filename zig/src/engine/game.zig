@@ -4691,24 +4691,24 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
             return;
         }
     }
-    if (generated.runner_prompt_state) |runner_prompt| {
-        if (!std.mem.eql(u8, runner_prompt.prompt_type, "waiting") and !std.mem.eql(u8, runner_prompt.prompt_type, "run")) {
-            if (side != .corp) return error.InvalidAction;
-            generated.corp_prompt_state = null;
-            generated.decision_side = .runner;
-            generated.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
-            return;
-        }
-    }
 
-    if (run.no_action == null) {
-        run.no_action = side;
-        generated.decision_side = otherSide(side);
-        generated.legal_actions = try continueActionsForRun(allocator, otherSide(side), run.*);
+    // Corp's success continue is a pass-through — Clojure's continue :success
+    // is a no-op, so no_action stays null. Just deliver the pending access prompt.
+    if (side == .corp) {
+        // If runner has a pending access prompt, deliver it now
+        if (generated.runner_prompt_state) |runner_prompt| {
+            if (!std.mem.eql(u8, runner_prompt.prompt_type, "waiting") and !std.mem.eql(u8, runner_prompt.prompt_type, "run")) {
+                generated.decision_side = .runner;
+                generated.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
+                return;
+            }
+        }
+        generated.decision_side = .runner;
+        generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
         return;
     }
 
-    if (run.no_action.? == side) return error.InvalidAction;
+    // Runner's success continue: both sides have now passed.
     run.no_action = null;
     if (try prepareNextAccess(generated)) {
         run.phase = try allocator.dupe(u8, "success");
@@ -5608,8 +5608,23 @@ fn advanceMovementPhase(generated: *Game) !void {
     try applySuccessfulRunEffects(generated);
     if (try prepareNextAccess(generated)) {
         run.phase = try allocator.dupe(u8, "success");
-        generated.decision_side = .corp;
-        generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
+        // Clojure: approach-server → successful-run → breach-server all resolve
+        // within the movement continue handler. Access begins directly.
+        // Corp prompt (e.g., net-damage-on-access) gets priority if present.
+        if (generated.corp_prompt_state) |cp| {
+            if (!std.mem.eql(u8, cp.prompt_type, "run")) {
+                generated.decision_side = .corp;
+                generated.legal_actions = try promptChoiceActions(allocator, .corp, cp);
+                return;
+            }
+        }
+        if (generated.runner_prompt_state) |ps| {
+            generated.decision_side = .runner;
+            generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+        } else {
+            generated.decision_side = .runner;
+            generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
+        }
         return;
     }
 
@@ -7664,7 +7679,7 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
     try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
+    // After movement completes, runner gets access prompt directly
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Steal") orelse return error.MissingAction);
 
     const rez_choice = findPromptChoiceAction(generated.legal_actions, .corp, ice_title) orelse return error.MissingAction;

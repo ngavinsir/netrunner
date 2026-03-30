@@ -534,6 +534,15 @@
            (= :run (:prompt-type runner-prompt)))
       (if (= :corp (:no-action run)) :runner :corp)
 
+      ;; During a run, if corp has only a :run prompt and runner has a
+      ;; non-run/non-waiting prompt (e.g. access), runner gets priority.
+      (and run
+           (= :run (:prompt-type corp-prompt))
+           runner-prompt
+           (not= :run (:prompt-type runner-prompt))
+           (not= :waiting (:prompt-type runner-prompt)))
+      :runner
+
       (and corp-prompt (not= :waiting (:prompt-type corp-prompt))) :corp
       (and runner-prompt (not= :waiting (:prompt-type runner-prompt))) :runner
       (and (:end-turn corp-observation)
