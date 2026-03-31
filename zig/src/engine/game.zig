@@ -6348,8 +6348,9 @@ fn corpOpeningActionsForState(
     }
 
     const installed_ability_count = countCorpInstalledAbilityActions(servers);
-    const advanceable_count = if (g.corp_click >= 1 and g.corp_credit >= 1) countInstalledCards(servers) else 0;
-    var count: usize = playable_hand_count + installed_ability_count + advanceable_count;
+    const advanceable_count = if (g.corp_click >= 1 and g.corp_credit >= 1) countAdvanceableCards(servers) else 0;
+    const rezzable_count = countRezzableNonIce(g);
+    var count: usize = playable_hand_count + installed_ability_count + advanceable_count + rezzable_count;
     if (g.corp_click >= 1) count += 1; // gain credit
     if (g.corp_click >= 1 and g.corp_deck.items.len > 0) count += 1; // draw card
     if (g.corp_click >= 1 and scoreable_count > 0 and !g.cannot_score_agendas_this_turn) count += scoreable_count;
@@ -6392,10 +6393,14 @@ fn corpOpeningActionsForState(
         actions[next] = try basicAbilityAction(allocator, .corp, .draw_card, "Draw 1 card");
         next += 1;
     }
-    // Per-card advance actions
+    // Per-card advance actions — only advanceable cards per rule 1.18.3:
+    // - Agendas can always be advanced
+    // - Cards with .advanceable = true can be advanced
+    // - Unrezzed (facedown) cards can be targeted (bluff advancing)
     if (g.corp_click >= 1 and g.corp_credit >= 1) {
         for (servers) |server| {
-            for (server.ices.items, 0..) |_, card_index| {
+            for (server.ices.items, 0..) |card, card_index| {
+                if (!canBeAdvanced(card)) continue;
                 const text = try std.fmt.allocPrint(allocator, "{s}|i|{d}", .{ server.name, card_index });
                 actions[next] = .{
                     .kind = .advance,
@@ -6405,7 +6410,8 @@ fn corpOpeningActionsForState(
                 };
                 next += 1;
             }
-            for (server.content.items, 0..) |_, card_index| {
+            for (server.content.items, 0..) |card, card_index| {
+                if (!canBeAdvanced(card)) continue;
                 const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
                 actions[next] = .{
                     .kind = .advance,
@@ -6439,6 +6445,23 @@ fn corpOpeningActionsForState(
     }
     if (g.corp_click >= 3) {
         actions[next] = try basicAbilityAction(allocator, .corp, .purge_viruses, "Purge virus counters");
+        next += 1;
+    }
+
+    // Rez non-ICE cards (free action, no click cost)
+    for (servers) |server| {
+        for (server.content.items, 0..) |card, card_idx| {
+            if (!card.rezzed and card.cost != null and g.corp_credit >= card.cost.?) {
+                actions[next] = .{
+                    .kind = .rez_non_ice,
+                    .side = .corp,
+                    .card_title = card.title,
+                    .card_index = @intCast(card_idx),
+                    .server = server.name,
+                };
+                next += 1;
+            }
+        }
     }
 
     return actions;
@@ -6458,11 +6481,11 @@ fn countScoreableAgendas(servers: []const MutableServer) usize {
     return count;
 }
 
-fn countAdvanceableCards(servers: []const MutableServer) usize {
+fn countRezzableNonIce(g: *const Game) usize {
     var count: usize = 0;
-    for (servers) |server| {
+    for (g.corp_servers.items) |server| {
         for (server.content.items) |card| {
-            if (isAdvanceable(card)) count += 1;
+            if (!card.rezzed and card.cost != null and g.corp_credit >= card.cost.?) count += 1;
         }
     }
     return count;
@@ -6473,6 +6496,29 @@ fn countInstalledCards(servers: []const MutableServer) usize {
     for (servers) |server| {
         count += server.ices.items.len;
         count += server.content.items.len;
+    }
+    return count;
+}
+
+/// Rule 1.18.3: A card can be advanced if:
+/// - It's unrezzed/facedown (corp can bluff-advance any facedown card)
+/// - It's an agenda (always advanceable)
+/// - It has the advanceable flag (e.g. Pharos, Clearinghouse)
+/// - It has adds_advancement access (e.g. Urtica Cipher)
+fn canBeAdvanced(card: state.CardInstance) bool {
+    if (!card.rezzed) return true;
+    return isAdvanceable(card);
+}
+
+fn countAdvanceableCards(servers: []const MutableServer) usize {
+    var count: usize = 0;
+    for (servers) |server| {
+        for (server.ices.items) |card| {
+            if (canBeAdvanced(card)) count += 1;
+        }
+        for (server.content.items) |card| {
+            if (canBeAdvanced(card)) count += 1;
+        }
     }
     return count;
 }
