@@ -417,8 +417,9 @@ test "corp install prompt resolutions match oracle fixture" {
 }
 
 fn expectActions(expected: []const fixture.ActionExpectation, actual: []const state.LegalAction) !void {
-    // Filter out advance_installed/score_agenda from oracle side and advance/score from Zig side
+    // Filter out advance_installed/score_agenda from oracle side and advance/score/rez_non_ice from Zig side
     // — Zig uses direct per-card actions, oracle has generic basic actions
+    // — Zig generates rez_non_ice during action phase, oracle doesn't expose it
     var expected_filtered: usize = 0;
     for (expected) |a| {
         if (a.basic_action) |ba| {
@@ -428,7 +429,7 @@ fn expectActions(expected: []const fixture.ActionExpectation, actual: []const st
     }
     var actual_filtered: usize = 0;
     for (actual) |a| {
-        if (a.kind == .advance or a.kind == .score) continue;
+        if (a.kind == .advance or a.kind == .score or a.kind == .rez_non_ice) continue;
         actual_filtered += 1;
     }
     try std.testing.expectEqual(expected_filtered, actual_filtered);
@@ -443,7 +444,7 @@ fn expectActions(expected: []const fixture.ActionExpectation, actual: []const st
             }
         }
         const rhs = actual[ai];
-        if (rhs.kind == .advance or rhs.kind == .score) {
+        if (rhs.kind == .advance or rhs.kind == .score or rhs.kind == .rez_non_ice) {
             ai += 1;
             continue;
         }
@@ -735,7 +736,7 @@ test "corp first install runner run-server-1 scenario matches live replay oracle
         .side = .corp,
     });
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -758,7 +759,7 @@ test "corp first install runner run-server-1 continue scenario matches live repl
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
@@ -783,7 +784,7 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     // Initiation: both sides pass
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
@@ -811,7 +812,7 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     // Initiation: both sides pass
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
@@ -848,7 +849,7 @@ test "send-a-message access-success scenario matches live replay oracle" {
         .side = .corp,
     });
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -878,7 +879,7 @@ test "send-a-message steal scenario matches live replay oracle" {
         .side = .corp,
     });
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -910,7 +911,7 @@ test "send-a-message cleanup-done scenario matches live replay oracle" {
         .side = .corp,
     });
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1382,7 +1383,7 @@ test "manegarm skunkworks end the run parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     // Corp gets priority — rez Manegarm during the run
     try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Manegarm Skunkworks") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1418,7 +1419,7 @@ test "manegarm skunkworks spend clicks parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     // Corp rezzes Manegarm during approach
     try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Manegarm Skunkworks") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1462,7 +1463,7 @@ test "manegarm skunkworks pay credits parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     // Corp rezzes Manegarm during approach
     try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Manegarm Skunkworks") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1785,7 +1786,7 @@ test "icebreaker encounter parity test" {
 
     // Turn 2: runner runs on Server 1 (which has the ICE)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     // Corp gets chance to rez ICE
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     // Runner approaches ICE
@@ -1820,7 +1821,7 @@ test "corp installs bran ice runner encounters it parity test" {
     });
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
@@ -2119,7 +2120,7 @@ fn filterOracleComparableActions(
                 // Filter advance/score basic actions — Zig now uses direct .advance/.score action kinds
                 if (action.basic_action != null) {
                     const ba = action.basic_action.?;
-                    if (ba == .advance_installed or ba == .score_agenda) continue;
+                    if (ba == .advance_installed or ba == .score_agenda or ba == .run_any_server) continue;
                 }
                 // Filter icebreaker abilities misidentified as basic actions by Clojure
                 // (e.g., Marjanah's "+1 strength" exported as draw_card basic action)
@@ -2381,11 +2382,29 @@ fn findScoreAction(actions: []const state.LegalAction, target: []const u8) ?stat
     return null;
 }
 
-fn findRunAction(actions: []const state.LegalAction, server: []const u8) !state.LegalAction {
-    for (actions) |legal_action| {
-        if (legal_action.kind == .run and legal_action.server != null and std.mem.eql(u8, legal_action.server.?, server)) return legal_action;
+/// Two-step run: apply "Run any server" basic action, then pick server from prompt.
+/// Records a single :run action in the log for oracle compatibility (Clojure handles
+/// :run as a direct server run, not use-ability + prompt-choice).
+fn applyRunAction(
+    allocator: std.mem.Allocator,
+    actions: *std.ArrayList(state.LegalAction),
+    generated: *generator.Game,
+    server: []const u8,
+) !void {
+    const run_action = findRunActionForServer(generated.legal_actions, server) orelse return error.MissingAction;
+    try flow.applyAction(generated, run_action);
+    try actions.append(allocator, .{
+        .kind = .run,
+        .side = .runner,
+        .server = server,
+    });
+}
+
+fn findRunActionForServer(actions: []const state.LegalAction, server: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .run and a.server != null and std.mem.eql(u8, a.server.?, server)) return a;
     }
-    return error.MissingAction;
+    return null;
 }
 
 fn findInstalledAbilityAction(actions: []const state.LegalAction, title: []const u8) !state.LegalAction {
@@ -2495,7 +2514,7 @@ test "docklands pass grants extra hq access" {
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items.len);
 
     // Run HQ (no ice installed) - just verify the pre-access state matches oracle
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    try applyRunAction(allocator, &actions, &generated, "HQ");
 
     // Verify parity before access (run initiation state)
     const scenario_actions = try actions.toOwnedSlice(allocator);
@@ -2602,7 +2621,7 @@ test "e2e beginner game plays to completion with oracle parity" {
             var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, null) catch |err| {
                 std.debug.print("\n=== ORACLE REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
                 std.debug.print("  error: {s}\n", .{@errorName(err)});
-                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -2633,7 +2652,7 @@ test "e2e beginner game plays to completion with oracle parity" {
                 const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
-                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -2949,7 +2968,7 @@ fn findRunnerInstallIcebreaker(gen: *const generator.Game, actions: []const stat
 
 fn findRunActionAny(actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
-        if (a.kind == .run and a.side == .runner) return a;
+        if (a.kind == .run) return a;
     }
     return null;
 }
@@ -3115,7 +3134,7 @@ test "leech virus placement and ice strength reduction parity test" {
     try std.testing.expectEqualStrings("Leech", generated.runner_rig_program.items[0].title);
 
     // Run on Archives (a central server, no ICE) — Leech should gain a virus on successful run
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try applyRunAction(allocator, &actions, &generated, "Archives");
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -3184,7 +3203,7 @@ test "funhouse install and rez parity test" {
 
     // Turn 2 runner: run HQ
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    try applyRunAction(allocator, &actions, &generated, "HQ");
     // Check if rez_ice action is available during approach
     if (findActionByKind(generated.legal_actions, .rez_ice, .corp)) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
@@ -3237,7 +3256,7 @@ test "funhouse full encounter parity test" {
     // Turn 3 runner: run HQ (corp should have 5+ credits)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try std.testing.expect(generated.corp_credit >= 5);
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    try applyRunAction(allocator, &actions, &generated, "HQ");
     // Corp gets priority — approach ICE phase
     // Rez Funhouse via rez_ice action (if available)
     const rez_action = findActionByKind(generated.legal_actions, .rez_ice, .corp) catch {
@@ -3301,7 +3320,7 @@ test "funhouse encounter take tag local test" {
 
     // Turn 2 runner: run HQ
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    try applyRunAction(allocator, &actions, &generated, "HQ");
     // Approach: rez Funhouse if possible, then corp continue
     if (findActionByKind(generated.legal_actions, .rez_ice, .corp)) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
@@ -3339,7 +3358,7 @@ test "public trail runner takes tag parity test" {
 
     // Turn 1 runner: make a successful run on Archives
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try applyRunAction(allocator, &actions, &generated, "Archives");
     try resolveRunToEnd(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
@@ -3385,7 +3404,7 @@ test "retribution trashes runner program parity test" {
     try takeAction(allocator, &actions, &generated, prog);
     const prog_count = generated.runner_rig_program.items.len;
     try std.testing.expect(prog_count >= 1);
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try applyRunAction(allocator, &actions, &generated, "Archives");
     try resolveRunToEnd(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
@@ -4183,7 +4202,7 @@ test "nbn reality plus tag trigger parity test" {
 
     // Turn 1 runner: make a successful run on Archives (needed for Public Trail precondition)
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Archives"));
+    try applyRunAction(allocator, &actions, &generated, "Archives");
     try resolveRunToEnd(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
@@ -4241,7 +4260,7 @@ test "loup trash on access trigger parity test" {
         try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
         const runner_credit_before = generated.runner_credit;
         const runner_hand_before = generated.runner_hand.items.len;
-        try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "Server 1"));
+        try applyRunAction(allocator, &actions, &generated, "Server 1");
         try resolveRunToEnd(allocator, &actions, &generated);
 
         // Check Loup triggered (if runner trashed a card)
@@ -4279,7 +4298,7 @@ test "zahya run hq credit trigger parity test" {
 
     // Turn 1 runner: run HQ
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try takeAction(allocator, &actions, &generated, try findRunAction(generated.legal_actions, "HQ"));
+    try applyRunAction(allocator, &actions, &generated, "HQ");
     try resolveRunToEnd(allocator, &actions, &generated);
     // Zahya's optional prompt: accept the credit gain
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Yes"));
@@ -4468,7 +4487,7 @@ test "e2e complete game plays to completion with oracle parity" {
                 const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
-                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -4523,7 +4542,7 @@ test "e2e intermediate game plays to completion with oracle parity" {
             var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-intermediate") catch |err| {
                 std.debug.print("\n=== ORACLE REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
                 std.debug.print("  error: {s}\n", .{@errorName(err)});
-                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -4556,7 +4575,7 @@ test "e2e intermediate game plays to completion with oracle parity" {
                 const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
-                const start = if (actions.items.len > 15) actions.items.len - 15 else 0;
+                const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});

@@ -1773,7 +1773,7 @@ const prompt_access_cleanup = "access-cleanup";
 const prompt_rez_ice_free = "send-message-rez";
 const prompt_rez_ice_free_score = "send-message-rez-score";
 const prompt_run_target = "run-target";
-const prompt_run_any_server_basic = "run-any-server-basic";
+
 const prompt_run_central = "run-central";
 const prompt_hq_access = "hq-access";
 const prompt_discard = "discard";
@@ -2284,11 +2284,6 @@ fn applyPromptChoice(
         return;
     }
 
-    if (std.mem.eql(u8, prompt.prompt_type, prompt_run_any_server_basic)) {
-        try applyRun(generated, .runner, choice_text);
-        return;
-    }
-
     if (std.mem.eql(u8, prompt.prompt_type, prompt_run_central)) {
         // Red Team: click already spent in run_central handler, just start the run
         try applyRunFromAbility(generated, choice_text, prompt.source_card);
@@ -2531,10 +2526,7 @@ fn applyRunnerBasicActionAbility(
             try drawCards(generated, .runner, draw_amount);
             generated.turn_events.runner_click_draws += 1;
         },
-        .run_any_server => {
-            try beginRunAnyServerPrompt(generated);
-            return;
-        },
+        .run_any_server => return error.UnsupportedAbility,
         .remove_tag => {
             try spendClicks(generated, .runner, 1);
             try spendCredits(generated, .runner, 2);
@@ -2667,18 +2659,6 @@ fn applyScoreAgendaChoice(
     if (try drainPendingEffects(generated)) return;
 }
 
-fn beginRunAnyServerPrompt(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
-    const choices = try runTargetChoicesFor(allocator, .any_runnable, generated.corp_servers.items);
-    if (choices.len == 0) return error.UnsupportedAbility;
-    generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_run_any_server_basic),
-        .choices = choices,
-        .source_card = null,
-    };
-    generated.decision_side = .runner;
-    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-}
 
 fn scoreableAgendaChoices(
     allocator: std.mem.Allocator,
@@ -4303,7 +4283,7 @@ fn applyRunFromAbility(
         .source_card_code = if (source_card) |sc| sc.code else null,
     };
     generated.decision_side = .corp;
-    generated.legal_actions = try continueActions(allocator, .corp);
+    generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
 }
 
 fn applyInstalledAbility(
@@ -6581,7 +6561,7 @@ fn runnerOpeningActionsForState(
 ) ![]const state.LegalAction {
     if (g.runner_click == 0) return endTurnActions(allocator, .runner);
 
-    const runnable = try runnableServers(allocator, g.corp_servers.items);
+    const runnable_servers = try runnableServers(allocator, g.corp_servers.items);
 
     var playable_hand_count: usize = 0;
     for (g.runner_hand.items) |card| {
@@ -6592,10 +6572,10 @@ fn runnerOpeningActionsForState(
     const program_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_program.items, g.turn_events);
     const installed_ability_count = resource_ability_count + hardware_ability_count + program_ability_count;
 
-    var count: usize = playable_hand_count + runnable.len + installed_ability_count;
-    if (g.runner_click >= 1) count += 1;
-    if (g.runner_click >= 1 and g.runner_deck.items.len > 0) count += 1;
-    if (g.runner_click >= 1 and runnable.len > 0) count += 1; // run any server (basic action)
+    var count: usize = playable_hand_count + installed_ability_count;
+    if (g.runner_click >= 1) count += 1; // gain credit
+    if (g.runner_click >= 1 and g.runner_deck.items.len > 0) count += 1; // draw card
+    if (g.runner_click >= 1) count += runnable_servers.len; // run actions
     if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) count += 1;
 
     const actions = try allocator.alloc(state.LegalAction, count);
@@ -6607,14 +6587,6 @@ fn runnerOpeningActionsForState(
             .side = .runner,
             .card_index = @intCast(idx),
             .card_title = try allocator.dupe(u8, card.title),
-        };
-        next += 1;
-    }
-    for (runnable) |server_name| {
-        actions[next] = .{
-            .kind = .run,
-            .side = .runner,
-            .server = server_name,
         };
         next += 1;
     }
@@ -6666,9 +6638,15 @@ fn runnerOpeningActionsForState(
         actions[next] = try basicAbilityAction(allocator, .runner, .draw_card, "Draw 1 card");
         next += 1;
     }
-    if (g.runner_click >= 1 and runnable.len > 0) {
-        actions[next] = try basicAbilityAction(allocator, .runner, .run_any_server, "Run any server");
-        next += 1;
+    if (g.runner_click >= 1) {
+        for (runnable_servers) |server_name| {
+            actions[next] = .{
+                .kind = .run,
+                .side = .runner,
+                .server = server_name,
+            };
+            next += 1;
+        }
     }
     if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) {
         actions[next] = try basicAbilityAction(allocator, .runner, .remove_tag, "Remove 1 tag");
@@ -7814,7 +7792,7 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
     try endTurnAndDiscard(&generated, .corp);
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 2") orelse return error.MissingAction);
+    try startRun(&generated, "Server 2");
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
     try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
@@ -7854,8 +7832,7 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
     }
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    const run_action = findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction;
-    try applyAction(&generated, run_action);
+    try startRun(&generated, "Server 1");
 
     var found_rez_action = false;
     var guard: usize = 0;
@@ -7966,7 +7943,7 @@ test "urtica cipher access applies net damage when corp can pay" {
     const discard_before = generated.runner_discard.items.len;
     const corp_credit_before = generated.corp_credit;
 
-    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
+    try startRun(&generated, "Server 1");
     var guard: usize = 0;
     while (guard < 32 and generated.run != null and !generated.game_over) : (guard += 1) {
         // Handle corp net-damage-on-access prompt (shown after corp continues in success phase)
@@ -8197,6 +8174,10 @@ fn findFirstRunAction(actions: []const state.LegalAction, side: state.Side) ?sta
     return null;
 }
 
+fn startRun(generated: *Game, server: []const u8) !void {
+    try applyAction(generated, findRunAction(generated.legal_actions, server) orelse return error.MissingAction);
+}
+
 fn findRemoteWithIce(servers: []const MutableServer) ?[]const u8 {
     for (servers) |server| {
         if (!std.mem.startsWith(u8, server.name, "remote")) continue;
@@ -8265,7 +8246,7 @@ test "jack out is available after passing ice" {
 
     // Runner starts turn and runs the remote
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
-    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
+    try startRun(&generated, "Server 1");
 
     // Progress: initiation -> approach-ice -> movement (no rez, no encounter since ice is unrezzed)
     var guard: usize = 0;
@@ -8319,7 +8300,7 @@ test "ICE subroutine end the run fires" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const hand_before = generated.runner_hand.items.len;
 
-    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
+    try startRun(&generated, "Server 1");
 
     // Progress through the run - ICE should fire and ETR
     var guard: usize = 0;
@@ -8356,7 +8337,7 @@ test "ICE net damage subroutine applies damage" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const hand_before = generated.runner_hand.items.len;
 
-    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
+    try startRun(&generated, "Server 1");
 
     // Progress through the run, handling jack-out prompts
     var guard: usize = 0;
@@ -8405,7 +8386,7 @@ test "runner loses credits subroutine" {
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     const credit_before = generated.runner_credit;
 
-    try applyAction(&generated, findRunAction(generated.legal_actions, "Server 1") orelse return error.MissingAction);
+    try startRun(&generated, "Server 1");
 
     // Progress through the run
     var guard: usize = 0;

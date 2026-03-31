@@ -650,13 +650,20 @@
                         (zone-actions side :set-aside (:set-aside player))
                         corp-server-actions
                         runner-rig-actions)
-        runnable-actions (when (= side-name :runner)
-                           (mapv (fn [server]
-                                   {:kind :run
-                                    :side side
-                                    :server server})
-                                 (:runnable-list player)))]
-    (concat card-actions* runnable-actions)))
+        run-actions (when (and (= side-name :runner)
+                               (pos? (:click player 0))
+                               (not (:end-turn observation)))
+                      (for [[server-key _] (:servers (:corp observation))
+                            :let [sk (if (keyword? server-key) (name server-key) (str server-key))
+                                  server-name (case sk
+                                                "hq" "HQ"
+                                                "rd" "R&D"
+                                                "archives" "Archives"
+                                                (str "Server " (subs sk (count "remote"))))]]
+                        {:kind :run
+                         :side side
+                         :server server-name}))]
+    (concat card-actions* run-actions)))
 
 (defn- start-turn-actions
   [side observation]
@@ -809,8 +816,9 @@
       (main/handle-action state side "flashback" {:card (resolve-card state (:card-locator action))})
 
       :use-ability
-      (main/handle-action state side "ability" {:card (resolve-ability-card state side action)
-                                                :ability (:ability-index action)})
+      (let [ability-idx (:ability-index action)
+            card (resolve-ability-card state side action)]
+        (main/handle-action state side "ability" {:card card :ability ability-idx}))
 
       :use-installed-ability
       (let [card (require-card! (resolve-installed-card state side action) action)
