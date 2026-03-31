@@ -175,6 +175,7 @@ fn render_menu(win: Window) void {
         "System Gateway - Beginner",
         "System Gateway - Intermediate",
         "System Gateway - Full Pack",
+        "GNK: NBN Bounce Rate vs Loup",
     };
 
     for (matchups, 0..) |name, i| {
@@ -550,9 +551,9 @@ fn render_rig(win: Window, h: ?*anyopaque, start_row: u16) u16 {
         return row +| 1;
     }
 
-    if (prog > 0) row = render_rig_zone(win, h, "Prg", prog, api.netrunner_rig_program_name, row);
-    if (hw > 0) row = render_rig_zone(win, h, "Hw", hw, api.netrunner_rig_hardware_name, row);
-    if (res > 0) row = render_rig_zone(win, h, "Res", res, api.netrunner_rig_resource_name, row);
+    if (prog > 0) row = render_rig_zone(win, h, "Prg", prog, api.netrunner_rig_program_name, api.netrunner_rig_program_code, row);
+    if (hw > 0) row = render_rig_zone(win, h, "Hw", hw, api.netrunner_rig_hardware_name, api.netrunner_rig_hardware_code, row);
+    if (res > 0) row = render_rig_zone(win, h, "Res", res, api.netrunner_rig_resource_name, api.netrunner_rig_resource_code, row);
     return row;
 }
 
@@ -562,6 +563,7 @@ fn render_rig_zone(
     label: []const u8,
     count: c_int,
     name_fn: *const fn (?*anyopaque, c_int, [*c]u8, c_int) callconv(.c) c_int,
+    code_fn: *const fn (?*anyopaque, c_int) callconv(.c) c_int,
     start_row: u16,
 ) u16 {
     var line: []const u8 = fmt(" {s}:", .{label});
@@ -569,8 +571,21 @@ fn render_rig_zone(
     while (i < count) : (i += 1) {
         var buf: [128]u8 = undefined;
         const len = name_fn(h, i, &buf, buf.len);
+        const name = api_name(&buf, len);
         const sep = if (i > 0) ", " else " ";
-        line = fmt("{s}{s}{s}", .{ line, sep, api_name(&buf, len) });
+        const old_len = line.len;
+        line = fmt("{s}{s}{s}", .{ line, sep, name });
+
+        const card_code = code_fn(h, i);
+        if (card_code > 0 and board_card_count < board_cards.len) {
+            board_cards[board_card_count] = .{
+                .row = start_row,
+                .col_start = @intCast(old_len),
+                .col_end = @intCast(line.len),
+                .code = card_code,
+            };
+            board_card_count += 1;
+        }
     }
     _ = win.print(&.{.{ .text = line, .style = sty.normal }}, .{ .row_offset = start_row });
     return start_row +| 1;
@@ -772,10 +787,10 @@ fn handle_menu_key(key: vaxis.Key) bool {
     if (key.codepoint == vaxis.Key.up or key.matches('k', .{})) {
         if (menu_selection > 0) menu_selection -= 1;
     } else if (key.codepoint == vaxis.Key.down or key.matches('j', .{})) {
-        if (menu_selection < 2) menu_selection += 1;
+        if (menu_selection < api.matchup_count - 1) menu_selection += 1;
     } else if (key.codepoint == vaxis.Key.enter) {
         start_game();
-    } else if (key.codepoint >= '1' and key.codepoint <= '3') {
+    } else if (key.codepoint >= '1' and key.codepoint <= '0' + @as(u21, @intCast(api.matchup_count))) {
         menu_selection = key.codepoint - '1';
         start_game();
     }

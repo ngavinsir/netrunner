@@ -9,6 +9,7 @@ const matchup_table = [_]engine.MatchupSpec{
     engine.system_gateway_beginner,
     engine.system_gateway_intermediate,
     engine.system_gateway_fullpack,
+    engine.gnk_nbn_vs_loup,
 };
 
 pub const matchup_count: c_int = matchup_table.len;

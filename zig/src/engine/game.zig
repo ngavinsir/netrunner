@@ -1497,6 +1497,57 @@ pub const system_gateway_fullpack = MatchupSpec{
     .runner = .{ .identity_code = 30019, .deck_lines = &fullpack_runner_deck_lines }, // Tao
 };
 
+// [SG Only] Bounce Rate Metrics (NBN) vs 'Laxin' Loup (Anarch)
+// 1st @ Galaxy of Games GNK
+const gnk_corp_deck_lines = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 30068 }, // Orbital Superiority
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 1, .card_code = 30052 }, // Tomorrow's Headline
+    .{ .qty = 3, .card_code = 30071 }, // Regolith Mining License
+    .{ .qty = 3, .card_code = 30053 }, // Spin Doctor
+    .{ .qty = 3, .card_code = 30062 }, // Ballista
+    .{ .qty = 2, .card_code = 30054 }, // Funhouse
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 3, .card_code = 30055 }, // Ping
+    .{ .qty = 3, .card_code = 30074 }, // Whitespace
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 3, .card_code = 30056 }, // Predictive Planogram
+    .{ .qty = 3, .card_code = 30057 }, // Public Trail
+    .{ .qty = 3, .card_code = 30065 }, // Retribution
+    .{ .qty = 2, .card_code = 30058 }, // AMAZE Amusements
+    .{ .qty = 2, .card_code = 30042 }, // Manegarm Skunkworks
+};
+
+const gnk_runner_deck_lines = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30028 }, // Jailbreak
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble
+    .{ .qty = 1, .card_code = 30012 }, // Tread Lightly
+    .{ .qty = 2, .card_code = 30021 }, // VRcation
+    .{ .qty = 3, .card_code = 30002 }, // Wildcat Strike
+    .{ .qty = 2, .card_code = 30003 }, // Carnivore
+    .{ .qty = 1, .card_code = 30013 }, // Docklands Pass
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond
+    .{ .qty = 3, .card_code = 30004 }, // Botulus
+    .{ .qty = 2, .card_code = 30005 }, // Buzzsaw
+    .{ .qty = 1, .card_code = 30015 }, // Carmen
+    .{ .qty = 2, .card_code = 30006 }, // Cleaver
+    .{ .qty = 1, .card_code = 30024 }, // Conduit
+    .{ .qty = 3, .card_code = 30007 }, // Fermenter
+    .{ .qty = 2, .card_code = 30008 }, // Leech
+    .{ .qty = 2, .card_code = 30032 }, // Mayfly
+    .{ .qty = 3, .card_code = 30009 }, // Cookbook
+    .{ .qty = 1, .card_code = 30033 }, // Smartware Distributor
+    .{ .qty = 1, .card_code = 30027 }, // Telework Contract
+    .{ .qty = 3, .card_code = 30034 }, // Verbal Plasticity
+};
+
+pub const gnk_nbn_vs_loup = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30051, .deck_lines = &gnk_corp_deck_lines },
+    .runner = .{ .identity_code = 30001, .deck_lines = &gnk_runner_deck_lines },
+};
+
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {
         if (spec.code == card_code) return spec;
@@ -5669,7 +5720,8 @@ fn advanceMovementPhase(generated: *Game) !void {
 
 fn prepareNextAccess(generated: *Game) !bool {
     const run = &generated.run.?;
-    if (run.accesses_remaining == 0) {
+    // Initialize access count only once per breach (accessed_count == 0 means first call)
+    if (run.accesses_remaining == 0 and run.accessed_count == 0) {
         var bonus: u8 = run.access_bonus;
         if (std.mem.eql(u8, run.server[0], "hq") and generated.turn_events.runner_hq_breaches == 0) {
             bonus += runner_installed_hq_access_bonus(generated);
@@ -6543,7 +6595,7 @@ fn runnerOpeningActionsForState(
     var count: usize = playable_hand_count + runnable.len + installed_ability_count;
     if (g.runner_click >= 1) count += 1;
     if (g.runner_click >= 1 and g.runner_deck.items.len > 0) count += 1;
-    if (g.runner_click >= 1 and runnable.len > 0) count += 1;
+    if (g.runner_click >= 1 and runnable.len > 0) count += 1; // run any server (basic action)
     if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) count += 1;
 
     const actions = try allocator.alloc(state.LegalAction, count);
