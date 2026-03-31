@@ -205,7 +205,7 @@ fn render_game(win: Window) void {
     // │ Actions        │ Card Image     │          │
     // └────────────────┴────────────────┴──────────┘
 
-    const log_w: u16 = if (win.width > 100) 30 else if (win.width > 70) 25 else 0;
+    const log_w: u16 = if (win.width > 100) 45 else if (win.width > 70) 38 else 0;
     const left_w = win.width -| log_w;
 
     // Board section at the top of the left area
@@ -374,6 +374,7 @@ fn vaxis_free_image(img_id: u32) void {
 /// Called on background thread — downloads if needed, then loads PNG into vaxis.
 fn vaxis_async_load(code: c_int) ?u32 {
     const dest_path = std.fmt.allocPrint(alloc_ptr, "{s}/{d}.png", .{ cache_dir, code }) catch return null;
+    defer alloc_ptr.free(dest_path);
 
     // Download if not cached
     std.fs.cwd().access(dest_path, .{}) catch {
@@ -382,6 +383,7 @@ fn vaxis_async_load(code: c_int) ?u32 {
         if (url_len <= 0) return null;
 
         const tmp_path = std.fmt.allocPrint(alloc_ptr, "{s}.webp", .{dest_path}) catch return null;
+        defer alloc_ptr.free(tmp_path);
         var dl = std.process.Child.init(
             &.{ "curl", "-sL", "-o", tmp_path, url_buf[0..@intCast(url_len)] },
             alloc_ptr,
@@ -403,8 +405,8 @@ fn vaxis_async_load(code: c_int) ?u32 {
         std.fs.cwd().deleteFile(tmp_path) catch {};
     };
 
-    // Load the PNG into vaxis
-    const img = vx_ptr.loadImage(alloc_ptr, writer_ptr, .{ .path = dest_path }) catch return null;
+    // Transmit file path to terminal — terminal reads PNG directly (no decode/re-encode)
+    const img = vx_ptr.transmitLocalImagePath(alloc_ptr, writer_ptr, dest_path, 0, 0, .file, .png) catch return null;
     return img.id;
 }
 
@@ -635,7 +637,20 @@ fn render_hand(win: Window, h: ?*anyopaque, player: c_int, start_row: u16) u16 {
             var buf: [128]u8 = undefined;
             const len = api.netrunner_hand_card_name(h, player, i, &buf, buf.len);
             const sep: []const u8 = if (i > 0) ", " else "";
+            const old_len = line.len;
             line = fmt("{s}{s}{s}", .{ line, sep, api_name(&buf, len) });
+
+            // Register hover region for hand card
+            const card_code = api.netrunner_hand_card_code(h, player, i);
+            if (card_code > 0 and board_card_count < board_cards.len) {
+                board_cards[board_card_count] = .{
+                    .row = start_row,
+                    .col_start = @intCast(old_len + sep.len),
+                    .col_end = @intCast(line.len),
+                    .code = card_code,
+                };
+                board_card_count += 1;
+            }
         }
     }
     _ = win.print(&.{.{ .text = line, .style = sty.dim_text }}, .{ .row_offset = start_row });
@@ -652,8 +667,23 @@ fn render_actions(win: Window, h: ?*anyopaque, start_row: u16) void {
     row +|= 1;
     if (row >= win.height) return;
 
+    var pt_buf: [64]u8 = undefined;
+    const pt_len = api.netrunner_prompt_type(h, deciding, &pt_buf, pt_buf.len);
+    const prompt_type = if (pt_len > 0) pt_buf[0..@intCast(pt_len)] else "";
+    const header = if (std.mem.eql(u8, prompt_type, "discard"))
+        fmt(" Discard to hand size ({s}):", .{side_label(deciding)})
+    else if (std.mem.eql(u8, prompt_type, "install-destination"))
+        fmt(" Choose install location ({s}):", .{side_label(deciding)})
+    else if (std.mem.eql(u8, prompt_type, "access-choice"))
+        fmt(" Access card ({s}):", .{side_label(deciding)})
+    else if (std.mem.eql(u8, prompt_type, "run-target"))
+        fmt(" Choose run target ({s}):", .{side_label(deciding)})
+    else if (std.mem.eql(u8, prompt_type, "run"))
+        fmt(" Run in progress ({s}):", .{side_label(deciding)})
+    else
+        fmt(" Actions ({s}):", .{side_label(deciding)});
     _ = win.print(&.{.{
-        .text = fmt(" Actions ({s}):", .{side_label(deciding)}),
+        .text = header,
         .style = side_sty(deciding),
     }}, .{ .row_offset = row });
     row +|= 1;

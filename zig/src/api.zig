@@ -140,14 +140,30 @@ fn format_action(game: *Game, action: state.LegalAction, buf: *[256]u8) []const 
     return switch (action.kind) {
         .prompt_choice => blk: {
             if (action.label) |label| break :blk label;
+            const pt = action.prompt_type orelse "";
+            const prefix: []const u8 = if (std.mem.eql(u8, pt, "discard"))
+                "Discard: "
+            else if (std.mem.eql(u8, pt, "install-destination"))
+                "Install in: "
+            else if (std.mem.eql(u8, pt, "access-choice"))
+                "Access: "
+            else if (std.mem.eql(u8, pt, "run-target"))
+                "Run: "
+            else
+                "";
             if (action.choice) |c| {
-                if (c.text) |t| break :blk t;
                 if (c.card) |card| {
-                    if (card.title) |t| break :blk t;
+                    if (card.title) |t| {
+                        if (prefix.len > 0) break :blk std.fmt.bufPrint(buf, "{s}{s}", .{ prefix, t }) catch t;
+                        break :blk t;
+                    }
+                }
+                if (c.text) |t| {
+                    if (prefix.len > 0) break :blk std.fmt.bufPrint(buf, "{s}{s}", .{ prefix, t }) catch t;
+                    break :blk t;
                 }
             }
-            // Show prompt type as context if no other info
-            if (action.prompt_type) |pt| {
+            if (pt.len > 0) {
                 break :blk std.fmt.bufPrint(buf, "({s})", .{pt}) catch "?";
             }
             break :blk "?";

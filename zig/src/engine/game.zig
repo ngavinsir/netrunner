@@ -8483,3 +8483,65 @@ test "sure gamble gains credits without losing extra clicks" {
     // Should have gained 9 credits (spent 5, gained 9, net 4 from starting 5 = 9)
     try std.testing.expectEqual(@as(u16, 9), generated.runner_credit);
 }
+
+test "corp gain credit 3 times then turn transitions to runner" {
+    var generated = try createInitialSnapshot(
+        std.testing.allocator,
+        system_gateway_beginner,
+        1,
+    );
+    defer generated.deinit();
+
+    // Mulligan keep/keep
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+
+    // Corp start turn
+    try corpStartTurnFull(&generated);
+    try std.testing.expectEqual(state.Side.corp, generated.decision_side);
+    try std.testing.expectEqual(@as(u8, 3), generated.corp_click);
+
+    // Corp gains credit 3 times
+    const gc1 = findBasicAbilityAction(generated.legal_actions, .corp, .gain_credit) orelse return error.MissingAction;
+    try applyAction(&generated, gc1);
+    try std.testing.expectEqual(@as(u8, 2), generated.corp_click);
+
+    const gc2 = findBasicAbilityAction(generated.legal_actions, .corp, .gain_credit) orelse return error.MissingAction;
+    try applyAction(&generated, gc2);
+    try std.testing.expectEqual(@as(u8, 1), generated.corp_click);
+
+    const gc3 = findBasicAbilityAction(generated.legal_actions, .corp, .gain_credit) orelse return error.MissingAction;
+    try applyAction(&generated, gc3);
+    try std.testing.expectEqual(@as(u8, 0), generated.corp_click);
+
+    // Corp should have only end_turn action now
+    try std.testing.expectEqual(@as(usize, 1), generated.legal_actions.len);
+    try std.testing.expectEqual(state.ActionKind.end_turn, generated.legal_actions[0].kind);
+
+    // Apply end turn — corp drew a card at start so hand=6, needs to discard to 5
+    try applyAction(&generated, generated.legal_actions[0]);
+
+    // Corp must discard (hand 6 > hand size 5), so decision stays with corp
+    try std.testing.expectEqual(state.Side.corp, generated.decision_side);
+    try std.testing.expectEqual(state.ActionKind.prompt_choice, generated.legal_actions[0].kind);
+
+    // Discard a card
+    try applyAction(&generated, generated.legal_actions[0]);
+
+    // Now should transition to runner start_turn
+    try std.testing.expectEqual(state.Side.runner, generated.decision_side);
+    try std.testing.expectEqual(@as(usize, 1), generated.legal_actions.len);
+    try std.testing.expectEqual(state.ActionKind.start_turn, generated.legal_actions[0].kind);
+
+    // Apply runner start turn
+    try applyAction(&generated, generated.legal_actions[0]);
+
+    // Runner should now have multiple actions and be deciding
+    try std.testing.expectEqual(state.Side.runner, generated.decision_side);
+    try std.testing.expect(generated.legal_actions.len > 1);
+
+    // Verify run actions exist
+    try std.testing.expect(findRunAction(generated.legal_actions, "Archives") != null);
+    try std.testing.expect(findRunAction(generated.legal_actions, "HQ") != null);
+    try std.testing.expect(findRunAction(generated.legal_actions, "R&D") != null);
+}
