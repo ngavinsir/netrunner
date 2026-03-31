@@ -286,22 +286,20 @@ fn render_board_section(win: Window, h: ?*anyopaque) u16 {
     row +|= 1;
     if (row >= win.height) return row;
     row = render_player_section(win, h, 0, row);
+    row = render_hand(win, h, 0, row);
     row +|= 1;
     if (row >= win.height) return row;
     render_hline(win, row);
     row +|= 1;
     if (row >= win.height) return row;
     row = render_player_section(win, h, 1, row);
+    row = render_hand(win, h, 1, row);
     row +|= 1;
     if (row >= win.height) return row;
 
     if (api.netrunner_is_run_active(h))
         row = render_run_state(win, h, row);
 
-    row = render_prompt(win, h, row);
-    if (row >= win.height) return row;
-    row = render_hand(win, h, 0, row);
-    row = render_hand(win, h, 1, row);
     return row;
 }
 
@@ -799,6 +797,10 @@ fn render_actions(win: Window, h: ?*anyopaque, start_row: u16) void {
 
     render_hline(win, row);
     row +|= 1;
+    if (row >= win.height) return;
+
+    // Show prompt context above actions
+    row = render_prompt(win, h, row);
     if (row >= win.height) return;
 
     var pt_buf: [64]u8 = undefined;
