@@ -151,6 +151,18 @@ fn format_action(game: *Game, action: state.LegalAction, buf: *[256]u8) []const 
                 "Run: "
             else
                 "";
+            // For access prompts, include the source card name
+            if (std.mem.eql(u8, pt, "access-choice")) {
+                const source_title = if (game.runner_prompt_state) |ps| if (ps.source_card) |sc| sc.title else null else null;
+                if (action.choice) |c| {
+                    if (c.text) |t| {
+                        if (source_title) |st| {
+                            break :blk std.fmt.bufPrint(buf, "{s}{s} ({s})", .{ prefix, t, st }) catch t;
+                        }
+                        break :blk std.fmt.bufPrint(buf, "{s}{s}", .{ prefix, t }) catch t;
+                    }
+                }
+            }
             if (action.choice) |c| {
                 if (c.card) |card| {
                     if (card.title) |t| {

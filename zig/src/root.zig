@@ -7,6 +7,7 @@ pub const engine = struct {
     pub const state = @import("engine/state.zig");
 };
 pub const oracle = @import("parity/oracle.zig");
+pub const replay = @import("replay.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());

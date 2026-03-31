@@ -54,6 +54,8 @@ const sty = struct {
     const prompt_text = Cell.Style{ .fg = color.run_active, .bold = true };
 };
 
+const replay = @import("replay.zig");
+
 // Game state
 var game_handle: ?*anyopaque = null;
 var selected_action: usize = 0;
@@ -62,6 +64,12 @@ var status_msg: []const u8 = "";
 var input_buf: [16]u8 = undefined;
 var input_len: usize = 0;
 var hover_card_code: c_int = 0; // card code from mouse hover on board
+var log_scroll_offset: usize = 0; // 0 = bottom (newest), >0 = scrolled back
+var log_panel_x: u16 = 0; // left edge of log panel for scroll hit testing
+// Map log panel rows to log entry indices for hover detection
+var log_row_entry: [256]usize = [_]usize{0} ** 256; // row -> log_entries index (0-based)
+var log_row_entry_count: u16 = 0; // how many rows are mapped
+var action_replay: ?replay.Replay = null; // action history for save/load
 
 const ScreenMode = enum { menu, playing, game_over };
 var current_screen: ScreenMode = .menu;
@@ -75,21 +83,29 @@ var board_card_count: usize = 0;
 // Game log — persistent across frames
 const max_log_entries = 200;
 var log_entries: [max_log_entries][]const u8 = undefined;
+var log_card_codes: [max_log_entries]c_int = [_]c_int{0} ** max_log_entries;
 var log_count: usize = 0;
 var log_alloc: std.heap.ArenaAllocator = undefined;
 
-fn add_log(comptime f: []const u8, args: anytype) void {
+fn add_log_with_card(card_code: c_int, comptime f: []const u8, args: anytype) void {
     const msg = std.fmt.allocPrint(log_alloc.allocator(), f, args) catch return;
     if (log_count < max_log_entries) {
         log_entries[log_count] = msg;
+        log_card_codes[log_count] = card_code;
         log_count += 1;
     } else {
-        // Shift entries (drop oldest)
         for (0..max_log_entries - 1) |i| {
             log_entries[i] = log_entries[i + 1];
+            log_card_codes[i] = log_card_codes[i + 1];
         }
         log_entries[max_log_entries - 1] = msg;
+        log_card_codes[max_log_entries - 1] = card_code;
     }
+    log_scroll_offset = 0;
+}
+
+fn add_log(comptime f: []const u8, args: anytype) void {
+    add_log_with_card(0, f, args);
 }
 
 // Vaxis + image state
@@ -187,8 +203,21 @@ fn render_menu(win: Window) void {
         row +|= 1;
     }
 
-    row += 2;
-    _ = win.print(&.{.{ .text = "  UP/DOWN to select, ENTER to start, q to quit", .style = sty.dim_text }}, .{ .row_offset = row });
+    row += 1;
+    // Load saved game option
+    {
+        const has_save = find_latest_save() != null;
+        if (has_save) {
+            _ = win.print(&.{
+                .{ .text = "  [L] ", .style = sty.action_num },
+                .{ .text = "Load saved game", .style = sty.action_text },
+            }, .{ .row_offset = row });
+            row +|= 1;
+        }
+    }
+
+    row += 1;
+    _ = win.print(&.{.{ .text = "  UP/DOWN to select, ENTER to start, L to load, q to quit", .style = sty.dim_text }}, .{ .row_offset = row });
 }
 
 // ============================================================
@@ -239,6 +268,7 @@ fn render_game(win: Window) void {
 
     // Right panel: log only (full height)
     if (log_w > 0) {
+        log_panel_x = left_w;
         const log_win = win.child(.{
             .x_off = @intCast(left_w),
             .width = log_w,
@@ -313,19 +343,73 @@ fn render_log(win: Window) void {
     }
 
     const content = win.child(.{ .x_off = 2, .width = win.width -| 2, .height = win.height });
+    const cw = content.width;
 
     _ = content.print(&.{.{ .text = "Log", .style = sty.header }}, .{ .row_offset = 0 });
-    if (content.height < 3) return;
+    log_row_entry_count = 0;
+    if (content.height < 3 or cw < 4) return;
 
+    // Calculate how many rows each entry needs (for word wrapping + 1 padding)
+    // Walk backwards from the scroll anchor to fill available rows
     const available = content.height -| 1;
-    const start_idx = if (log_count > available) log_count - available else 0;
+    const anchor = if (log_count > log_scroll_offset) log_count - log_scroll_offset else 0;
+    // Clamp scroll offset
+    if (log_scroll_offset > log_count) log_scroll_offset = log_count;
+
+    var total_rows: u16 = 0;
+    var first_visible: usize = anchor;
+    while (first_visible > 0) {
+        first_visible -= 1;
+        const entry = log_entries[first_visible];
+        const entry_rows: u16 = @intCast(if (entry.len == 0) 1 else (entry.len + cw - 1) / cw);
+        const rows_with_pad = entry_rows + 1; // +1 padding between items
+        if (total_rows + rows_with_pad > available) {
+            first_visible += 1;
+            break;
+        }
+        total_rows += rows_with_pad;
+    }
+
     var row: u16 = 1;
-    for (log_entries[start_idx..log_count]) |entry| {
+    for (log_entries[first_visible..anchor], first_visible..) |entry, i| {
         if (row >= content.height) break;
-        _ = content.print(&.{.{ .text = entry, .style = sty.dim_text }}, .{
-            .row_offset = row,
-            .wrap = .none,
-        });
+        // Color by side; older entries fade out
+        const entry_style = if (std.mem.startsWith(u8, entry, "Corp:"))
+            Cell.Style{ .fg = color.corp }
+        else if (std.mem.startsWith(u8, entry, "Runner:"))
+            Cell.Style{ .fg = color.runner }
+        else
+            sty.dim_text;
+
+        // First line: show step number prefix
+        const num_text = fmt("{d}. ", .{i + 1});
+        const prefix_len = num_text.len;
+        _ = content.print(&.{
+            .{ .text = num_text, .style = sty.dim_text },
+            .{ .text = entry[0..@min(entry.len, cw -| prefix_len)], .style = entry_style },
+        }, .{ .row_offset = row });
+        if (row < log_row_entry.len) {
+            log_row_entry[row] = i;
+            log_row_entry_count = row + 1;
+        }
+        row +|= 1;
+
+        // Wrap remaining text
+        var offset: usize = cw -| prefix_len;
+        while (offset < entry.len and row < content.height) {
+            const remaining = entry[offset..];
+            const line_len = @min(remaining.len, cw);
+            _ = content.print(&.{.{ .text = remaining[0..line_len], .style = entry_style }}, .{
+                .row_offset = row,
+            });
+            if (row < log_row_entry.len) {
+                log_row_entry[row] = i;
+                log_row_entry_count = row + 1;
+            }
+            offset += line_len;
+            row +|= 1;
+        }
+        // Padding between entries
         row +|= 1;
     }
 }
@@ -725,7 +809,7 @@ fn render_actions(win: Window, h: ?*anyopaque, start_row: u16) void {
         } else if (status_msg.len > 0) {
             _ = win.print(&.{.{ .text = fmt(" {s}", .{status_msg}), .style = sty.prompt_text }}, .{ .row_offset = status_row });
         } else {
-            _ = win.print(&.{.{ .text = " #/j/k + ENTER, q quit | ? = unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row });
+            _ = win.print(&.{.{ .text = " #/j/k + ENTER | Ctrl+S save | q quit | ? = unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row });
         }
     }
 }
@@ -810,10 +894,30 @@ fn handle_event(event: Event, allocator: std.mem.Allocator, vx: *vaxis.Vaxis, wr
 fn handle_mouse(mouse: vaxis.Mouse) void {
     if (current_screen != .playing) return;
 
+    const col: u16 = @intCast(mouse.col);
+
+    // Log panel: scroll + hover
+    if (col >= log_panel_x) {
+        if (mouse.button == .wheel_up) {
+            if (log_scroll_offset < log_count) log_scroll_offset += 3;
+        } else if (mouse.button == .wheel_down) {
+            if (log_scroll_offset >= 3) log_scroll_offset -= 3 else log_scroll_offset = 0;
+        }
+        // Hover on log entry shows card image
+        const row: u16 = @intCast(mouse.row);
+        hover_card_code = 0;
+        if (row < log_row_entry_count) {
+            const entry_idx = log_row_entry[row];
+            if (entry_idx < log_count) {
+                hover_card_code = log_card_codes[entry_idx];
+            }
+        }
+        return;
+    }
+
     // Check if mouse is hovering over a registered board card
     hover_card_code = 0;
     const row: u16 = @intCast(mouse.row);
-    const col: u16 = @intCast(mouse.col);
     for (board_cards[0..board_card_count]) |bc| {
         if (row == bc.row and col >= bc.col_start and col < bc.col_end) {
             hover_card_code = bc.code;
@@ -833,18 +937,26 @@ fn handle_menu_key(key: vaxis.Key) bool {
     } else if (key.codepoint >= '1' and key.codepoint <= '0' + @as(u21, @intCast(api.matchup_count))) {
         menu_selection = key.codepoint - '1';
         start_game();
+    } else if (key.matches('l', .{}) or key.matches('L', .{})) {
+        load_game();
     }
     return false;
 }
 
 fn start_game() void {
-    const seed: u64 = @bitCast(std.time.milliTimestamp());
-    const matchup: c_int = @intCast(menu_selection);
+    start_game_with(@intCast(menu_selection), @bitCast(std.time.milliTimestamp()));
+}
+
+fn start_game_with(matchup: c_int, seed: u64) void {
+    if (game_handle) |h| api.netrunner_destroy(h);
+    if (action_replay) |*r| r.deinit();
     game_handle = api.netrunner_create(matchup, seed);
     if (game_handle != null) {
+        action_replay = replay.Replay.init(alloc_ptr, matchup, seed);
         current_screen = .playing;
         selected_action = 0;
         game_step = 0;
+        log_count = 0;
         status_msg = "";
         input_len = 0;
         auto_advance();
@@ -856,9 +968,11 @@ fn log_and_apply(h: ?*anyopaque, idx: c_int) bool {
     const len = api.netrunner_action_description(h, idx, &buf, buf.len);
     const desc = if (len > 0) buf[0..@intCast(len)] else "?";
     const deciding = api.netrunner_current_player(h);
+    const card_code = api.netrunner_context_card_code(h, idx);
 
     if (api.netrunner_apply_action(h, idx) == 0) {
-        add_log("{s}: {s}", .{ side_label(deciding), desc });
+        add_log_with_card(card_code, "{s}: {s}", .{ side_label(deciding), desc });
+        if (action_replay) |*r| r.record(idx) catch {};
         game_step += 1;
         return true;
     }
@@ -870,6 +984,16 @@ fn auto_advance() void {
     while (!api.netrunner_is_terminal(h)) {
         const num: usize = @intCast(api.netrunner_num_actions(h));
         if (num != 1) break;
+        // Don't auto-advance access prompts — let the player see the card
+        var pt_buf: [64]u8 = undefined;
+        const deciding = api.netrunner_current_player(h);
+        const pt_len = api.netrunner_prompt_type(h, deciding, &pt_buf, pt_buf.len);
+        if (pt_len > 0) {
+            const pt = pt_buf[0..@intCast(pt_len)];
+            if (std.mem.eql(u8, pt, "access-choice") or
+                std.mem.eql(u8, pt, "net-damage-on-access"))
+                break;
+        }
         _ = log_and_apply(h, 0);
     }
     if (api.netrunner_is_terminal(h)) current_screen = .game_over;
@@ -901,8 +1025,105 @@ fn handle_game_key(key: vaxis.Key) bool {
         }
     } else if (key.codepoint == vaxis.Key.backspace or key.codepoint == 127) {
         if (input_len > 0) input_len -= 1;
+    } else if (key.matches('s', .{ .ctrl = true })) {
+        save_game();
     }
     return false;
+}
+
+var save_dir: []const u8 = "";
+
+var save_status_buf: [256]u8 = undefined;
+
+fn save_game() void {
+    if (action_replay) |*r| {
+        const ts: u64 = @bitCast(std.time.milliTimestamp());
+        var path_buf: [256]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/{d}.txt", .{ save_dir, ts }) catch {
+            status_msg = "Save failed";
+            return;
+        };
+        r.save(path) catch {
+            status_msg = "Save failed";
+            return;
+        };
+        status_msg = std.fmt.bufPrint(&save_status_buf, "Saved to {s} ({d} actions)", .{ path, r.actions.items.len }) catch "Game saved";
+    }
+}
+
+fn find_latest_save() ?[]const u8 {
+    var dir = std.fs.cwd().openDir(save_dir, .{ .iterate = true }) catch return null;
+    defer dir.close();
+    var latest_name: ?[]const u8 = null;
+    var latest_buf: [256]u8 = undefined;
+    var iter = dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".txt")) continue;
+        // Only match timestamp filenames (digits + .txt)
+        const stem = entry.name[0 .. entry.name.len - 4];
+        const is_timestamp = stem.len > 0 and for (stem) |c| {
+            if (c < '0' or c > '9') break false;
+        } else true;
+        if (!is_timestamp) continue;
+        if (latest_name == null or std.mem.order(u8, entry.name, latest_name.?) == .gt) {
+            const len = @min(entry.name.len, latest_buf.len);
+            @memcpy(latest_buf[0..len], entry.name[0..len]);
+            latest_name = latest_buf[0..len];
+        }
+    }
+    return latest_name;
+}
+
+fn load_game() void {
+    const filename = find_latest_save() orelse {
+        status_msg = "No save files found";
+        return;
+    };
+    var path_buf: [256]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ save_dir, filename }) catch {
+        status_msg = "Load failed";
+        return;
+    };
+    var loaded = replay.Replay.load(alloc_ptr, path) catch {
+        status_msg = "No save file found";
+        return;
+    };
+
+    if (game_handle) |h| api.netrunner_destroy(h);
+    if (action_replay) |*r| r.deinit();
+
+    const h = api.netrunner_create(loaded.matchup_id, loaded.seed) orelse {
+        loaded.deinit();
+        status_msg = "Failed to create game";
+        return;
+    };
+
+    game_handle = h;
+    action_replay = loaded;
+    current_screen = .playing;
+    selected_action = 0;
+    game_step = 0;
+    log_count = 0;
+    add_log("Loaded {s}", .{path});
+    status_msg = "";
+    input_len = 0;
+
+    // Replay all saved actions, logging each one (without re-recording to replay)
+    for (loaded.actions.items) |idx| {
+        var buf: [256]u8 = undefined;
+        const len = api.netrunner_action_description(h, idx, &buf, buf.len);
+        const desc = if (len > 0) buf[0..@intCast(len)] else "?";
+        const deciding = api.netrunner_current_player(h);
+        const card_code = api.netrunner_context_card_code(h, idx);
+        if (api.netrunner_apply_action(h, idx) != 0) {
+            status_msg = "Replay failed";
+            break;
+        }
+        add_log_with_card(card_code, "{s}: {s}", .{ side_label(deciding), desc });
+        game_step += 1;
+    }
+    auto_advance();
 }
 
 fn try_apply_numbered_input(h: ?*anyopaque, num_actions: usize) void {
@@ -950,10 +1171,14 @@ pub fn main() !void {
     log_alloc = std.heap.ArenaAllocator.init(allocator);
     defer log_alloc.deinit();
 
-    // Setup image cache directory
+    // Setup directories
     const home = std.posix.getenv("HOME") orelse "/tmp";
     cache_dir = std.fmt.allocPrint(allocator, "{s}/.cache/netrunner-tui/images", .{home}) catch "/tmp/netrunner-tui";
+    defer allocator.free(cache_dir);
     std.fs.cwd().makePath(cache_dir) catch {};
+    save_dir = std.fmt.allocPrint(allocator, "{s}/.netrunner-saves", .{home}) catch "/tmp";
+    defer allocator.free(save_dir);
+    std.fs.cwd().makePath(save_dir) catch {};
 
     var tty_buf: [4096]u8 = undefined;
     var tty: vaxis.Tty = try .init(&tty_buf);
@@ -1007,6 +1232,10 @@ pub fn main() !void {
     }
 
     img_loader.deinit();
+    if (action_replay) |*r| {
+        r.deinit();
+        action_replay = null;
+    }
     if (game_handle) |h| {
         api.netrunner_destroy(h);
         game_handle = null;

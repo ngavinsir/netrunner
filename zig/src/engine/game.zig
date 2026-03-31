@@ -5871,12 +5871,12 @@ fn hasCarnivoreAvailable(generated: *const Game) bool {
 }
 
 fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
-    const spec = lookupCardSpec(accessed) orelse return false;
-    const trash_cost = spec.trash_cost orelse return false;
+    const spec = lookupCardSpec(accessed);
+    const trash_cost = if (spec) |s| s.trash_cost else null;
     const allocator = generated.arena.allocator();
     const no_steal_or_trash = if (generated.run) |r| r.no_steal_or_trash else false;
 
-    const can_afford = generated.runner_credit >= trash_cost and !no_steal_or_trash;
+    const can_afford = if (trash_cost) |tc| generated.runner_credit >= tc and !no_steal_or_trash else false;
     const carnivore = hasCarnivoreAvailable(generated) and !no_steal_or_trash;
     var choice_count: usize = 1; // "No action"
     if (can_afford) choice_count += 1;
@@ -5884,7 +5884,7 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
     const choices = try allocator.alloc(state.PromptChoice, choice_count);
     var idx: usize = 0;
     if (can_afford) {
-        choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Pay {d} [Credits] to trash", .{trash_cost}));
+        choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Pay {d} [Credits] to trash", .{trash_cost.?}));
         idx += 1;
     }
     if (carnivore) {
