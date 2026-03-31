@@ -2605,6 +2605,7 @@ fn applyScoreAgendaChoice(
     generated: *Game,
     choice_text: []const u8,
 ) !void {
+    try spendClicks(generated, .corp, 1);
 
     const target = try parseInstalledTargetChoice(choice_text);
     if (target.is_ice) return error.UnsupportedChoice;
@@ -3439,6 +3440,8 @@ fn applyCarnivoreTrash(generated: *Game, accessed: state.CardInstance) !void {
             break;
         }
     }
+    // Clear access prompt before firing event
+    generated.runner_prompt_state = null;
     // Trash the accessed card at no credit cost
     generated.turn_events.runner_trash_corp_card_count += 1;
     if (try fireEvent(generated, .runner_trash_corp_card)) return;
@@ -3452,6 +3455,9 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     const spec = lookupCardSpec(accessed) orelse return error.UnsupportedAccessTarget;
     const trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
     try spendCredits(generated, .runner, trash_cost);
+    // Clear access prompt before firing event — otherwise hasActivePrompt sees the
+    // stale access prompt and short-circuits, skipping finishAccessCard
+    generated.runner_prompt_state = null;
     // Fire runner_trash_corp_card event (Loup trigger)
     generated.turn_events.runner_trash_corp_card_count += 1;
     if (try fireEvent(generated, .runner_trash_corp_card)) return;
@@ -8544,4 +8550,145 @@ test "corp gain credit 3 times then turn transitions to runner" {
     try std.testing.expect(findRunAction(generated.legal_actions, "Archives") != null);
     try std.testing.expect(findRunAction(generated.legal_actions, "HQ") != null);
     try std.testing.expect(findRunAction(generated.legal_actions, "R&D") != null);
+}
+
+test "access remote card only once then run ends" {
+    // Seed 1: corp hand has Regolith Mining License
+    var generated = try createInitialSnapshot(
+        std.testing.allocator,
+        system_gateway_beginner,
+        1,
+    );
+    defer generated.deinit();
+
+    // Keep/keep
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+
+    // Corp: start turn, install Regolith in remote
+    try corpStartTurnFull(&generated);
+    try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Regolith Mining License") orelse return error.MissingAction);
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "install-destination", .choice = stringChoice("New remote") });
+    try endTurnAndDiscard(&generated, .corp);
+
+    // Runner: start turn, run the remote
+    try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
+    try startRun(&generated, "Server 1");
+
+    // Continue through the run (no ICE)
+    var guard: usize = 0;
+    while (guard < 10 and generated.run != null) : (guard += 1) {
+        const cont = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
+        try applyAction(&generated, cont);
+    }
+
+    // Should get an access prompt for Regolith
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("Regolith Mining License", generated.runner_prompt_state.?.source_card.?.title);
+
+    // Find and apply the trash action
+    const trash_action = findPromptChoiceAction(generated.legal_actions, .runner, "No action") orelse return error.MissingAction;
+    try applyAction(&generated, trash_action);
+
+    // Run should be over — NOT offered the same card again
+    try std.testing.expect(generated.run == null);
+    try std.testing.expect(generated.runner_prompt_state == null);
+    try std.testing.expectEqual(state.Side.runner, generated.decision_side);
+    try std.testing.expect(generated.legal_actions.len > 1);
+
+    // Regolith should still be installed (we picked No action, not trash)
+    try std.testing.expectEqual(@as(usize, 1), generated.corp_servers.items[3].content.items.len);
+
+    // Run the remote again to test trash
+    try startRun(&generated, "Server 1");
+    var guard2: usize = 0;
+    while (guard2 < 10 and generated.run != null) : (guard2 += 1) {
+        const cont2 = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
+        try applyAction(&generated, cont2);
+    }
+
+    // Access prompt again — this time trash it
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    // Regolith has trash cost 3, runner starts with 5cr - should be able to afford
+    const pay_trash = findPromptChoiceAction(generated.legal_actions, .runner, "Pay 3 [Credits] to trash") orelse return error.MissingAction;
+    const credit_before = generated.runner_credit;
+    try applyAction(&generated, pay_trash);
+
+    // Card should be trashed, credits spent, run over — NOT offered again
+    try std.testing.expectEqual(credit_before - 3, generated.runner_credit);
+    try std.testing.expect(generated.run == null);
+    try std.testing.expect(generated.runner_prompt_state == null);
+    try std.testing.expectEqual(state.Side.runner, generated.decision_side);
+}
+
+test "Loup trash on HQ access completes run and does not repeat access" {
+    // GNK matchup: Loup is the runner. Loup's ability: first trash each turn gains 1cr + draw 1.
+    // Spin Doctor (code 30053) has trash cost 2.
+    var generated = try createInitialSnapshot(
+        std.testing.allocator,
+        gnk_nbn_vs_loup,
+        5,
+    );
+    defer generated.deinit();
+
+    // Keep/keep
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+
+    // Corp: start turn, spend all clicks on credits
+    try corpStartTurnFull(&generated);
+    for (0..3) |_| {
+        const gc = findBasicAbilityAction(generated.legal_actions, .corp, .gain_credit) orelse break;
+        try applyAction(&generated, gc);
+    }
+
+    // Force a Spin Doctor into corp hand for deterministic test
+    generated.corp_hand.clearRetainingCapacity();
+    try generated.corp_hand.append(generated.backing_allocator, .{
+        .title = "Spin Doctor",
+        .side = .corp,
+        .code = 30053,
+        .card_type = "Asset",
+        .access = .{ .kind = .none },
+    });
+
+    try endTurnAndDiscard(&generated, .corp);
+
+    // Runner: start turn, run HQ
+    try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
+    try startRun(&generated, "HQ");
+
+    // Continue through run (no ICE on HQ)
+    var guard: usize = 0;
+    while (guard < 10 and generated.run != null) : (guard += 1) {
+        const cont = findActionByKind(generated.legal_actions, .@"continue", generated.decision_side) orelse break;
+        try applyAction(&generated, cont);
+    }
+
+    // With 1 card in hand, may go directly to access-choice or show hq-access first
+    if (generated.runner_prompt_state) |ps| {
+        if (std.mem.eql(u8, ps.prompt_type, "hq-access")) {
+            try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Card from hand") orelse return error.MissingAction);
+        }
+    }
+
+    // Access-choice prompt for Spin Doctor
+    try std.testing.expect(generated.runner_prompt_state != null);
+    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("Spin Doctor", generated.runner_prompt_state.?.source_card.?.title);
+
+    // Trash it
+    const credit_before = generated.runner_credit;
+    try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Pay 2 [Credits] to trash") orelse return error.MissingAction);
+
+    // Loup trigger: +1cr +1 draw. Net credit change: -2 + 1 = -1
+    try std.testing.expectEqual(credit_before - 1, generated.runner_credit);
+
+    // Run must be over — NOT showing the same access prompt again
+    try std.testing.expect(generated.run == null);
+    try std.testing.expect(generated.runner_prompt_state == null);
+    try std.testing.expectEqual(state.Side.runner, generated.decision_side);
+    try std.testing.expect(generated.legal_actions.len > 1);
 }

@@ -66,6 +66,7 @@ var input_len: usize = 0;
 var hover_card_code: c_int = 0; // card code from mouse hover on board
 var log_scroll_offset: usize = 0; // 0 = bottom (newest), >0 = scrolled back
 var log_panel_x: u16 = 0; // left edge of log panel for scroll hit testing
+var log_at_top: bool = true; // true when first entry is visible (no more to scroll up)
 // Map log panel rows to log entry indices for hover detection
 var log_row_entry: [256]usize = [_]usize{0} ** 256; // row -> log_entries index (0-based)
 var log_row_entry_count: u16 = 0; // how many rows are mapped
@@ -350,28 +351,40 @@ fn render_log(win: Window) void {
     if (content.height < 3 or cw < 4) return;
 
     // Calculate how many rows each entry needs (for word wrapping + 1 padding)
-    // Walk backwards from the scroll anchor to fill available rows
+    // Walk backwards from the scroll anchor to find first_visible,
+    // then forward from first_visible to fill the panel completely.
     const available = content.height -| 1;
     const anchor = if (log_count > log_scroll_offset) log_count - log_scroll_offset else 0;
-    // Clamp scroll offset
     if (log_scroll_offset > log_count) log_scroll_offset = log_count;
 
+    // Walk backwards from anchor to find first_visible
     var total_rows: u16 = 0;
     var first_visible: usize = anchor;
     while (first_visible > 0) {
         first_visible -= 1;
         const entry = log_entries[first_visible];
         const entry_rows: u16 = @intCast(if (entry.len == 0) 1 else (entry.len + cw - 1) / cw);
-        const rows_with_pad = entry_rows + 1; // +1 padding between items
+        const rows_with_pad = entry_rows + 1;
         if (total_rows + rows_with_pad > available) {
             first_visible += 1;
             break;
         }
         total_rows += rows_with_pad;
     }
+    // Walk forward from anchor to fill remaining space
+    var last_visible: usize = anchor;
+    while (last_visible < log_count and total_rows < available) {
+        const entry = log_entries[last_visible];
+        const entry_rows: u16 = @intCast(if (entry.len == 0) 1 else (entry.len + cw - 1) / cw);
+        const rows_with_pad = entry_rows + 1;
+        if (total_rows + rows_with_pad > available) break;
+        total_rows += rows_with_pad;
+        last_visible += 1;
+    }
+    log_at_top = first_visible == 0;
 
     var row: u16 = 1;
-    for (log_entries[first_visible..anchor], first_visible..) |entry, i| {
+    for (log_entries[first_visible..last_visible], first_visible..) |entry, i| {
         if (row >= content.height) break;
         // Color by side; older entries fade out
         const entry_style = if (std.mem.startsWith(u8, entry, "Corp:"))
@@ -533,11 +546,25 @@ fn render_player_section(win: Window, h: ?*anyopaque, player: c_int, start_row: 
     var row = start_row;
     var id_buf: [256]u8 = undefined;
     const id_len = api.netrunner_identity_name(h, player, &id_buf, id_buf.len);
+    const prefix = if (player == 0) " CORP: " else " RUNNER: ";
+    const id_name = api_name(&id_buf, id_len);
 
     _ = win.print(&.{
-        .{ .text = if (player == 0) " CORP: " else " RUNNER: ", .style = side_sty(player) },
-        .{ .text = api_name(&id_buf, id_len), .style = sty.normal },
+        .{ .text = prefix, .style = side_sty(player) },
+        .{ .text = id_name, .style = sty.normal },
     }, .{ .row_offset = row });
+
+    // Register hover for identity card
+    const id_code = api.netrunner_identity_code(h, player);
+    if (id_code > 0 and board_card_count < board_cards.len) {
+        board_cards[board_card_count] = .{
+            .row = row,
+            .col_start = @intCast(prefix.len),
+            .col_end = @intCast(prefix.len + id_name.len),
+            .code = id_code,
+        };
+        board_card_count += 1;
+    }
     row +|= 1;
 
     const cr = api.netrunner_player_credits(h, player);
@@ -592,9 +619,11 @@ fn render_servers(win: Window, h: ?*anyopaque, start_row: u16) u16 {
             var ice_buf: [128]u8 = undefined;
             const ice_len = api.netrunner_server_ice_name(h, i, j, &ice_buf, ice_buf.len);
             const rezzed = api.netrunner_server_ice_rezzed(h, i, j);
+            const adv = api.netrunner_server_ice_adv(h, i, j);
             const ice_name = api_name(&ice_buf, ice_len);
             const old_len = line.len;
-            line = fmt("{s} [{s}{s}]", .{ line, ice_name, if (rezzed) "" else "?" });
+            const ice_suffix = if (!rezzed and adv > 0) fmt("?(A:{d})", .{adv}) else if (!rezzed) "?" else if (adv > 0) fmt("(A:{d})", .{adv}) else "";
+            line = fmt("{s} [{s}{s}]", .{ line, ice_name, ice_suffix });
 
             // Register hover region for this ICE
             const ice_code = api.netrunner_server_ice_code(h, i, j);
@@ -615,8 +644,14 @@ fn render_servers(win: Window, h: ?*anyopaque, start_row: u16) u16 {
             var card_buf: [128]u8 = undefined;
             const card_len = api.netrunner_server_content_name(h, i, j, &card_buf, card_buf.len);
             const rezzed = api.netrunner_server_content_rezzed(h, i, j);
+            const adv = api.netrunner_server_content_adv(h, i, j);
+            const adv_req = api.netrunner_server_content_adv_req(h, i, j);
+            const cr = api.netrunner_server_content_credits(h, i, j);
             const old_len = line.len;
-            line = fmt("{s} {s}{s}", .{ line, api_name(&card_buf, card_len), if (rezzed) "" else "?" });
+            const adv_str = if (adv > 0 and adv_req > 0) fmt("A:{d}/{d}", .{ adv, adv_req }) else if (adv > 0) fmt("A:{d}", .{adv}) else "";
+            const cr_str = if (cr > 0) fmt("${d}", .{cr}) else "";
+            const suffix = if (!rezzed and adv_str.len > 0) fmt("?({s})", .{adv_str}) else if (!rezzed) "?" else if (adv_str.len > 0 and cr_str.len > 0) fmt("({s} {s})", .{ adv_str, cr_str }) else if (adv_str.len > 0) fmt("({s})", .{adv_str}) else if (cr_str.len > 0) fmt("({s})", .{cr_str}) else "";
+            line = fmt("{s} {s}{s}", .{ line, api_name(&card_buf, card_len), suffix });
 
             const card_code = api.netrunner_server_content_code(h, i, j);
             if (card_code > 0 and board_card_count < board_cards.len) {
@@ -647,9 +682,9 @@ fn render_rig(win: Window, h: ?*anyopaque, start_row: u16) u16 {
         return row +| 1;
     }
 
-    if (prog > 0) row = render_rig_zone(win, h, "Prg", prog, api.netrunner_rig_program_name, api.netrunner_rig_program_code, row);
-    if (hw > 0) row = render_rig_zone(win, h, "Hw", hw, api.netrunner_rig_hardware_name, api.netrunner_rig_hardware_code, row);
-    if (res > 0) row = render_rig_zone(win, h, "Res", res, api.netrunner_rig_resource_name, api.netrunner_rig_resource_code, row);
+    if (prog > 0) row = render_rig_zone(win, h, "Prg", prog, api.netrunner_rig_program_name, api.netrunner_rig_program_code, api.netrunner_rig_program_virus, null, row);
+    if (hw > 0) row = render_rig_zone(win, h, "Hw", hw, api.netrunner_rig_hardware_name, api.netrunner_rig_hardware_code, null, null, row);
+    if (res > 0) row = render_rig_zone(win, h, "Res", res, api.netrunner_rig_resource_name, api.netrunner_rig_resource_code, null, api.netrunner_rig_resource_credits, row);
     return row;
 }
 
@@ -660,6 +695,8 @@ fn render_rig_zone(
     count: c_int,
     name_fn: *const fn (?*anyopaque, c_int, [*c]u8, c_int) callconv(.c) c_int,
     code_fn: *const fn (?*anyopaque, c_int) callconv(.c) c_int,
+    virus_fn: ?*const fn (?*anyopaque, c_int) callconv(.c) c_int,
+    credit_fn: ?*const fn (?*anyopaque, c_int) callconv(.c) c_int,
     start_row: u16,
 ) u16 {
     var line: []const u8 = fmt(" {s}:", .{label});
@@ -668,9 +705,12 @@ fn render_rig_zone(
         var buf: [128]u8 = undefined;
         const len = name_fn(h, i, &buf, buf.len);
         const name = api_name(&buf, len);
+        const vc: c_int = if (virus_fn) |vf| vf(h, i) else 0;
+        const cc: c_int = if (credit_fn) |cf| cf(h, i) else 0;
+        const counter_str = if (vc > 0 and cc > 0) fmt("(V:{d} $:{d})", .{ vc, cc }) else if (vc > 0) fmt("(V:{d})", .{vc}) else if (cc > 0) fmt("(${d})", .{cc}) else "";
         const sep = if (i > 0) ", " else " ";
         const old_len = line.len;
-        line = fmt("{s}{s}{s}", .{ line, sep, name });
+        line = fmt("{s}{s}{s}{s}", .{ line, sep, name, counter_str });
 
         const card_code = code_fn(h, i);
         if (card_code > 0 and board_card_count < board_cards.len) {
@@ -809,7 +849,10 @@ fn render_actions(win: Window, h: ?*anyopaque, start_row: u16) void {
         } else if (status_msg.len > 0) {
             _ = win.print(&.{.{ .text = fmt(" {s}", .{status_msg}), .style = sty.prompt_text }}, .{ .row_offset = status_row });
         } else {
-            _ = win.print(&.{.{ .text = " #/j/k + ENTER | Ctrl+S save | q quit | ? = unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row });
+            _ = win.print(&.{.{ .text = " #/j/k + ENTER | Ctrl+S save | q quit", .style = sty.dim_text }}, .{ .row_offset = status_row });
+            if (status_row > 1) {
+                _ = win.print(&.{.{ .text = " $=Credits Cl=Clicks H=Hand D=Deck Dc=Discard Sc=Score MU=Mem Lk=Link T=Tags BP=BadPub A=Adv V=Virus ?=Unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row - 1 });
+            }
         }
     }
 }
@@ -899,7 +942,7 @@ fn handle_mouse(mouse: vaxis.Mouse) void {
     // Log panel: scroll + hover
     if (col >= log_panel_x) {
         if (mouse.button == .wheel_up) {
-            if (log_scroll_offset < log_count) log_scroll_offset += 3;
+            if (!log_at_top) log_scroll_offset += 3;
         } else if (mouse.button == .wheel_down) {
             if (log_scroll_offset >= 3) log_scroll_offset -= 3 else log_scroll_offset = 0;
         }
@@ -928,10 +971,11 @@ fn handle_mouse(mouse: vaxis.Mouse) void {
 
 fn handle_menu_key(key: vaxis.Key) bool {
     if (key.matches('q', .{}) or key.matches('c', .{ .ctrl = true })) return true;
+    const menu_count: usize = @intCast(api.matchup_count);
     if (key.codepoint == vaxis.Key.up or key.matches('k', .{})) {
-        if (menu_selection > 0) menu_selection -= 1;
+        menu_selection = if (menu_selection > 0) menu_selection - 1 else menu_count - 1;
     } else if (key.codepoint == vaxis.Key.down or key.matches('j', .{})) {
-        if (menu_selection < api.matchup_count - 1) menu_selection += 1;
+        menu_selection = if (menu_selection < menu_count - 1) menu_selection + 1 else 0;
     } else if (key.codepoint == vaxis.Key.enter) {
         start_game();
     } else if (key.codepoint >= '1' and key.codepoint <= '0' + @as(u21, @intCast(api.matchup_count))) {
@@ -1007,10 +1051,10 @@ fn handle_game_key(key: vaxis.Key) bool {
     if (num_actions == 0) return false;
 
     if (key.codepoint == vaxis.Key.up or key.matches('k', .{})) {
-        if (selected_action > 0) selected_action -= 1;
+        selected_action = if (selected_action > 0) selected_action - 1 else num_actions - 1;
         status_msg = "";
     } else if (key.codepoint == vaxis.Key.down or key.matches('j', .{})) {
-        if (selected_action < num_actions - 1) selected_action += 1;
+        selected_action = if (selected_action < num_actions - 1) selected_action + 1 else 0;
         status_msg = "";
     } else if (key.codepoint == vaxis.Key.enter) {
         if (input_len > 0) {

@@ -510,6 +510,58 @@ pub export fn netrunner_rig_resource_code(handle: ?*anyopaque, idx: c_int) callc
 }
 
 // ============================================================
+// Card counters
+// ============================================================
+
+pub export fn netrunner_server_content_adv(handle: ?*anyopaque, server_idx: c_int, card_idx: c_int) callconv(.c) c_int {
+    const card = get_server_content(handle, server_idx, card_idx) orelse return 0;
+    return card.advancement_counter;
+}
+
+pub export fn netrunner_server_content_adv_req(handle: ?*anyopaque, server_idx: c_int, card_idx: c_int) callconv(.c) c_int {
+    const card = get_server_content(handle, server_idx, card_idx) orelse return 0;
+    return @intCast(card.advancement_requirement orelse 0);
+}
+
+pub export fn netrunner_server_content_credits(handle: ?*anyopaque, server_idx: c_int, card_idx: c_int) callconv(.c) c_int {
+    const card = get_server_content(handle, server_idx, card_idx) orelse return 0;
+    return @intCast(card.credit_counter);
+}
+
+pub export fn netrunner_server_ice_adv(handle: ?*anyopaque, server_idx: c_int, ice_idx: c_int) callconv(.c) c_int {
+    const card = get_server_ice(handle, server_idx, ice_idx) orelse return 0;
+    return card.advancement_counter;
+}
+
+pub export fn netrunner_rig_program_virus(handle: ?*anyopaque, idx: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    if (idx < 0 or @as(usize, @intCast(idx)) >= game.runner_rig_program.items.len) return 0;
+    return @intCast(game.runner_rig_program.items[@intCast(idx)].virus_counter);
+}
+
+pub export fn netrunner_rig_resource_credits(handle: ?*anyopaque, idx: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    if (idx < 0 or @as(usize, @intCast(idx)) >= game.runner_rig_resources.items.len) return 0;
+    return @intCast(game.runner_rig_resources.items[@intCast(idx)].credit_counter);
+}
+
+fn get_server_content(handle: ?*anyopaque, server_idx: c_int, card_idx: c_int) ?state.CardInstance {
+    const game = get_game(handle) orelse return null;
+    if (server_idx < 0 or @as(usize, @intCast(server_idx)) >= game.corp_servers.items.len) return null;
+    const server = game.corp_servers.items[@intCast(server_idx)];
+    if (card_idx < 0 or @as(usize, @intCast(card_idx)) >= server.content.items.len) return null;
+    return server.content.items[@intCast(card_idx)];
+}
+
+fn get_server_ice(handle: ?*anyopaque, server_idx: c_int, ice_idx: c_int) ?state.CardInstance {
+    const game = get_game(handle) orelse return null;
+    if (server_idx < 0 or @as(usize, @intCast(server_idx)) >= game.corp_servers.items.len) return null;
+    const server = game.corp_servers.items[@intCast(server_idx)];
+    if (ice_idx < 0 or @as(usize, @intCast(ice_idx)) >= server.ices.items.len) return null;
+    return server.ices.items[@intCast(ice_idx)];
+}
+
+// ============================================================
 // Card info lookup (from embedded JSON data)
 // ============================================================
 
