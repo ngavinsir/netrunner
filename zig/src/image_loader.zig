@@ -57,9 +57,18 @@ pub const ImageLoader = struct {
         if (self.has_ready.load(.acquire)) {
             self.has_ready.store(false, .release);
             if (self.ready_code == code) {
-                // It's for the card we want
+                // Async finished — get the real image via sync load if the result
+                // is a sentinel (async only prepared the file, didn't transmit)
+                var img = self.ready_image;
+                if (img != 0 and self.load_fn != null) {
+                    // Re-resolve via load_fn on main thread (e.g. transmit to terminal)
+                    if (self.load_fn.?(code)) |real_img| {
+                        if (img != real_img) self.free_image(img);
+                        img = real_img;
+                    }
+                }
                 if (self.has_current) self.free_image(self.current_image);
-                self.current_image = self.ready_image;
+                self.current_image = img;
                 self.has_current = true;
                 self.images_displayed += 1;
             } else {

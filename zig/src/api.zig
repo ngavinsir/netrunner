@@ -314,6 +314,31 @@ fn resolve_card_code(game: *Game, action: state.LegalAction) c_int {
                     }
                 }
             },
+            .use_installed_ability => {
+                // card_index is combined: resources[0..R], programs[R..R+P], hardware[R+P..]
+                const res_len = game.runner_rig_resources.items.len;
+                const prog_len = game.runner_rig_program.items.len;
+                if (ci < res_len) {
+                    if (game.runner_rig_resources.items[ci].code) |code| return @intCast(code);
+                } else if (ci < res_len + prog_len) {
+                    if (game.runner_rig_program.items[ci - res_len].code) |code| return @intCast(code);
+                } else if (ci < res_len + prog_len + game.runner_rig_hardware.items.len) {
+                    if (game.runner_rig_hardware.items[ci - res_len - prog_len].code) |code| return @intCast(code);
+                }
+            },
+            .rez_non_ice => {
+                // card_index is content index within a server
+                if (action.server) |srv| {
+                    for (game.corp_servers.items) |server| {
+                        if (std.mem.eql(u8, server.name, srv)) {
+                            if (ci < server.content.items.len) {
+                                if (server.content.items[ci].code) |code| return @intCast(code);
+                            }
+                            break;
+                        }
+                    }
+                }
+            },
             else => {},
         }
     }
@@ -325,9 +350,37 @@ fn resolve_card_code(game: *Game, action: state.LegalAction) c_int {
         }
     }
 
+    // For advance/score/rez — resolve card from encoded "server|zone|index" choice
+    if (action.kind == .advance or action.kind == .score or
+        action.kind == .rez_non_ice or action.kind == .rez_ice)
+    {
+        if (resolve_choice_card_code(game, action)) |code| return @intCast(code);
+    }
+
     // Fall back to title search across all zones
     const title = action.card_title orelse return 0;
     return find_code_by_title(game, title);
+}
+
+fn resolve_choice_card_code(game: *Game, action: state.LegalAction) ?u32 {
+    const choice = action.choice orelse return null;
+    const text = choice.text orelse return null;
+
+    var it = std.mem.splitScalar(u8, text, '|');
+    const server_name = it.next() orelse return null;
+    const zone = it.next() orelse return null;
+    const idx_str = it.next() orelse return null;
+    const idx = std.fmt.parseInt(usize, idx_str, 10) catch return null;
+
+    for (game.corp_servers.items) |server| {
+        if (!std.mem.eql(u8, server.name, server_name)) continue;
+        if (std.mem.eql(u8, zone, "i")) {
+            if (idx < server.ices.items.len) return server.ices.items[idx].code;
+        } else if (std.mem.eql(u8, zone, "c")) {
+            if (idx < server.content.items.len) return server.content.items[idx].code;
+        }
+    }
+    return null;
 }
 
 fn find_code_by_title(game: *Game, title: []const u8) c_int {

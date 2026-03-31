@@ -372,6 +372,17 @@ fn vaxis_free_image(img_id: u32) void {
 }
 
 /// Called on background thread — downloads if needed, then loads PNG into vaxis.
+/// Sync load (main thread) — transmit cached PNG to terminal via file path.
+fn vaxis_sync_load(code: c_int) ?u32 {
+    var path_buf: [256]u8 = undefined;
+    const dest_path = std.fmt.bufPrint(&path_buf, "{s}/{d}.png", .{ cache_dir, code }) catch return null;
+    std.fs.cwd().access(dest_path, .{}) catch return null;
+    const img = vx_ptr.transmitLocalImagePath(alloc_ptr, writer_ptr, dest_path, 0, 0, .file, .png) catch return null;
+    return img.id;
+}
+
+/// Async load (background thread) — download + convert only, no terminal writes.
+/// Returns a sentinel (1) on success to signal the file is ready for sync_load.
 fn vaxis_async_load(code: c_int) ?u32 {
     const dest_path = std.fmt.allocPrint(alloc_ptr, "{s}/{d}.png", .{ cache_dir, code }) catch return null;
     defer alloc_ptr.free(dest_path);
@@ -405,9 +416,8 @@ fn vaxis_async_load(code: c_int) ?u32 {
         std.fs.cwd().deleteFile(tmp_path) catch {};
     };
 
-    // Transmit file path to terminal — terminal reads PNG directly (no decode/re-encode)
-    const img = vx_ptr.transmitLocalImagePath(alloc_ptr, writer_ptr, dest_path, 0, 0, .file, .png) catch return null;
-    return img.id;
+    // Return sentinel — actual transmit happens in sync_load on main thread
+    return 1;
 }
 
 // ============================================================
@@ -966,11 +976,12 @@ pub fn main() !void {
     try vx.setMouseMode(writer, true);
     try vx.queryTerminal(writer, 1 * std.time.ns_per_s);
 
-    // Initialize image loader — all loads go through async_load_fn
-    // (vaxis loadImage decodes PNG which is too slow for the main thread)
+    // Initialize image loader:
+    // - load_fn (main thread): transmit cached PNG path to terminal (fast)
+    // - async_load_fn (background): download + convert only, no terminal writes
     img_loader = .{
         .free_fn = vaxis_free_image,
-        .load_fn = null,
+        .load_fn = vaxis_sync_load,
         .async_load_fn = vaxis_async_load,
         .notify_fn = notify_image_ready,
     };
