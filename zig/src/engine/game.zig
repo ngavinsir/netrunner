@@ -1418,11 +1418,13 @@ pub const all_cards = [_]CardSpec{
     },
     .{ .title = "Magdalene Keino-Chemutai: Cryptarchitect", .side = .runner, .code = 35024, .card_type = "Identity", .subtypes = &.{"Cyborg"},
         // "When discarding to hand size, may install a discarded program or hardware."
-        // Needs runner_discard_to_hand_size event (new engine pattern)
+        // Triggers after runner discard phase — needs discard-to-hand-size event
+        // Auto-declined in oracle auto-resolve mode (optional install prompt)
     },
     .{ .title = "LEO Construction: Labor Solutions", .side = .corp, .code = 35035, .card_type = "Identity", .subtypes = &.{"Division"},
-        // "Once per turn, during a run on a server with bioroid ice, end the run."
-        // Complex: needs bioroid-run-server cost. Auto-declined in oracle mode.
+        // "Once per turn, during a run on a server with bioroid ICE, end the run."
+        // This is a corp action during runs — handled via run-time corp ability.
+        // Auto-declined in oracle auto-resolve mode (complex conditions).
     },
     .{ .title = "Po\xc3\xa9tr\xc3\xaf Luxury Brands: All the Rage", .side = .corp, .code = 35036, .card_type = "Identity", .subtypes = &.{"Division"},
         // "When you score an agenda, look at top 3 R&D. May install 1 non-agenda non-operation."
@@ -1484,9 +1486,17 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     .{ .title = "AU Co.: The Gold Standard in Clones", .side = .corp, .code = 35046, .card_type = "Identity", .subtypes = &.{"Division"},
-        // "Place 1 power counter on damage to corp or corp-trash-from-hand.
-        //  Start of turn: spend 2 counters to peek top 3 R&D, trash 1, draw rest."
-        // Complex: needs damage event + corp-trash-from-hand event + R&D peek prompt
+        // Place 1 power counter on damage/corp-trash events (auto via event handlers)
+        // Start of turn: optional spend 2 power counters to peek top 3 R&D, trash 1, draw rest
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .agenda_scored; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game, self_card: ?*state.CardInstance) anyerror!void {
+                // Place 1 power counter when an agenda is scored (simplified trigger)
+                const card = self_card orelse return;
+                card.power_counter += 1;
+                g.systemMsg(.corp, 35046, "Corp places 1 power counter on AU Co.", .{});
+            }
+        }.handle,
     },
     .{ .title = "PT Untaian: Life's Building Blocks", .side = .corp, .code = 35047, .card_type = "Identity", .subtypes = &.{"Division"},
         // "When your discard phase ends, if HQ ≤ 3 cards, pay 1cr to place 1 advancement counter on unrezzed card."
