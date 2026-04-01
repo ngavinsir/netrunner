@@ -1353,7 +1353,44 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Nebula Talent Management: Making Stars", .side = .corp, .code = 35057, .card_type = "Identity", .subtypes = &.{"Division"} },
     .{ .title = "Synapse Global: Faster than Thought", .side = .corp, .code = 35058, .card_type = "Identity", .subtypes = &.{"Division"} },
     .{ .title = "BANGUN: When Disaster Strikes", .side = .corp, .code = 35068, .card_type = "Identity", .subtypes = &.{"Corp"} },
-    .{ .title = "The Zwicky Group: Invisible Hands", .side = .corp, .code = 35069, .card_type = "Identity", .subtypes = &.{"Unsubstantiated"} },
+    .{ .title = "The Zwicky Group: Invisible Hands", .side = .corp, .code = 35069, .card_type = "Identity", .subtypes = &.{"Unsubstantiated"},
+        // "First time each turn you gain credits through an ability on an agenda or operation, you may draw 1 card."
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .operation_played; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.turn_events.operation_played_count != 1) return;
+                // "you may draw 1 card" - optional prompt
+                const allocator = g.arena.allocator();
+                const choices = try allocator.alloc(state.PromptChoice, 2);
+                choices[0] = stringChoice("Yes");
+                choices[1] = stringChoice("No");
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "zwicky-draw"),
+                    .choices = choices,
+                    .source_card = g.corp_identity,
+                };
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "waiting"),
+                    .choices = &.{},
+                    .source_card = null,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.handle,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "Yes")) {
+                    try drawCards(g, .corp, 1);
+                    g.systemMsg(.corp, 35069, "Corp uses The Zwicky Group to draw 1 card.", .{});
+                }
+                g.corp_prompt_state = null;
+                g.runner_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
+            }
+        }.choice,
+    },
     // --- Elevation Agendas ---
     .{ .title = "Aggressive Trendsetting", .side = .corp, .code = 35037, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
         // "First time Runner trashes installed Corp card each turn, they may spend [click]. If not, Corp gets +1 allotted [click] next turn."
@@ -5382,6 +5419,11 @@ fn playCorpOperation(
         .gain_credits => {
             generated.corp_credit += card.corp_play.gain_credits;
             try drawCards(generated, .corp, card.corp_play.draw_cards);
+            // Fire operation_played for Zwicky trigger (credit gain from operation)
+            if (card.corp_play.gain_credits > 0) {
+                generated.turn_events.operation_played_count += 1;
+                if (try fireEvent(generated, .operation_played)) return;
+            }
         },
         .advance_installed => {
             const choices = if (card.corp_play.not_installed_this_turn)
