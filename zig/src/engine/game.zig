@@ -1185,8 +1185,30 @@ pub const all_cards = [_]CardSpec{
     // ELEVATION PACK (35001–35082)
     // ====================================================================
     // --- Elevation Identities ---
-    .{ .title = "Ry\xc5\x8d \xe2\x80\x9cPhoenix\xe2\x80\x9d \xc5\x8cno: Out of the Ashes", .side = .runner, .code = 35001, .card_type = "Identity", .subtypes = &.{"G-mod"} },
-    .{ .title = "Topan: Ormas Leader", .side = .runner, .code = 35002, .card_type = "Identity", .subtypes = &.{"Natural"} },
+    .{ .title = "Ry\xc5\x8d \xe2\x80\x9cPhoenix\xe2\x80\x9d \xc5\x8cno: Out of the Ashes", .side = .runner, .code = 35001, .card_type = "Identity", .subtypes = &.{"G-mod"},
+        // "Whenever a subroutine resolves during a run: gain 1cr. First time each turn: Corp trashes 1 from HQ."
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .successful_run_ends; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game, self_card: ?*state.CardInstance) anyerror!void {
+                if (g.run == null) return;
+                if (g.run.?.subroutines_fired == 0) return;
+                const card = self_card orelse return;
+                if (card.ability_used_this_turn) return;
+                card.ability_used_this_turn = true;
+                g.runner_credit += 1;
+                // Corp trashes 1 from HQ (simplified: auto-resolve first card)
+                if (g.corp_hand.items.len > 0) {
+                    const trashed = g.corp_hand.orderedRemove(0);
+                    try appendDiscardCard(g, .corp, trashed);
+                }
+            }
+        }.handle,
+        .on_event_msg = "gain 1 [credit].",
+    },
+    .{ .title = "Topan: Ormas Leader", .side = .runner, .code = 35002, .card_type = "Identity", .subtypes = &.{"Natural"},
+        // "click: Install 1 card from grip, paying 2cr less. Suffer 1 meat damage."
+        // Needs identity click ability (new action type) — complex engine pattern
+    },
     .{ .title = "Barry \xe2\x80\x9cBaz\xe2\x80\x9d Wong: Tri-Maf Veteran", .side = .runner, .code = 35012, .card_type = "Identity", .subtypes = &.{"Cyborg"},
         // "Whenever the Corp rezzes a piece of ice, you may install 1 resource or piece of hardware from your grip."
         .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .corp_rez_ice; } }.m,
@@ -1308,9 +1330,37 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Dewi Subrotoputri: Pedagogical Dhalang", .side = .runner, .code = 35023, .card_type = "Identity", .subtypes = &.{"Natural"} },
-    .{ .title = "Magdalene Keino-Chemutai: Cryptarchitect", .side = .runner, .code = 35024, .card_type = "Identity", .subtypes = &.{"Cyborg"} },
-    .{ .title = "LEO Construction: Labor Solutions", .side = .corp, .code = 35035, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "Dewi Subrotoputri: Pedagogical Dhalang", .side = .runner, .code = 35023, .card_type = "Identity", .subtypes = &.{"Natural"},
+        // Flippy identity: "Pedagogical Dhalang" (front) / "Shadow Guide" (back)
+        // After successful run: flip based on available MU
+        // Front → Back: no MU available → gain 1cr + flip
+        // Back → Front: MU available → draw 1 + flip
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .successful_run_ends; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game, self_card: ?*state.CardInstance) anyerror!void {
+                const card = self_card orelse return;
+                const mu_available = if (g.runner_memory) |mem| mem.available else 0;
+                if (card.flipped and mu_available > 0) {
+                    // Back → Front: draw 1 + flip
+                    try drawCards(g, .runner, 1);
+                    card.flipped = false;
+                } else if (!card.flipped and mu_available == 0) {
+                    // Front → Back: gain 1cr + flip
+                    g.runner_credit += 1;
+                    card.flipped = true;
+                }
+                // Otherwise: no flip (conditions not met)
+            }
+        }.handle,
+    },
+    .{ .title = "Magdalene Keino-Chemutai: Cryptarchitect", .side = .runner, .code = 35024, .card_type = "Identity", .subtypes = &.{"Cyborg"},
+        // "When discarding to hand size, may install a discarded program or hardware."
+        // Needs runner_discard_to_hand_size event (new engine pattern)
+    },
+    .{ .title = "LEO Construction: Labor Solutions", .side = .corp, .code = 35035, .card_type = "Identity", .subtypes = &.{"Division"},
+        // "Once per turn, during a run on a server with bioroid ice, end the run."
+        // Complex: needs bioroid-run-server cost. Auto-declined in oracle mode.
+    },
     .{ .title = "Po\xc3\xa9tr\xc3\xaf Luxury Brands: All the Rage", .side = .corp, .code = 35036, .card_type = "Identity", .subtypes = &.{"Division"},
         // "When you score an agenda, look at top 3 R&D. May install 1 non-agenda non-operation."
         // "When an agenda is stolen, may install 1 non-agenda non-operation from HQ."
@@ -1370,7 +1420,11 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "AU Co.: The Gold Standard in Clones", .side = .corp, .code = 35046, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "AU Co.: The Gold Standard in Clones", .side = .corp, .code = 35046, .card_type = "Identity", .subtypes = &.{"Division"},
+        // "Place 1 power counter on damage to corp or corp-trash-from-hand.
+        //  Start of turn: spend 2 counters to peek top 3 R&D, trash 1, draw rest."
+        // Complex: needs damage event + corp-trash-from-hand event + R&D peek prompt
+    },
     .{ .title = "PT Untaian: Life's Building Blocks", .side = .corp, .code = 35047, .card_type = "Identity", .subtypes = &.{"Division"},
         // "When your discard phase ends, if HQ ≤ 3 cards, pay 1cr to place 1 advancement counter on unrezzed card."
         .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .corp_end_turn; } }.m,
@@ -1412,9 +1466,59 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Nebula Talent Management: Making Stars", .side = .corp, .code = 35057, .card_type = "Identity", .subtypes = &.{"Division"} },
-    .{ .title = "Synapse Global: Faster than Thought", .side = .corp, .code = 35058, .card_type = "Identity", .subtypes = &.{"Division"} },
-    .{ .title = "BANGUN: When Disaster Strikes", .side = .corp, .code = 35068, .card_type = "Identity", .subtypes = &.{"Corp"} },
+    .{ .title = "Nebula Talent Management: Making Stars", .side = .corp, .code = 35057, .card_type = "Identity", .subtypes = &.{"Division"},
+        // Flippy identity: "Making Stars" (front) / "Gemilang Arena: Burning Bright" (back)
+        // Front → Back: End of turn if operation played → flip + gain 1cr
+        // Back → Front: Successful run on HQ/R&D → flip
+        // Back ongoing: First non-Terminal operation played → gain 1 click
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .corp_end_turn or e == .successful_run_ends or e == .operation_played; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game, self_card: ?*state.CardInstance) anyerror!void {
+                const card = self_card orelse return;
+                // Check which event fired based on game state
+                if (g.end_turn and g.active_player == .corp) {
+                    // corp_end_turn: flip front→back if operation was played
+                    if (!card.flipped and g.turn_events.operation_played_count > 0) {
+                        card.flipped = true;
+                        g.corp_credit += 1;
+                    }
+                } else if (g.run != null) {
+                    // successful_run_ends: flip back→front on HQ/R&D run
+                    if (card.flipped) {
+                        const server = g.run.?.server;
+                        if (server.len > 0 and (std.mem.eql(u8, server[0], "hq") or std.mem.eql(u8, server[0], "rnd"))) {
+                            card.flipped = false;
+                        }
+                    }
+                } else {
+                    // operation_played: gain 1 click if flipped (back side) and first operation
+                    if (card.flipped and g.turn_events.operation_played_count == 1) {
+                        g.corp_click += 1;
+                    }
+                }
+            }
+        }.handle,
+    },
+    .{ .title = "Synapse Global: Faster than Thought", .side = .corp, .code = 35058, .card_type = "Identity", .subtypes = &.{"Division"},
+        // "When the Runner removes 1+ tags, reveal and install a non-operation from HQ for free."
+        // Needs runner_lose_tag event + install prompt
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .runner_lose_tag; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game, self_card: ?*state.CardInstance) anyerror!void {
+                const card = self_card orelse return;
+                if (card.ability_used_this_turn) return;
+                card.ability_used_this_turn = true;
+                // Optional: auto-resolve installs first non-operation from HQ
+                // Full implementation needs card selection prompt
+                _ = g;
+            }
+        }.handle,
+    },
+    .{ .title = "BANGUN: When Disaster Strikes", .side = .corp, .code = 35068, .card_type = "Identity", .subtypes = &.{"Corp"},
+        // "Install agendas faceup. On access of faceup agenda: 2 meat damage + 1 tag."
+        // Needs faceup install mechanic + access trigger
+        // Complex: modifies corp install flow + access damage
+    },
     .{ .title = "The Zwicky Group: Invisible Hands", .side = .corp, .code = 35069, .card_type = "Identity", .subtypes = &.{"Unsubstantiated"},
         // "First time each turn you gain credits through an ability on an agenda or operation, you may draw 1 card."
         .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .operation_played; } }.m,
@@ -7075,6 +7179,11 @@ fn resolveEncounteredIceSubroutines(
         if (idx < start_subroutine) continue;
         const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
         if (is_broken) continue;
+
+        // Track subroutines fired this run (Ryō: gains credits when subs fire)
+        if (generated.run) |*run| {
+            run.subroutines_fired += 1;
+        }
 
         switch (sub.kind) {
             .end_the_run => {

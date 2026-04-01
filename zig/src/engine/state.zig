@@ -283,6 +283,8 @@ pub const GameEvent = enum(u8) {
     operation_played, // Nebula, Zwicky: operation triggers
     runner_turn_begins, // MuslihaT: top-of-deck peek
     run_begins, // Side Hustle, Knickknack: triggers when any run begins
+    runner_lose_tag, // Synapse Global: corp installs on tag removal
+    corp_install, // BANGUN: faceup install option
 };
 
 pub const CardReference = struct {
@@ -344,6 +346,8 @@ pub const CardInstance = struct {
     advancement_strength_threshold: u8 = 0, // Pharos: str bonus starts at this many counters
     advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
     hosted: []CardInstance = &.{}, // Cards hosted on this card (e.g., trojans on ICE)
+    flipped: bool = false, // Dewi, Nebula: dual-face identity flip state
+    seen: bool = false, // BANGUN: faceup-installed agenda
 };
 
 pub const ServerState = struct {
@@ -401,6 +405,7 @@ pub const RunState = struct {
     did_steal_this_run: bool = false, // AMAZE: track if agenda was stolen during run
     tags_pending_on_steal: u8 = 0, // AMAZE: tags to give if agenda stolen (survives card trash)
     no_steal_or_trash: bool = false, // Ansel 1.0: prevent stealing/trashing for rest of run
+    subroutines_fired: u8 = 0, // Ryō: count subroutines that resolved this run
 };
 
 pub const HandSize = struct {
