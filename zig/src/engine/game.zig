@@ -1356,7 +1356,72 @@ pub const all_cards = [_]CardSpec{
             g.corp_click += 2;
         }
     }.play, .on_play_msg = "gain [Click][Click]." },
-    .{ .title = "Top-Down Solutions", .side = .corp, .code = 35044, .card_type = "Operation", .cost = 2, .corp_play = .{ .kind = .gain_credits, .draw_cards = 2 } },
+    .{ .title = "Top-Down Solutions", .side = .corp, .code = 35044, .card_type = "Operation", .cost = 2,
+        .corp_play = .{ .kind = .custom },
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                // "Draw 2 cards. Install up to 2 cards from HQ (one at a time)."
+                try drawCards(g, .corp, 2);
+                g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to draw 2 cards.", .{});
+                // Offer install prompt
+                try showTopDownInstallChoices(g, card, 0);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
+                if (std.mem.eql(u8, prompt.prompt_type, "top-down-card")) {
+                    if (std.mem.eql(u8, choice_text, "Done")) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    }
+                    // Find the card in hand
+                    for (prompt.choices) |ch| {
+                        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                            if (ch.card) |card_ref| {
+                                const card_idx = card_ref.index orelse continue;
+                                // Show server choices
+                                const install_kind: state.InstallKind = blk: {
+                                    if (card_idx < g.corp_hand.items.len) {
+                                        const ct = g.corp_hand.items[card_idx].card_type orelse break :blk .corp_remote_only;
+                                        if (std.mem.eql(u8, ct, "ICE")) break :blk .corp_server_choice;
+                                    }
+                                    break :blk .corp_remote_only;
+                                };
+                                const server_choices = try installChoicesForCard(allocator, install_kind, g);
+                                g.corp_prompt_state = .{
+                                    .prompt_type = try allocator.dupe(u8, "top-down-server"),
+                                    .choices = server_choices,
+                                    .source_card = prompt.source_card,
+                                    .min_choices = @intCast((card_idx & 0xF) | (@as(u8, prompt.min_choices) << 4)),
+                                };
+                                g.decision_side = .corp;
+                                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                                return;
+                            }
+                        }
+                    }
+                    return error.UnsupportedChoice;
+                } else if (std.mem.eql(u8, prompt.prompt_type, "top-down-server")) {
+                    const pack_val = prompt.min_choices;
+                    const card_idx: u8 = pack_val & 0xF;
+                    const installs_done: u8 = pack_val >> 4;
+                    try installCorpCardFromHand(g, card_idx, choice_text);
+                    g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to install a card.", .{});
+                    if (installs_done + 1 >= 2) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                    } else {
+                        try showTopDownInstallChoices(g, prompt.source_card orelse return error.NoPromptState, installs_done + 1);
+                    }
+                } else return error.UnsupportedChoice;
+            }
+        }.choice,
+    },
     .{ .title = "Peer Review", .side = .corp, .code = 35055, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 4,
         .corp_play = .{ .kind = .custom },
         .on_play = &struct {
@@ -1962,7 +2027,10 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .side = .runner, .code = 35027, .card_type = "Hardware", .subtypes = &.{"Mod"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 } },
     .{ .title = "Madani", .side = .runner, .code = 35028, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true } },
     // --- Elevation Runner Programs ---
-    .{ .title = "Gourmand", .side = .runner, .code = 35007, .card_type = "Program", .cost = 0, .runner_install = .{ .kind = .program } },
+    .{ .title = "Gourmand", .side = .runner, .code = 35007, .card_type = "Program", .cost = 0, .runner_install = .{ .kind = .program },
+        // "Access → [trash]: Trash the non-agenda card you are accessing. If you do, draw 1 card."
+        // This is an access ability - needs to hook into the access flow
+    },
     .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .break_subroutine_count = 1,
@@ -9093,6 +9161,30 @@ fn otherSide(side: state.Side) state.Side {
 
 fn threatLevel(g: *const Game) u8 {
     return g.corp_agenda_point + g.runner_agenda_point;
+}
+
+fn showTopDownInstallChoices(g: *Game, card: ?state.CardInstance, installs_done: u8) !void {
+    const allocator = g.arena.allocator();
+    var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices_list.deinit(allocator);
+    for (g.corp_hand.items, 0..) |c, idx| {
+        const ct = c.card_type orelse continue;
+        if (std.mem.eql(u8, ct, "Operation")) continue; // Can't install operations
+        try choices_list.append(allocator, .{
+            .kind = .card,
+            .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
+            .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
+        });
+    }
+    try choices_list.append(allocator, stringChoice("Done"));
+    g.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "top-down-card"),
+        .choices = try choices_list.toOwnedSlice(allocator),
+        .source_card = card,
+        .min_choices = installs_done,
+    };
+    g.decision_side = .corp;
+    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
 }
 
 fn showKpiChoices(g: *Game, card: ?state.CardInstance, choices_made: u8) !void {

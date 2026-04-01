@@ -448,6 +448,7 @@ pub const TurnEvents = struct {
     runner_gain_tag_count: u8 = 0, // How many times runner gained tags this turn
     runner_trash_corp_card_count: u8 = 0, // How many times runner trashed corp cards on access this turn
     successful_run_ends_count: u8 = 0, // How many successful runs ended this turn (for HQ/R&D)
+    operation_played_count: u8 = 0, // How many operations played this turn (Zwicky)
 };
 
 pub const LegalAction = struct {
