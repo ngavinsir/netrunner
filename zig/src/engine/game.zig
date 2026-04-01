@@ -1244,7 +1244,53 @@ pub const all_cards = [_]CardSpec{
     },
     .{ .title = "MuslihaT: Multifarious Marketeer", .side = .runner, .code = 35013, .card_type = "Identity", .subtypes = &.{"Natural"},
         // "When your turn begins, look at top card of stack. If icebreaker or run event, may reveal and add to grip."
-        // Implemented as a start-of-turn peek - simplified to just add to hand if matching
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .runner_turn_begins; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.runner_deck.items.len == 0) return;
+                const top_card = g.runner_deck.items[g.runner_deck.items.len - 1];
+                // Check if icebreaker or run event
+                var is_match = false;
+                const ct = top_card.card_type orelse "";
+                if (std.mem.eql(u8, ct, "Program")) {
+                    for (top_card.subtypes) |st| {
+                        if (std.mem.eql(u8, st, "Icebreaker")) { is_match = true; break; }
+                    }
+                } else if (std.mem.eql(u8, ct, "Event")) {
+                    for (top_card.subtypes) |st| {
+                        if (std.mem.eql(u8, st, "Run")) { is_match = true; break; }
+                    }
+                }
+                if (is_match) {
+                    // Offer to reveal and add to grip
+                    const allocator = g.arena.allocator();
+                    const choices = try allocator.alloc(state.PromptChoice, 2);
+                    choices[0] = stringChoice("Yes");
+                    choices[1] = stringChoice("No");
+                    g.runner_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "muslihat-reveal"),
+                        .choices = choices,
+                        .source_card = g.runner_identity,
+                    };
+                    g.decision_side = .runner;
+                    g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                }
+            }
+        }.handle,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "Yes")) {
+                    if (g.runner_deck.items.len > 0) {
+                        const card = g.runner_deck.pop().?;
+                        try g.runner_hand.append(g.backing_allocator, card);
+                        g.systemMsg(.runner, 35013, "Runner uses MuslihaT to add {s} to the grip.", .{card.title});
+                    }
+                }
+                g.runner_prompt_state = null;
+                g.decision_side = .runner;
+                g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
+            }
+        }.choice,
     },
     .{ .title = "Dewi Subrotoputri: Pedagogical Dhalang", .side = .runner, .code = 35023, .card_type = "Identity", .subtypes = &.{"Natural"} },
     .{ .title = "Magdalene Keino-Chemutai: Cryptarchitect", .side = .runner, .code = 35024, .card_type = "Identity", .subtypes = &.{"Cyborg"} },
@@ -3478,6 +3524,10 @@ pub fn applyStartTurn(
 
             generated.active_player = .runner;
             generated.end_turn = false;
+
+            // Fire runner_turn_begins event (MuslihaT: peek at top card)
+            if (try fireEvent(generated, .runner_turn_begins)) return;
+
             generated.decision_side = .runner;
             generated.legal_actions = try runnerOpeningActionsForState(
                 allocator,

@@ -1925,6 +1925,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "poetri-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "pt-untaian-advance")) return "select";
     if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";
+    if (std.mem.eql(u8, prompt_type, "muslihat-reveal")) return "other";
     return prompt_type;
 }
 

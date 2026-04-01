@@ -263,6 +263,7 @@ pub const GameEvent = enum(u8) {
     corp_end_turn, // Jinteki: Restoring Humanity
     corp_rez_ice, // Barry: install on rez
     operation_played, // Nebula, Zwicky: operation triggers
+    runner_turn_begins, // MuslihaT: top-of-deck peek
 };
 
 pub const CardReference = struct {
