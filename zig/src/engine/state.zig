@@ -139,6 +139,7 @@ pub const SubroutineKind = enum(u8) {
     trash_program_or_resource_or_etr, // Biawak: trash 1 program (or resource) or ETR
     runner_loses_credits_and_net_damage, // Syailendra: runner loses N credits + net damage
     tag_or_pay_credits_etr, // Lamplighter: give 1 tag unless runner pays N; ETR if tagged
+    place_advancement_counter, // Syailendra: place 1 advancement counter on this ICE
 };
 
 pub const SubroutineSpec = struct {

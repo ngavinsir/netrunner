@@ -1766,10 +1766,23 @@ pub const all_cards = [_]CardSpec{
         .{ .kind = .end_the_run },
     } },
     .{ .title = "Empiricist", .side = .corp, .code = 35052, .card_type = "ICE", .subtypes = &.{ "AP", "Observer", "Sentry" }, .cost = 7, .strength = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .none }, // draw 1 card, may add 1 from HQ to top of R&D (custom)
-        .{ .kind = .do_net_damage, .amount = 1 }, // + give 1 tag
+        // Sub 1: "Corp draws 1 card. Corp may add 1 card from HQ to top of R&D."
+        // Draw is automatic; add-to-top is optional (auto-declined in oracle)
+        .{ .kind = .corp_gains_credits, .amount = 0 }, // Simplified: draw handled by card_subroutine_handler
+        .{ .kind = .do_net_damage, .amount = 1 },
         .{ .kind = .do_net_damage, .amount = 2 },
-    } },
+    },
+    .card_subroutine_handler = &struct {
+        fn handle(g: *Game, _: *const state.CardInstance, sub_idx: u8) anyerror!void {
+            if (sub_idx == 0) {
+                // Sub 1: Corp draws 1 card
+                try drawCards(g, .corp, 1);
+                g.systemMsg(.corp, 35052, "Corp uses Empiricist to draw 1 card.", .{});
+                // Optional: add 1 from HQ to top of R&D (auto-declined)
+            }
+        }
+    }.handle,
+    },
     .{ .title = "Mycoweb", .side = .corp, .code = 35053, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 8, .strength = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         // Sub 1: Install a piece of ice from Archives (paying install cost)
         // Sub 2: Rez a piece of ice, paying 2cr less
@@ -1804,7 +1817,7 @@ pub const all_cards = [_]CardSpec{
         .{ .kind = .end_the_run },
     } },
     .{ .title = "Syailendra", .side = .corp, .code = 35076, .card_type = "ICE", .subtypes = &.{ "AP", "Code Gate" }, .cost = 4, .strength = 5, .advanceable = true, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .none }, // place 1 advancement counter
+        .{ .kind = .place_advancement_counter, .amount = 1 },
         .{ .kind = .runner_loses_credits, .amount = 2 },
         .{ .kind = .do_net_damage, .amount = 1 },
     } },
@@ -1824,7 +1837,10 @@ pub const all_cards = [_]CardSpec{
         .{ .kind = .none }, // ETR if tagged (custom)
     } },
     // --- Elevation Assets ---
-    .{ .title = "Humanoid Resources", .side = .corp, .code = 35039, .card_type = "Asset", .cost = 1, .trash_cost = 1, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Humanoid Resources", .side = .corp, .code = 35039, .card_type = "Asset", .cost = 1, .trash_cost = 1, .install = .{ .kind = .corp_remote_only },
+        // "3 clicks + trash: Gain 9 credits." (corp click ability, handled by corp installed ability)
+        .installed_ability = .{ .kind = .click_trash_for_credits, .click_cost = 3, .credit_cost = 9 },
+    },
     .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
         .kind = .start_of_turn_credits,
         .initial_credit_counters = 6,
@@ -7300,6 +7316,7 @@ fn subroutineLabel(allocator: std.mem.Allocator, sub: state.SubroutineSpec, idx:
         .trash_program_or_resource_or_etr => std.fmt.allocPrint(allocator, "Trash 1 installed card or end the run", .{}),
         .runner_loses_credits_and_net_damage => std.fmt.allocPrint(allocator, "The Runner loses {d} [Credits]", .{sub.amount}),
         .tag_or_pay_credits_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
+        .place_advancement_counter => std.fmt.allocPrint(allocator, "Place {d} advancement counter{s}", .{ sub.amount, if (sub.amount != 1) "s" else "" }),
         .none => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
     };
 }
@@ -7760,6 +7777,13 @@ fn resolveEncounteredIceSubroutines(
                 generated.decision_side = .runner;
                 generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
                 return;
+            },
+            .place_advancement_counter => {
+                // Syailendra: place N advancement counters on this ICE
+                generated.corp_servers.items[server_index].ices.items[ice_index].advancement_counter += sub.amount;
+                generated.systemMsg(.corp, ice.code orelse 0, "Corp places {d} advancement counter{s} on {s}.", .{
+                    sub.amount, if (sub.amount != 1) "s" else "", ice.title,
+                });
             },
             .none => {},
         }
