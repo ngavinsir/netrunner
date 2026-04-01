@@ -158,6 +158,7 @@ pub const AgendaEffectKind = enum(u8) {
 pub const AgendaEffectSpec = struct {
     kind: AgendaEffectKind = .none,
     amount: u8 = 0,
+    hand_size_bonus: u8 = 0, // Superconducting Hub: gain N hand size on score
 };
 
 // Runner abilities printed on ICE cards (e.g., bioroid break)
@@ -264,6 +265,10 @@ pub const InstalledAbilitySpec = struct {
     draw_on_auto_trash: u8 = 0, // Side Hustle: draw N cards when auto-trashed at threshold
     rez_cost_increase: u8 = 0, // Fransofia Ward: increase rez cost of all ICE by N
     install_cost_reduction_per_icebreaker: bool = false, // Principia: -1 install cost per installed icebreaker
+    // Access-time abilities (Carnivore, Gourmand)
+    trash_access_hand_cost: u8 = 0, // Carnivore: trash N cards from hand to trash accessed card
+    trash_access_self_trash: bool = false, // Gourmand: trash self to trash accessed non-agenda + draw
+    trash_access_draw: u8 = 0, // Gourmand: draw N cards after trashing accessed card
 };
 
 pub const GameEvent = enum(u8) {
@@ -464,8 +469,6 @@ pub const TurnEvents = struct {
     runner_trash_corp_card_count: u8 = 0, // How many times runner trashed corp cards on access this turn
     successful_run_ends_count: u8 = 0, // How many successful runs ended this turn (for HQ/R&D)
     operation_played_count: u8 = 0, // How many operations played this turn (Zwicky)
-    cacophony_triggered: bool = false, // Cacophony: first steal/trash event this turn
-    knickknack_triggered: bool = false, // Knickknack: first run this turn
 };
 
 pub const LegalAction = struct {
