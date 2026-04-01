@@ -1482,7 +1482,15 @@ pub const all_cards = [_]CardSpec{
     } },
     .{ .title = "Flyswatter", .side = .corp, .code = 35079, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .end_the_run },
-    } },
+    },
+        .on_rez = &struct {
+            fn rez(g: *Game) anyerror!void {
+                // "When you rez this ice during a run against this server, purge virus counters."
+                purgeVirusCounters(g);
+                g.systemMsg(.corp, 35079, "Corp uses Flyswatter to purge virus counters.", .{});
+            }
+        }.rez,
+    },
     .{ .title = "Lamplighter", .side = .corp, .code = 35080, .card_type = "ICE", .subtypes = &.{ "Observer", "Sentry" }, .cost = 2, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .tag_or_pay_credits_etr, .amount = 3 },
         .{ .kind = .none }, // ETR if tagged (custom)
@@ -3860,10 +3868,7 @@ fn applyCorpBasicActionAbility(
         },
         .purge_viruses => {
             try spendClicks(generated, .corp, 3);
-            // Clear all virus counters from runner's installed programs
-            for (generated.runner_rig_program.items) |*card| {
-                card.virus_counter = 0;
-            }
+            purgeVirusCounters(generated);
             generated.systemMsg(.corp, 0, "Corp spends [click][click][click] to purge virus counters.", .{});
         },
         else => return error.UnsupportedAbility,
@@ -4289,6 +4294,20 @@ fn is_runner_tagged(tag: ?state.TagState) bool {
 
 /// Give the runner tags and fire the runner_gain_tag event.
 /// Returns true if an event handler opened a prompt (caller should return).
+fn purgeVirusCounters(generated: *Game) void {
+    for (generated.runner_rig_program.items) |*card| {
+        card.virus_counter = 0;
+    }
+    // Also purge from trojans hosted on ICE
+    for (generated.corp_servers.items) |*server| {
+        for (server.ices.items) |*ice| {
+            for (ice.hosted) |*hosted| {
+                hosted.virus_counter = 0;
+            }
+        }
+    }
+}
+
 fn removeRunnerTags(generated: *Game, count: u8) !void {
     if (generated.runner_tag) |*tag| {
         var remaining = count;
