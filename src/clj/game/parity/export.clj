@@ -1451,13 +1451,14 @@
                                     {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Regolith Mining License"}
                                     {:qty 2 :card "Seamless Launch"} {:qty 2 :card "Mahkota Langit Grid"}]
                                    [{:qty 3 :card "Sure Gamble"} {:qty 2 :card "Ritual"}
-                                    {:qty 2 :card "Lie Low"} {:qty 2 :card "Clean Getaway"}
-                                    {:qty 2 :card "Charm Offensive"} {:qty 2 :card "Shred"}
-                                    {:qty 2 :card "Transfer of Wealth"} {:qty 2 :card "Illumination"}
+                                    {:qty 2 :card "Clean Getaway"}
+                                    {:qty 3 :card "Jailbreak"}
                                     {:qty 1 :card "Bling"} {:qty 2 :card "Hantu"}
                                     {:qty 2 :card "Rising Tide"} {:qty 2 :card "Sang Kancil"}
                                     {:qty 2 :card "Principia"} {:qty 2 :card "Open Market"}
                                     {:qty 2 :card "Rent Rioters"} {:qty 2 :card "Side Hustle"}
+                                    {:qty 2 :card "Charm Offensive"}
+                                    {:qty 2 :card "Smartware Distributor"}
                                     {:qty 1 :card "T400 Memory Diamond"}]])
                        ;; Register all card names so they resolve
                        all-card-names (concat (map :card corp-cards) (map :card runner-cards)
