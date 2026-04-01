@@ -845,6 +845,27 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
         return;
     }
 
+    if (action.kind == .flashback) {
+        try writer.writeByte('{');
+        try writeJsonFieldString(writer, "kind", "flashback", false);
+        try writeJsonFieldString(writer, "side", sideName(action.side), true);
+        if (action.card_index) |card_index| {
+            try writer.writeByte(',');
+            try writeJsonString(writer, "card-locator");
+            try writer.writeByte(':');
+            try writer.writeByte('[');
+            try writeJsonString(writer, sideName(action.side));
+            try writer.writeByte(',');
+            try writeJsonString(writer, if (action.side == .corp) "discard" else "heap");
+            try writer.writeByte(',');
+            try std.fmt.format(writer, "{d}", .{card_index});
+            try writer.writeByte(']');
+        }
+        if (action.card_title) |card_title| try writeJsonFieldString(writer, "card-title", card_title, true);
+        try writer.writeByte('}');
+        return;
+    }
+
     try writer.writeByte('{');
     try writeJsonFieldString(writer, "kind", actionKindName(action.kind), false);
     try writeJsonFieldString(writer, "side", sideName(action.side), true);

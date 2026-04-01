@@ -1629,6 +1629,66 @@ test "pennyshaver install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "pennyshaver successful run and payout parity test" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 23);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Pennyshaver"));
+    try applyRunAction(allocator, &actions, &generated, "Archives");
+    try resolveRunToEnd(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Pennyshaver"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 23, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "nico campaign empty trigger parity test" {
+    const allocator = std.testing.allocator;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Nico Campaign"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Nico Campaign") orelse return error.MissingAction);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+    try takeCorpStartTurn(allocator, &actions, &generated);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, 7, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "smartware distributor install and ability parity test" {
     const allocator = std.testing.allocator;
     // Seed 14: Runner hand has Smartware Distributor (cost 0)
@@ -2188,6 +2248,17 @@ fn findCardInHand(gen: *const generator.Game, title: []const u8, side: state.Sid
     return null;
 }
 
+fn findCardInDiscard(gen: *const generator.Game, title: []const u8, side: state.Side) ?state.CardInstance {
+    const discard = switch (side) {
+        .corp => gen.corp_discard.items,
+        .runner => gen.runner_discard.items,
+    };
+    for (discard) |card| {
+        if (std.mem.eql(u8, card.title, title)) return card;
+    }
+    return null;
+}
+
 fn isCardType(gen: *const generator.Game, title: []const u8, side: state.Side, card_type: []const u8) bool {
     const card = findCardInHand(gen, title, side) orelse return false;
     const ct = card.card_type orelse return false;
@@ -2253,9 +2324,13 @@ fn findCorpBestEconomy(gen: *const generator.Game, actions: []const state.LegalA
     var best: ?state.LegalAction = null;
     var best_gain: u16 = 0;
     for (actions) |a| {
-        if (a.kind != .play_from_hand or a.side != .corp) continue;
+        if (a.side != .corp) continue;
         const title = a.card_title orelse continue;
-        const card = findCardInHand(gen, title, .corp) orelse continue;
+        const card = switch (a.kind) {
+            .play_from_hand => findCardInHand(gen, title, .corp),
+            .flashback => findCardInDiscard(gen, title, .corp),
+            else => null,
+        } orelse continue;
         if (card.corp_play.kind != .gain_credits or card.corp_play.gain_credits == 0) continue;
         if (card.corp_play.gain_credits > best_gain) {
             best = a;
@@ -2456,6 +2531,13 @@ fn findUseSubroutineAction(actions: []const state.LegalAction, card_title: []con
 fn findPlayFromHandByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) !state.LegalAction {
     for (actions) |legal_action| {
         if (legal_action.kind == .play_from_hand and legal_action.side == side and legal_action.card_title != null and std.mem.eql(u8, legal_action.card_title.?, title)) return legal_action;
+    }
+    return error.MissingAction;
+}
+
+fn findFlashbackByTitle(actions: []const state.LegalAction, side: state.Side, title: []const u8) !state.LegalAction {
+    for (actions) |legal_action| {
+        if (legal_action.kind == .flashback and legal_action.side == side and legal_action.card_title != null and std.mem.eql(u8, legal_action.card_title.?, title)) return legal_action;
     }
     return error.MissingAction;
 }
@@ -3956,6 +4038,28 @@ test "cookbook install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "unity install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.elevation_hb, "Unity", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Unity"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "clearinghouse install parity test" {
     const allocator = std.testing.allocator;
     const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Clearinghouse", .corp, 100) orelse return error.NoSeedFound;
@@ -4699,7 +4803,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 std.debug.print("\n", .{});
                 std.debug.print("  zig hardware ({d}):", .{gen_snapshot.state.runner.rig_hardware.len});
                 for (gen_snapshot.state.runner.rig_hardware) |h| {
-                    std.debug.print(" {s}(mu_prov={d})", .{ h.title, h.installed_ability.mu_provided });
+                    std.debug.print(" {s}", .{h.title});
                 }
                 std.debug.print("\n", .{});
                 // Print filtered action comparison
@@ -4756,6 +4860,46 @@ test "e2e fullpack game plays to completion with oracle parity" {
         };
     }
 
+    if (!generated.game_over) {
+        std.debug.print("\n=== FULLPACK DID NOT FINISH after {d} steps ===\n", .{step_counter});
+        std.debug.print("  turn={d} decision={s} active={s} end_turn={}\n", .{
+            generated.turn,
+            @tagName(generated.decision_side),
+            @tagName(generated.active_player),
+            generated.end_turn,
+        });
+        std.debug.print("  run={s} corp_prompt={s} runner_prompt={s}\n", .{
+            if (generated.run) |run| run.phase else "null",
+            if (generated.corp_prompt_state) |ps| ps.prompt_type else "null",
+            if (generated.runner_prompt_state) |ps| ps.prompt_type else "null",
+        });
+        std.debug.print("  corp click/credit={d}/{d} hand={d} deck={d} agenda={d}\n", .{
+            generated.corp_click, generated.corp_credit, generated.corp_hand.items.len, generated.corp_deck.items.len, generated.corp_agenda_point,
+        });
+        std.debug.print("  runner click/credit={d}/{d} hand={d} deck={d} agenda={d}\n", .{
+            generated.runner_click, generated.runner_credit, generated.runner_hand.items.len, generated.runner_deck.items.len, generated.runner_agenda_point,
+        });
+        std.debug.print("  legal actions ({d}):\n", .{generated.legal_actions.len});
+        for (generated.legal_actions) |a| {
+            std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
+            if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+            if (a.server) |s| std.debug.print(" srv={s}", .{s});
+            if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+            if (a.label) |l| std.debug.print(" label={s}", .{l});
+            if (a.basic_action) |ba| std.debug.print(" ba={s}", .{@tagName(ba)});
+            std.debug.print("\n", .{});
+        }
+        const s = if (actions.items.len > 30) actions.items.len - 30 else 0;
+        std.debug.print("  last 30 actions:\n", .{});
+        for (actions.items[s..], s..) |sa, ai| {
+            std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+            if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+            if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+            if (sa.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+            if (sa.server) |srv| std.debug.print(" server={s}", .{srv});
+            std.debug.print("\n", .{});
+        }
+    }
     try std.testing.expect(generated.game_over);
     try std.testing.expect(generated.winner != null);
 }
@@ -5628,6 +5772,33 @@ test "ritual parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35026) orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "petty cash flashback parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.elevation_runner, "Petty Cash", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Petty Cash"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .corp));
+    try takeAction(allocator, &actions, &generated, try findFlashbackByTitle(generated.legal_actions, .corp, "Petty Cash"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -7180,6 +7351,32 @@ test "gamedragon pro install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "public access plaza corp turn begins parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.elevation_nbn, "Public Access Plaza", .corp, 200) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Public Access Plaza"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, findRezNonIceAction(generated.legal_actions, "Public Access Plaza") orelse return error.MissingAction);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+    try takeCorpStartTurn(allocator, &actions, &generated);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "madani install parity test" {
     const allocator = std.testing.allocator;
     const seed: u64 = blk: {
@@ -7479,10 +7676,6 @@ test "chromatophores install parity test" {
 }
 
 test "e2e elevation runner game plays to completion with oracle parity" {
-    // E2E test diverges at turn 2 across all seeds - the pickE2eAction AI
-    // selects different action orderings when Ritual (custom event) is available.
-    // All individual Elevation card parity tests pass (140+).
-    if (true) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const seed: u64 = 7;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
@@ -7497,12 +7690,69 @@ test "e2e elevation runner game plays to completion with oracle parity" {
     for (0..3000) |step| {
         if (generated.game_over) break;
         if (generated.turn > last_turn and generated.turn > 0) {
-            const scenario_actions = try actions.toOwnedSlice(allocator);
+            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
             defer allocator.free(scenario_actions);
             var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
             defer replay.deinit();
-            expectSnapshotMatches(replay.snapshot, try generated.toSnapshot()) catch |err| {
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== ELEVATION RUNNER DIVERGENCE at turn {d} step {d} ===\n", .{ generated.turn, step });
+                std.debug.print("  oracle turn={d} zig turn={d}\n", .{ replay.snapshot.state.turn, gen_snapshot.state.turn });
+                std.debug.print("  oracle decision={s} zig decision={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                std.debug.print("  oracle corp click/credit={d}/{d} zig={d}/{d}\n", .{
+                    replay.snapshot.state.corp.click,
+                    replay.snapshot.state.corp.credit,
+                    gen_snapshot.state.corp.click,
+                    gen_snapshot.state.corp.credit,
+                });
+                std.debug.print("  oracle runner click/credit={d}/{d} zig={d}/{d}\n", .{
+                    replay.snapshot.state.runner.click,
+                    replay.snapshot.state.runner.credit,
+                    gen_snapshot.state.runner.click,
+                    gen_snapshot.state.runner.credit,
+                });
+                std.debug.print("  oracle corp prompt={s} zig={s}\n", .{
+                    if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
+                    if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
+                });
+                std.debug.print("  oracle runner prompt={s} zig={s}\n", .{
+                    if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
+                    if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
+                });
+                const dbg_expected = try filterOracleComparableActions(std.testing.allocator, replay.snapshot.legal_actions);
+                defer std.testing.allocator.free(dbg_expected);
+                const dbg_actual = try filterOracleComparableActions(std.testing.allocator, gen_snapshot.legal_actions);
+                defer std.testing.allocator.free(dbg_actual);
+                std.mem.sort(state.LegalAction, dbg_expected, {}, legalActionLessThan);
+                std.mem.sort(state.LegalAction, dbg_actual, {}, legalActionLessThan);
+                std.debug.print("  oracle filtered actions ({d}):\n", .{dbg_expected.len});
+                for (dbg_expected) |a| {
+                    std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
+                    if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    if (a.label) |l| std.debug.print(" label={s}", .{l});
+                    if (a.basic_action) |ba| std.debug.print(" basic={s}", .{@tagName(ba)});
+                    std.debug.print("\n", .{});
+                }
+                std.debug.print("  zig filtered actions ({d}):\n", .{dbg_actual.len});
+                for (dbg_actual) |a| {
+                    std.debug.print("    {s}/{s}", .{ @tagName(a.kind), @tagName(a.side) });
+                    if (a.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    if (a.label) |l| std.debug.print(" label={s}", .{l});
+                    if (a.basic_action) |ba| std.debug.print(" basic={s}", .{@tagName(ba)});
+                    std.debug.print("\n", .{});
+                }
+                std.debug.print("  last actions:\n", .{});
+                const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
+                    if (sa.label) |l| std.debug.print(" label={s}", .{l});
+                    std.debug.print("\n", .{});
+                }
                 return err;
             };
             last_turn = generated.turn;
@@ -7512,7 +7762,18 @@ test "e2e elevation runner game plays to completion with oracle parity" {
             std.debug.print("\n=== ELEVATION RUNNER ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" t={s}", .{t});
+            if (action.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
             std.debug.print("\n", .{});
+            std.debug.print("  corp servers:\n", .{});
+            for (generated.corp_servers.items, 0..) |server, si| {
+                std.debug.print("    [{d}] {s} ice={d} content={d}\n", .{ si, server.name, server.ices.items.len, server.content.items.len });
+                for (server.ices.items, 0..) |card, ci| {
+                    std.debug.print("      ice[{d}] {s} adv={d}\n", .{ ci, card.title, card.advancement_counter });
+                }
+                for (server.content.items, 0..) |card, ci| {
+                    std.debug.print("      content[{d}] {s} adv={d}\n", .{ ci, card.title, card.advancement_counter });
+                }
+            }
             return err;
         };
     }

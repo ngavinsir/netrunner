@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Side = enum {
     corp,
     runner,
@@ -215,6 +217,33 @@ pub const RunnerInstallSpec = struct {
     mu_cost: u8 = 1, // Memory units used (default 1 for programs, 0 for non-programs)
 };
 
+pub const EffectContext = anyopaque;
+
+pub const StaticAbilityKind = enum(u8) {
+    mu,
+    hand_size,
+    rez_cost,
+    install_cost,
+    break_cost,
+    pump_cost,
+    self_strength,
+    ice_strength,
+    hq_access,
+    rd_access,
+    virus_install_bonus,
+};
+
+pub const StaticAbility = struct {
+    kind: StaticAbilityKind,
+    value: i8 = 1,
+    req: ?*const fn (*const EffectContext, *const CardInstance, ?*const CardInstance) i16 = null,
+};
+
+pub const InstalledAbilityCallback = *const fn (*EffectContext, *CardInstance) anyerror!void;
+pub const InstalledAbilityConditionFn = *const fn (*const EffectContext, *const CardInstance) bool;
+pub const InstalledAbilityValueFn = *const fn (*const EffectContext, *const CardInstance) u8;
+pub const InstalledAbilityLabelFn = *const fn (std.mem.Allocator, CardInstance) anyerror![]const u8;
+
 pub const InstalledAbilitySpec = struct {
     kind: InstalledAbilityKind = .none,
     click_cost: u8 = 0,
@@ -224,49 +253,28 @@ pub const InstalledAbilitySpec = struct {
     take_credits_amount: u16 = 0,
     break_subroutine_count: u8 = 0,
     pump_strength_amount: u8 = 0,
-    pump_is_variable: bool = false, // Unity: pump = number of installed icebreakers
     trash_on_empty: bool = false,
     once_per_turn: bool = false,
-    trashes_after_break: bool = false, // Mayfly: trash self at end of run (not immediately)
+    on_install: ?InstalledAbilityCallback = null,
+    on_take: ?InstalledAbilityCallback = null,
+    on_empty: ?InstalledAbilityCallback = null,
+    on_break: ?InstalledAbilityCallback = null,
+    on_pump: ?InstalledAbilityCallback = null,
+    can_use: ?InstalledAbilityConditionFn = null,
+    amount_fn: ?InstalledAbilityValueFn = null,
+    label_fn: ?InstalledAbilityLabelFn = null,
     click_draw_bonus: u8 = 0,
     hq_access_bonus: u8 = 0,
-    draw_on_empty: u8 = 0, // Nico Campaign: draw N cards when trashed due to empty
-    draw_on_take: u8 = 0, // Anthill Excavation: draw N cards each time credits are taken
-    clicks_on_empty: u8 = 0, // Otto Campaign: gain N clicks when emptied and trashed
-    start_of_turn_bank_credits: u8 = 0, // Public Access Plaza: gain N credits from bank at start of turn
-    on_successful_run_place_credits: u8 = 0, // Pennyshaver: place N credits on successful run
-    takes_all_credits: bool = false, // Pennyshaver: click ability takes all hosted credits + 1
-    mu_provided: u8 = 0, // DZMZ Optimizer: provides extra MU
-    first_program_install_discount: u16 = 0, // DZMZ Optimizer: first program install each turn costs N less
-    virus_on_successful_central: bool = false, // Leech: place virus counter on successful central run
-    virus_on_successful_rd: bool = false, // Conduit: place virus counter on successful R&D run
-    rd_access_bonus_per_virus: bool = false, // Conduit: RD access bonus = virus counters
     virus_ice_strength_reduction: u8 = 0, // Leech: spend 1 virus for -N ICE strength
     tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements: give N tags if agenda stolen from server
-    strength_per_icebreaker: bool = false, // Echelon: +1 strength per installed icebreaker
-    break_cost_reduction_if_successful_run: u16 = 0, // Marjanah: -1 break cost if successful run this turn
-    hand_size_bonus: u8 = 0, // T400 Memory Diamond: +N max hand size
-    virus_on_install: bool = false, // Fermenter, Botulus, Tranquilizer: place 1 virus on install
-    virus_on_turn_start: bool = false, // Fermenter, Botulus, Tranquilizer: place 1 virus at start of turn
     trash_for_virus_credits: u8 = 0, // Fermenter: gain N credits per virus counter on click+trash
-    bonus_virus_on_install: u8 = 0, // Cookbook: place N extra virus counters when installing virus programs
-    is_console: bool = false, // Console hardware: only one allowed
-    is_trojan: bool = false, // Botulus, Tranquilizer: install on ICE
     trojan_break_any: bool = false, // Botulus: spend virus counter to break any subroutine
     trojan_derez_threshold: u8 = 0, // Tranquilizer: derez host ICE at N+ virus counters
     // Elevation pack fields
-    initial_virus_counters: u8 = 0, // Hantu: place N virus counters on install (instead of just 1)
-    pump_uses_virus_counters: bool = false, // Hantu: pump costs 1 virus counter instead of credits
-    strength_per_heap_fracter: bool = false, // Rising Tide: +1 str per fracter in heap
-    pump_discount_if_run_event: u16 = 0, // Sang Kancil: reduce pump cost by N if run event active
-    recurring_credits: u8 = 0, // Azimat: refill hosted credits to N each turn
-    initial_power_counters: u8 = 0, // Devadatta Drone: place N power counters on install
     trojan_adds_all_subtypes: bool = false, // Chromatophores: host ICE gains all 3 subtypes
     credit_on_run_start: bool = false, // Side Hustle: place 1 credit when any run starts
     auto_trash_at_credits: u8 = 0, // Side Hustle: auto-trash + take all credits at N+ hosted credits
     draw_on_auto_trash: u8 = 0, // Side Hustle: draw N cards when auto-trashed at threshold
-    rez_cost_increase: u8 = 0, // Fransofia Ward: increase rez cost of all ICE by N
-    install_cost_reduction_per_icebreaker: bool = false, // Principia: -1 install cost per installed icebreaker
     // Access-time abilities (Carnivore, Gourmand)
     trash_access_hand_cost: u8 = 0, // Carnivore: trash N cards from hand to trash accessed card
     trash_access_self_trash: bool = false, // Gourmand: trash self to trash accessed non-agenda + draw
@@ -280,6 +288,8 @@ pub const GameEvent = enum(u8) {
     advance,
     runner_trash_corp_card, // Loup: first trash-on-access
     successful_run_ends, // Zahya: gain credits on HQ/R&D run end
+    run_ends,
+    corp_turn_begins,
     corp_end_turn, // Jinteki: Restoring Humanity
     corp_rez_ice, // Barry: install on rez
     operation_played, // Nebula, Zwicky: operation triggers
@@ -287,6 +297,11 @@ pub const GameEvent = enum(u8) {
     run_begins, // Side Hustle, Knickknack: triggers when any run begins
     runner_lose_tag, // Synapse Global: corp installs on tag removal
     corp_install, // BANGUN: faceup install option
+};
+
+pub const EventAbility = struct {
+    event: GameEvent,
+    handler: *const fn (*EffectContext, *CardInstance) anyerror!void,
 };
 
 pub const CardReference = struct {
@@ -328,6 +343,8 @@ pub const CardInstance = struct {
     access: AccessSpec = .{},
     install: InstallSpec = .{},
     runner_install: RunnerInstallSpec = .{},
+    static_abilities: []const StaticAbility = &.{},
+    event_abilities: []const EventAbility = &.{},
     installed_ability: InstalledAbilitySpec = .{},
     pump_ability: InstalledAbilitySpec = .{},
     subroutines: []const SubroutineSpec = &.{},

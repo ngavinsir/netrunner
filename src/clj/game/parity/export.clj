@@ -1231,8 +1231,12 @@
   (doseq [side [:corp :runner]]
     (loop [remaining 5]
       (when (pos? remaining)
-        (let [prompt (first (filter #(not= :waiting (:prompt-type %))
-                                    (get-in @state [side :prompt])))]
+        (let [prompt-queue (filter #(not= :waiting (:prompt-type %))
+                                   (get-in @state [side :prompt]))
+              prompt (or (first prompt-queue)
+                         (when-let [prompt-state (get-in @state [side :prompt-state])]
+                           (when (not= :waiting (:prompt-type prompt-state))
+                             prompt-state)))]
           (when (and prompt
                      (let [msg (or (:msg prompt) (:prompt prompt) "")]
                        (re-find #"Place \d+ virus counter" msg)))
