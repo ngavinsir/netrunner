@@ -6191,6 +6191,9 @@ fn applyInstalledAbility(
                 if (generated.run == null) return error.NoRunInProgress;
                 card.virus_counter -= 1;
                 generated.run.?.ice_strength_modifier -= @intCast(card.installed_ability.virus_ice_strength_reduction);
+                generated.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to give ICE -{d} strength.", .{
+                    card.title, card.installed_ability.virus_ice_strength_reduction,
+                });
                 // Regenerate encounter actions
                 const run = generated.run.?;
                 const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
@@ -6299,6 +6302,11 @@ fn applyInstalledAbility(
                     // Track breaker usage (Mayfly)
                     icebreaker.used_break_this_run = true;
 
+                    // Log break action
+                    generated.systemMsg(.runner, icebreaker.code orelse 0, "Runner uses {s} to break subroutine on {s}.", .{
+                        icebreaker.title, ice.title,
+                    });
+
                     // Open sub selection prompt
                     try openBreakSubPrompt(generated, ice, icebreaker.*, 0);
                     return;
@@ -6338,6 +6346,11 @@ fn applyInstalledAbility(
                     else
                         icebreaker.pump_ability.pump_strength_amount;
                     icebreaker.current_strength = current + pump_amount;
+
+                    // Log pump action
+                    generated.systemMsg(.runner, icebreaker.code orelse 0, "Runner uses {s} to increase strength to {d}.", .{
+                        icebreaker.title, icebreaker.current_strength orelse 0,
+                    });
 
                     // Regenerate encounter actions
                     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
