@@ -1771,10 +1771,15 @@ pub const all_cards = [_]CardSpec{
         .{ .kind = .do_net_damage, .amount = 2 },
     } },
     .{ .title = "Mycoweb", .side = .corp, .code = 35053, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 8, .strength = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .none }, // install ice from archives
-        .{ .kind = .none }, // rez ice -2
-        .{ .kind = .none }, // resolve sentry sub
-        .{ .kind = .none }, // resolve code gate sub
+        // Sub 1: Install a piece of ice from Archives (paying install cost)
+        // Sub 2: Rez a piece of ice, paying 2cr less
+        // Sub 3: Resolve a sentry subroutine on another rezzed ice
+        // Sub 4: Resolve a code gate subroutine on another rezzed ice
+        // Subs 3+4 need cross-ICE subroutine resolution (most complex card in set)
+        .{ .kind = .corp_install_from_hq_archives },
+        .{ .kind = .none }, // rez ice -2 (needs rez prompt with discount)
+        .{ .kind = .none }, // resolve sentry sub (needs cross-ICE resolution)
+        .{ .kind = .none }, // resolve code gate sub (needs cross-ICE resolution)
     } },
     .{ .title = "Semak-samun", .side = .corp, .code = 35054, .card_type = "ICE", .subtypes = &.{ "AP", "Barrier" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .net_damage_unless_etr, .amount = 3 },
@@ -2524,13 +2529,16 @@ pub const all_cards = [_]CardSpec{
         }.play, .on_play_msg = "draw cards equal to remaining clicks." },
     // --- Elevation Runner Hardware ---
     .{ .title = "Bling", .side = .runner, .code = 35006, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 },
-        // "+1 MU. Whenever you install a card without spending credits, you may host top card faceup.
-        //  You can play/install hosted cards. When discard phase ends, trash all hosted cards."
-        // Hosting mechanic: complex card-level hosting with play-from-host
+        // "+1 MU. On free install: host top of stack faceup on Bling."
+        // "Can play/install hosted cards as if in grip. End of discard phase: trash hosted."
+        // Needs: free-install event trigger, hosted card management, end-of-turn cleanup.
+        // Auto-declined in oracle: hosting triggers are optional.
     },
     .{ .title = "Detente", .side = .runner, .code = 35018, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 3, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 },
-        // "+1 MU. First successful HQ run: host 1 random HQ card faceup.
-        //  Click + return 2 hosted: may access 1 random HQ card."
+        // "+1 MU. First successful HQ run: host 1 random HQ card faceup on Detente."
+        // "Click + return 2 hosted to HQ: access 1 random HQ card. Both sides can use."
+        // Needs: successful_run_ends HQ trigger, click ability, access mechanic.
+        // Auto-declined in oracle: hosting trigger is optional.
     },
     .{ .title = "Maglectric Rapid (748 Mod)", .side = .runner, .code = 35019, .card_type = "Hardware", .subtypes = &.{"Weapon"}, .cost = 1, .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
         // "Whenever you make a successful run on HQ, you may trash this hardware to derez 1 installed Corp card."
@@ -2616,6 +2624,8 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Madani", .side = .runner, .code = 35028, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true },
         // "Click: Host any number of programs from grip faceup.
         //  Once per turn → 0cr: Install 1 hosted program (paying cost)."
+        // Hosting ability: auto-declined in oracle auto-resolve mode.
+        // Full implementation needs: click ability to host + install-from-host action.
     },
     // --- Elevation Runner Programs ---
     .{ .title = "Gourmand", .side = .runner, .code = 35007, .card_type = "Program", .cost = 0, .runner_install = .{ .kind = .program },
