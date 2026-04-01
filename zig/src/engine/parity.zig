@@ -1907,6 +1907,8 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "zahya-gain")) return "other";
     // Elevation card prompts
     if (std.mem.eql(u8, prompt_type, "topan-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "knickknack-trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "maglectric-derez")) return "select";
     if (std.mem.eql(u8, prompt_type, "top-down-card")) return "select";
     if (std.mem.eql(u8, prompt_type, "top-down-server")) return "select";
     if (std.mem.eql(u8, prompt_type, "peer-review-install")) return "select";

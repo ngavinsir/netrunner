@@ -2539,12 +2539,75 @@ pub const all_cards = [_]CardSpec{
             fn handle(g: *Game, _: ?*state.CardInstance) anyerror!void {
                 if (g.run == null) return;
                 const server = g.run.?.server;
-                // Only trigger on HQ runs
                 if (server.len == 0 or !std.mem.eql(u8, server[0], "hq")) return;
-                // Optional ability — auto-declined in oracle auto-resolve mode
-                // Full implementation needs: self-trash, select rezzed non-agenda corp card, derez it
+                // Find rezzed non-agenda corp cards to derez
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                for (g.corp_servers.items) |srv| {
+                    for (srv.ices.items) |ice| {
+                        if (ice.rezzed) {
+                            choices.append(allocator, .{ .kind = .card, .text = ice.title, .card = .{
+                                .title = ice.title, .code = ice.code, .side = .corp,
+                            } }) catch continue;
+                        }
+                    }
+                    for (srv.content.items) |c| {
+                        if (c.rezzed) {
+                            const is_agenda = if (c.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
+                            if (!is_agenda) {
+                                choices.append(allocator, .{ .kind = .card, .text = c.title, .card = .{
+                                    .title = c.title, .code = c.code, .side = .corp,
+                                } }) catch continue;
+                            }
+                        }
+                    }
+                }
+                if (choices.items.len == 0) return; // Nothing to derez
+                choices.append(allocator, stringChoice("No action")) catch return;
+                g.runner_prompt_state = .{
+                    .prompt_type = allocator.dupe(u8, "maglectric-derez") catch return,
+                    .choices = choices.toOwnedSlice(allocator) catch return,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = promptChoiceActions(allocator, .runner, g.runner_prompt_state.?) catch return;
             }
         }.handle,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "No action")) {
+                    g.runner_prompt_state = null;
+                    return;
+                }
+                // Self-trash Maglectric Rapid
+                for (g.runner_rig_hardware.items, 0..) |hw, idx| {
+                    if (hw.code != null and hw.code.? == 35019) {
+                        const trashed = g.runner_rig_hardware.orderedRemove(idx);
+                        try appendDiscardCard(g, .runner, trashed);
+                        break;
+                    }
+                }
+                // Derez the selected corp card
+                for (g.corp_servers.items) |*srv| {
+                    for (srv.ices.items) |*ice| {
+                        if (ice.rezzed and std.mem.eql(u8, ice.title, choice_text)) {
+                            ice.rezzed = false;
+                            g.systemMsg(.runner, 35019, "Runner uses Maglectric Rapid to derez {s}.", .{choice_text});
+                            g.runner_prompt_state = null;
+                            return;
+                        }
+                    }
+                    for (srv.content.items) |*c| {
+                        if (c.rezzed and std.mem.eql(u8, c.title, choice_text)) {
+                            c.rezzed = false;
+                            g.systemMsg(.runner, 35019, "Runner uses Maglectric Rapid to derez {s}.", .{choice_text});
+                            g.runner_prompt_state = null;
+                            return;
+                        }
+                    }
+                }
+                g.runner_prompt_state = null;
+            }
+        }.choice,
     },
     .{ .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .side = .runner, .code = 35027, .card_type = "Hardware", .subtypes = &.{"Mod"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
         // "On install + turn begin: may host on non-AI icebreaker. Host gets +1 str.
@@ -2662,15 +2725,93 @@ pub const all_cards = [_]CardSpec{
         //  If you do, gain credits equal to its printed install cost and draw 1 card."
         .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .run_begins; } }.m,
         .on_event = &struct {
-            fn handle(_: *Game, self_card: ?*state.CardInstance) anyerror!void {
+            fn handle(g: *Game, self_card: ?*state.CardInstance) anyerror!void {
                 const card = self_card orelse return;
-                // First run only (once per turn via ability_used_this_turn)
                 if (card.ability_used_this_turn) return;
                 card.ability_used_this_turn = true;
-                // Optional ability — auto-declined in oracle auto-resolve mode
-                // Full implementation needs card selection prompt + trash + gain credits + draw
+                // Check if runner has other installed cards (need at least 2 total)
+                const total_installed = g.runner_rig_resources.items.len + g.runner_rig_program.items.len + g.runner_rig_hardware.items.len;
+                if (total_installed < 2) return; // Only Knickknack itself, nothing to trash
+                // Build choices: all other installed runner cards
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                for (g.runner_rig_resources.items) |c| {
+                    if (c.code != null and c.code.? == 35033) continue; // skip self
+                    choices.append(allocator, .{ .kind = .card, .text = c.title, .card = .{
+                        .title = c.title, .code = c.code, .side = .runner,
+                    } }) catch continue;
+                }
+                for (g.runner_rig_program.items) |c| {
+                    choices.append(allocator, .{ .kind = .card, .text = c.title, .card = .{
+                        .title = c.title, .code = c.code, .side = .runner,
+                    } }) catch continue;
+                }
+                for (g.runner_rig_hardware.items) |c| {
+                    choices.append(allocator, .{ .kind = .card, .text = c.title, .card = .{
+                        .title = c.title, .code = c.code, .side = .runner,
+                    } }) catch continue;
+                }
+                choices.append(allocator, stringChoice("No action")) catch return;
+                g.runner_prompt_state = .{
+                    .prompt_type = allocator.dupe(u8, "knickknack-trash") catch return,
+                    .choices = choices.toOwnedSlice(allocator) catch return,
+                    .source_card = card.*,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = promptChoiceActions(allocator, .runner, g.runner_prompt_state.?) catch return;
             }
         }.handle,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "No action")) {
+                    g.runner_prompt_state = null;
+                    // Run is already in progress, return to run flow
+                    return;
+                }
+                // Find and trash the selected installed card
+                var gain: u16 = 0;
+                // Check resources
+                for (g.runner_rig_resources.items, 0..) |c, idx| {
+                    if (std.mem.eql(u8, c.title, choice_text)) {
+                        gain = c.cost orelse 0;
+                        const trashed = g.runner_rig_resources.orderedRemove(idx);
+                        try appendDiscardCard(g, .runner, trashed);
+                        break;
+                    }
+                }
+                // Check programs
+                if (gain == 0) {
+                    for (g.runner_rig_program.items, 0..) |c, idx| {
+                        if (std.mem.eql(u8, c.title, choice_text)) {
+                            gain = c.cost orelse 0;
+                            const trashed = g.runner_rig_program.orderedRemove(idx);
+                            try appendDiscardCard(g, .runner, trashed);
+                            if (g.runner_memory) |*mem| {
+                                const mu = trashed.runner_install.mu_cost;
+                                mem.used = if (mem.used >= mu) mem.used - mu else 0;
+                                mem.available = mem.base - mem.used;
+                            }
+                            break;
+                        }
+                    }
+                }
+                // Check hardware
+                if (gain == 0) {
+                    for (g.runner_rig_hardware.items, 0..) |c, idx| {
+                        if (std.mem.eql(u8, c.title, choice_text)) {
+                            gain = c.cost orelse 0;
+                            const trashed = g.runner_rig_hardware.orderedRemove(idx);
+                            try appendDiscardCard(g, .runner, trashed);
+                            break;
+                        }
+                    }
+                }
+                g.runner_credit += gain;
+                try drawCards(g, .runner, 1);
+                g.systemMsg(.runner, 35033, "Runner uses \"Knickknack\" O'Brian to trash {s}, gain {d} [credits], and draw 1 card.", .{ choice_text, gain });
+                g.runner_prompt_state = null;
+            }
+        }.choice,
     },
     .{ .title = "Side Hustle", .side = .runner, .code = 35034, .card_type = "Resource", .subtypes = &.{"Job"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
         .installed_ability = .{
@@ -3920,6 +4061,24 @@ pub fn applyEndTurn(
     if (generated.end_turn) return error.TurnAlreadyEnded;
     if (generated.active_player != side) return error.NotActivePlayer;
 
+    // Runner end-of-turn: Cacophony sabotage (spend 2 power counters to sabotage 3)
+    if (side == .runner) {
+        for (generated.runner_rig_resources.items) |*card| {
+            if (card.power_counter >= 2) {
+                if (lookupCardSpecByCode(card.code orelse 0)) |spec| {
+                    if (spec.event_match) |matcher| {
+                        if (matcher(.agenda_stolen) or matcher(.runner_trash_corp_card)) {
+                            // This is a Cacophony-like card with power counters
+                            // Auto-resolve: spend counters for sabotage
+                            // In oracle auto-resolve, this is optional and often declined
+                            // Leave as auto-decline for now
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     const hand_len = handList(generated, side).items.len;
     const hand_size = switch (side) {
         .corp => generated.corp_hand_size.total,
@@ -3999,7 +4158,7 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
         .corp => generated.corp_prompt_state = null,
         .runner => generated.runner_prompt_state = null,
     }
-    // Fire corp_end_turn event (Jinteki: Restoring Humanity trigger)
+    // Fire end-turn events
     if (side == .corp) {
         _ = try fireEvent(generated, .corp_end_turn);
     }
