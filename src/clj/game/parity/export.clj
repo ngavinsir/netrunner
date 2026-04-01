@@ -1441,7 +1441,24 @@
                                      {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
                                      {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
                                      {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
-                                     {:qty 1 :card "T400 Memory Diamond"}]])
+                                     {:qty 1 :card "T400 Memory Diamond"}]]
+                         "runner" [30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker"
+                                   [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Greenmail"}
+                                    {:qty 2 :card "Send a Message"} {:qty 2 :card "Orbital Superiority"}
+                                    {:qty 3 :card "Flyswatter"} {:qty 3 :card "Lamplighter"}
+                                    {:qty 3 :card "Kessleroid"} {:qty 3 :card "Palisade"}
+                                    {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Petty Cash"}
+                                    {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Regolith Mining License"}
+                                    {:qty 2 :card "Seamless Launch"} {:qty 2 :card "Mahkota Langit Grid"}]
+                                   [{:qty 3 :card "Sure Gamble"} {:qty 2 :card "Ritual"}
+                                    {:qty 2 :card "Lie Low"} {:qty 2 :card "Clean Getaway"}
+                                    {:qty 2 :card "Charm Offensive"} {:qty 2 :card "Shred"}
+                                    {:qty 2 :card "Transfer of Wealth"} {:qty 2 :card "Illumination"}
+                                    {:qty 1 :card "Bling"} {:qty 2 :card "Hantu"}
+                                    {:qty 2 :card "Rising Tide"} {:qty 2 :card "Sang Kancil"}
+                                    {:qty 2 :card "Principia"} {:qty 2 :card "Open Market"}
+                                    {:qty 2 :card "Rent Rioters"} {:qty 2 :card "Side Hustle"}
+                                    {:qty 1 :card "T400 Memory Diamond"}]])
                        ;; Register all card names so they resolve
                        all-card-names (concat (map :card corp-cards) (map :card runner-cards)
                                               [corp-id-title runner-id-title])

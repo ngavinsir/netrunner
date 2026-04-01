@@ -61,6 +61,9 @@ pub const RunTargetKind = enum(u8) {
     any_runnable,
     hq_and_rnd_only,
     central_only,
+    archives_only,
+    hq_only,
+    rd_only,
 };
 
 pub const RunSuccessEffectKind = enum(u8) {
@@ -108,6 +111,7 @@ pub const InstalledAbilityKind = enum(u8) {
     trash_for_virus_credits, // Fermenter: click + trash to gain N credits per virus counter
     trash_for_damage, // Clearinghouse: click + trash to do 1 meat damage per advancement counter
     remove_from_game_shuffle, // Spin Doctor: remove from game, shuffle up to 2 from Archives into R&D
+    click_trash_for_credits, // Rent Rioters: N clicks + trash for flat credits
 };
 
 pub const SubroutineKind = enum(u8) {
@@ -226,6 +230,7 @@ pub const InstalledAbilitySpec = struct {
     draw_on_empty: u8 = 0, // Nico Campaign: draw N cards when trashed due to empty
     draw_on_take: u8 = 0, // Anthill Excavation: draw N cards each time credits are taken
     clicks_on_empty: u8 = 0, // Otto Campaign: gain N clicks when emptied and trashed
+    start_of_turn_bank_credits: u8 = 0, // Public Access Plaza: gain N credits from bank at start of turn
     on_successful_run_place_credits: u8 = 0, // Pennyshaver: place N credits on successful run
     takes_all_credits: bool = false, // Pennyshaver: click ability takes all hosted credits + 1
     mu_provided: u8 = 0, // DZMZ Optimizer: provides extra MU

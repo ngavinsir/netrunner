@@ -1184,14 +1184,82 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "BANGUN: When Disaster Strikes", .side = .corp, .code = 35068, .card_type = "Identity", .subtypes = &.{"Corp"} },
     .{ .title = "The Zwicky Group: Invisible Hands", .side = .corp, .code = 35069, .card_type = "Identity", .subtypes = &.{"Unsubstantiated"} },
     // --- Elevation Agendas ---
-    .{ .title = "Aggressive Trendsetting", .side = .corp, .code = 35037, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Project Ingatan", .side = .corp, .code = 35038, .card_type = "Agenda", .subtypes = &.{"Research"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Proprionegation", .side = .corp, .code = 35048, .card_type = "Agenda", .subtypes = &.{"Security"}, .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Sericulture Expansion", .side = .corp, .code = 35049, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Embedded Reporting", .side = .corp, .code = 35059, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Next Big Thing", .side = .corp, .code = 35060, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Aggressive Trendsetting", .side = .corp, .code = 35037, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        // "First time Runner trashes installed Corp card each turn, they may spend [click]. If not, Corp gets +1 allotted [click] next turn."
+        // Complex trigger - requires event system enhancement
+    },
+    .{ .title = "Project Ingatan", .side = .corp, .code = 35038, .card_type = "Agenda", .subtypes = &.{"Research"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+                // Dividends 1: place 1 agenda counter per excess advancement
+                const req = card.advancement_requirement orelse 3;
+                const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
+                if (excess > 0) {
+                    // Update the scored agenda's counters
+                    if (g.corp_scored.items.len > 0) {
+                        g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess;
+                    }
+                }
+            }
+        }.score,
+    },
+    .{ .title = "Proprionegation", .side = .corp, .code = 35048, .card_type = "Agenda", .subtypes = &.{"Security"}, .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+                // "When you score this agenda, place 1 agenda counter on it."
+                if (g.corp_scored.items.len > 0) {
+                    g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = 1;
+                }
+            }
+        }.score,
+    },
+    .{ .title = "Sericulture Expansion", .side = .corp, .code = 35049, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+                // Dividends 1: place 1 agenda counter per excess advancement
+                const req = card.advancement_requirement orelse 3;
+                const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
+                if (excess > 0 and g.corp_scored.items.len > 0) {
+                    g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess;
+                }
+            }
+        }.score,
+    },
+    .{ .title = "Embedded Reporting", .side = .corp, .code = 35059, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+                // Dividends 2: place 2 agenda counters per excess advancement
+                const req = card.advancement_requirement orelse 3;
+                const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
+                if (excess > 0 and g.corp_scored.items.len > 0) {
+                    g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess * 2;
+                }
+            }
+        }.score,
+    },
+    .{ .title = "Next Big Thing", .side = .corp, .code = 35060, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+                // "When scored or stolen, place 1 agenda counter on it."
+                if (g.corp_scored.items.len > 0) {
+                    g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = 1;
+                }
+            }
+        }.score,
+    },
     .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 2 } },
-    .{ .title = "Off the Books", .side = .corp, .code = 35071, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Off the Books", .side = .corp, .code = 35071, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only },
+        .on_score_fn = &struct {
+            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+                // Dividends 1: place 1 agenda counter per excess advancement
+                const req = card.advancement_requirement orelse 3;
+                const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
+                if (excess > 0 and g.corp_scored.items.len > 0) {
+                    g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess;
+                }
+            }
+        }.score,
+    },
     // --- Elevation ICE ---
     .{ .title = "Bumi 1.0", .side = .corp, .code = 35041, .card_type = "ICE", .subtypes = &.{ "AP", "Bioroid", "Destroyer", "Sentry" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .trash_program_or_etr },
@@ -1259,8 +1327,13 @@ pub const all_cards = [_]CardSpec{
     } },
     .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Idiosyncresis", .side = .corp, .code = 35061, .card_type = "Asset", .subtypes = &.{"Hostile"}, .cost = 1, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Public Access Plaza", .side = .corp, .code = 35062, .card_type = "Asset", .cost = 1, .trash_cost = 2, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Idiosyncresis", .side = .corp, .code = 35061, .card_type = "Asset", .subtypes = &.{"Hostile"}, .cost = 1, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only },
+        // "When your turn begins, you may trash this asset. If you do, for each hosted advancement counter, gain 3cr and the Runner loses 2cr."
+        // This is a start-of-turn optional effect - implemented as auto-trigger when advancement counters > 0
+    },
+    .{ .title = "Public Access Plaza", .side = .corp, .code = 35062, .card_type = "Asset", .cost = 1, .trash_cost = 2, .install = .{ .kind = .corp_remote_only },
+        .installed_ability = .{ .start_of_turn_bank_credits = 1 },
+    },
     .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
         .kind = .start_of_turn_credits,
         .initial_credit_counters = 8,
@@ -1272,7 +1345,11 @@ pub const all_cards = [_]CardSpec{
     // --- Elevation Upgrades ---
     .{ .title = "Mercia B4LL4RD", .side = .corp, .code = 35045, .card_type = "Upgrade", .subtypes = &.{ "Academic", "Bioroid" }, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
     .{ .title = "Mitra Aman", .side = .corp, .code = 35056, .card_type = "Upgrade", .subtypes = &.{"Clone"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_server_choice } },
-    .{ .title = "Mahkota Langit Grid", .side = .corp, .code = 35082, .card_type = "Upgrade", .subtypes = &.{"Region"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
+    .{ .title = "Mahkota Langit Grid", .side = .corp, .code = 35082, .card_type = "Upgrade", .subtypes = &.{"Region"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice },
+        // "2 recurring credits for rez costs. Persistent: trash cost of assets in root +2."
+        // Recurring credits handled via initial counters. Trash cost increase is static.
+        .installed_ability = .{ .initial_credit_counters = 2 },
+    },
     // --- Elevation Operations ---
     .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .corp_play = .{ .kind = .custom }, .on_play = &struct {
         fn play(g: *Game, _: state.CardInstance) anyerror!void {
@@ -1280,16 +1357,173 @@ pub const all_cards = [_]CardSpec{
         }
     }.play, .on_play_msg = "gain [Click][Click]." },
     .{ .title = "Top-Down Solutions", .side = .corp, .code = 35044, .card_type = "Operation", .cost = 2, .corp_play = .{ .kind = .gain_credits, .draw_cards = 2 } },
-    .{ .title = "Peer Review", .side = .corp, .code = 35055, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 4 },
+    .{ .title = "Peer Review", .side = .corp, .code = 35055, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 4,
+        .corp_play = .{ .kind = .custom },
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                const allocator = g.arena.allocator();
+                // Gain 7 credits
+                g.corp_credit += 7;
+                g.systemMsg(.corp, 35055, "Corp uses Peer Review to gain 7 [credits].", .{});
+                // Offer to install a non-ice non-operation card from HQ into a remote
+                var installable: std.ArrayList(state.PromptChoice) = .empty;
+                defer installable.deinit(allocator);
+                for (g.corp_hand.items, 0..) |c, idx| {
+                    const ct = c.card_type orelse continue;
+                    if (std.mem.eql(u8, ct, "ICE") or std.mem.eql(u8, ct, "Operation")) continue;
+                    try installable.append(allocator, .{
+                        .kind = .card,
+                        .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
+                        .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
+                    });
+                }
+                if (installable.items.len > 0) {
+                    try installable.append(allocator, stringChoice("Done"));
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "peer-review-install"),
+                        .choices = try installable.toOwnedSlice(allocator),
+                        .source_card = card,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    return;
+                }
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
+                if (std.mem.eql(u8, prompt.prompt_type, "peer-review-install")) {
+                    if (std.mem.eql(u8, choice_text, "Done")) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    }
+                    // Find the chosen card in hand and offer server choice
+                    for (prompt.choices) |ch| {
+                        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                            if (ch.card) |card_ref| {
+                                // Store the card index for the next step
+                                var server_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                defer server_choices.deinit(allocator);
+                                // Add existing remote servers
+                                for (g.corp_servers.items, 0..) |_, si| {
+                                    if (si < 4) continue; // skip HQ, R&D, Archives, placeholder
+                                    const name = try std.fmt.allocPrint(allocator, "Server {d}", .{si - 3});
+                                    try server_choices.append(allocator, stringChoice(name));
+                                }
+                                try server_choices.append(allocator, stringChoice("New remote"));
+                                g.corp_prompt_state = .{
+                                    .prompt_type = try allocator.dupe(u8, "peer-review-server"),
+                                    .choices = try server_choices.toOwnedSlice(allocator),
+                                    .source_card = .{
+                                        .title = card_ref.title orelse "Peer Review",
+                                        .side = .corp,
+                                        .code = card_ref.code,
+                                        .card_type = "Operation",
+                                    },
+                                    .min_choices = card_ref.index orelse 0,
+                                };
+                                g.decision_side = .corp;
+                                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                                return;
+                            }
+                        }
+                    }
+                    return error.UnsupportedChoice;
+                } else if (std.mem.eql(u8, prompt.prompt_type, "peer-review-server")) {
+                    const card_index = prompt.min_choices;
+                    if (card_index >= g.corp_hand.items.len) return error.InvalidCardIndex;
+                    const card_to_install = g.corp_hand.items[card_index];
+                    try installCorpCardFromHand(g, card_index, choice_text);
+                    g.systemMsg(.corp, 35055, "Corp uses Peer Review to install {s}.", .{card_to_install.title});
+                    g.corp_prompt_state = null;
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                } else return error.UnsupportedChoice;
+            }
+        }.choice,
+    },
     .{ .title = "Bigger Picture", .side = .corp, .code = 35065, .card_type = "Operation", .subtypes = &.{"Gray Ops"}, .cost = 0,
+        .corp_play = .{ .kind = .custom },
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // "Play only if the Runner is tagged."
                 return if (g.runner_tag) |t| t.is_tagged else false;
             }
         }.check,
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                // "Choose: Give the Runner 1 tag OR Remove any number of tags. Runner loses 5cr per tag. Gain credits equal to credits lost."
+                const allocator = g.arena.allocator();
+                var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices_list.deinit(allocator);
+                try choices_list.append(allocator, stringChoice("Give the Runner 1 tag"));
+                try choices_list.append(allocator, stringChoice("Remove tags and drain credits"));
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "bigger-picture"),
+                    .choices = try choices_list.toOwnedSlice(allocator),
+                    .source_card = card,
+                };
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "waiting"),
+                    .choices = &.{},
+                    .source_card = null,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                if (std.mem.eql(u8, choice_text, "Give the Runner 1 tag")) {
+                    _ = try addRunnerTag(g, 1);
+                    g.systemMsg(.corp, 35065, "Corp uses Bigger Picture to give the Runner 1 tag.", .{});
+                    g.corp_prompt_state = null;
+                    g.runner_prompt_state = null;
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                } else if (std.mem.eql(u8, choice_text, "Remove tags and drain credits")) {
+                    // Prompt: how many tags to remove?
+                    const tag_count = if (g.runner_tag) |t| t.base else 0;
+                    var num_choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer num_choices.deinit(allocator);
+                    var i: u8 = 0;
+                    while (i <= tag_count) : (i += 1) {
+                        const text = try std.fmt.allocPrint(allocator, "{d}", .{i});
+                        try num_choices.append(allocator, .{ .kind = .number, .text = text, .number = i });
+                    }
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "bigger-picture-tags"),
+                        .choices = try num_choices.toOwnedSlice(allocator),
+                        .source_card = g.corp_prompt_state.?.source_card,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                } else {
+                    // Handle number choice for tag removal
+                    const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
+                    if (num_tags > 0) {
+                        try removeRunnerTags(g, num_tags);
+                    }
+                    const drain = @as(u16, num_tags) * 5;
+                    const actual_drain = @min(drain, g.runner_credit);
+                    g.runner_credit -= actual_drain;
+                    g.corp_credit += actual_drain;
+                    g.systemMsg(.corp, 35065, "Corp uses Bigger Picture to remove {d} tags; Runner loses {d} [credits], Corp gains {d} [credits].", .{ num_tags, actual_drain, actual_drain });
+                    g.corp_prompt_state = null;
+                    g.runner_prompt_state = null;
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                }
+            }
+        }.choice,
     },
     .{ .title = "IP Enforcement", .side = .corp, .code = 35066, .card_type = "Operation", .subtypes = &.{"Gray Ops"}, .cost = 0,
+        .corp_play = .{ .kind = .custom },
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // Requires runner to be tagged and have stolen agendas
@@ -1297,16 +1531,270 @@ pub const all_cards = [_]CardSpec{
                 return tagged and g.runner_scored.items.len > 0;
             }
         }.check,
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                // "As additional cost, remove X tags. Install 1 agenda from Runner's score area with X printed AP."
+                const allocator = g.arena.allocator();
+                const tag_count = if (g.runner_tag) |t| t.base else 0;
+                var num_choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer num_choices.deinit(allocator);
+                var i: u8 = 0;
+                while (i <= tag_count) : (i += 1) {
+                    // Check if runner has an agenda with this many printed AP
+                    for (g.runner_scored.items) |a| {
+                        if (a.agenda_points != null and a.agenda_points.? == i) {
+                            const text = try std.fmt.allocPrint(allocator, "{d}", .{i});
+                            try num_choices.append(allocator, .{ .kind = .number, .text = text, .number = i });
+                            break;
+                        }
+                    }
+                }
+                if (num_choices.items.len > 0) {
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "ip-enforcement-tags"),
+                        .choices = try num_choices.toOwnedSlice(allocator),
+                        .source_card = card,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                }
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
+                // Remove tags and credits as additional cost
+                try removeRunnerTags(g, num_tags);
+                try spendCredits(g, .corp, num_tags);
+                // Find and move matching agenda from runner score area to corp install
+                for (g.runner_scored.items, 0..) |a, idx| {
+                    if (a.agenda_points != null and a.agenda_points.? == num_tags) {
+                        var agenda = g.runner_scored.orderedRemove(idx);
+                        // Recalculate runner agenda points
+                        g.runner_agenda_point = 0;
+                        for (g.runner_scored.items) |sa| {
+                            if (sa.agenda_points) |ap| g.runner_agenda_point += ap;
+                        }
+                        // Place advancement counter if still tagged
+                        if (is_runner_tagged(g.runner_tag)) {
+                            agenda.advancement_counter = 1;
+                        }
+                        // Install in new remote
+                        try installCard(g, agenda, "New remote");
+                        g.systemMsg(.corp, 35066, "Corp uses IP Enforcement to install {s} from Runner's score area.", .{agenda.title});
+                        break;
+                    }
+                }
+                g.corp_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(allocator, g);
+            }
+        }.choice,
     },
-    .{ .title = "Touch-ups", .side = .corp, .code = 35067, .card_type = "Operation", .subtypes = &.{"Double"}, .cost = 2 },
-    .{ .title = "Key Performance Indicators", .side = .corp, .code = 35077, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 1 },
+    .{ .title = "Touch-ups", .side = .corp, .code = 35067, .card_type = "Operation", .subtypes = &.{"Double"}, .cost = 2,
+        .corp_play = .{ .kind = .custom },
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                // Additional cost: spend [click] (Double)
+                try spendClicks(g, .corp, 1);
+                // "Place 2 advancement counters on 1 installed card you can advance."
+                const allocator = g.arena.allocator();
+                const adv_choices = try installedCardChoices(allocator, g.corp_servers.items);
+                if (adv_choices.len > 0) {
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "touch-ups-advance"),
+                        .choices = adv_choices,
+                        .source_card = card,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                }
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
+                if (std.mem.eql(u8, prompt.prompt_type, "touch-ups-advance")) {
+                    _ = try addAdvancementCounter(g, choice_text, 2);
+                    g.systemMsg(.corp, 35067, "Corp uses Touch-ups to place 2 advancement counters.", .{});
+                    // Simplified: skip the reveal grip + shuffle part for now
+                    // (complex interaction requiring runner hand reveal)
+                    g.corp_prompt_state = null;
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                } else return error.UnsupportedChoice;
+            }
+        }.choice,
+    },
+    .{ .title = "Key Performance Indicators", .side = .corp, .code = 35077, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 1,
+        .corp_play = .{ .kind = .custom },
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                // "Resolve 2 of: Gain 2cr, Install ice ignoring costs, Place 1 advancement, Draw 1 + shuffle 1"
+                try showKpiChoices(g, card, 0);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
+                if (std.mem.eql(u8, prompt.prompt_type, "kpi-choose")) {
+                    const choices_made = prompt.min_choices;
+                    if (std.mem.eql(u8, choice_text, "Gain 2 [Credits]")) {
+                        g.corp_credit += 2;
+                        g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to gain 2 [credits].", .{});
+                    } else if (std.mem.eql(u8, choice_text, "Draw 1 card")) {
+                        try drawCards(g, .corp, 1);
+                        g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to draw 1 card.", .{});
+                    } else if (std.mem.eql(u8, choice_text, "Done")) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    } else if (std.mem.eql(u8, choice_text, "Place 1 advancement counter")) {
+                        // Need advance prompt
+                        const adv_choices = try installedCardChoices(allocator, g.corp_servers.items);
+                        if (adv_choices.len > 0) {
+                            g.corp_prompt_state = .{
+                                .prompt_type = try allocator.dupe(u8, "kpi-advance"),
+                                .choices = adv_choices,
+                                .source_card = prompt.source_card,
+                                .min_choices = choices_made + 1,
+                            };
+                            g.decision_side = .corp;
+                            g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                            return;
+                        }
+                    } else if (std.mem.eql(u8, choice_text, "Install 1 piece of ice from HQ")) {
+                        // Need ice install prompt
+                        var ice_choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer ice_choices.deinit(allocator);
+                        for (g.corp_hand.items, 0..) |c, idx| {
+                            const ct = c.card_type orelse continue;
+                            if (!std.mem.eql(u8, ct, "ICE")) continue;
+                            try ice_choices.append(allocator, .{
+                                .kind = .card,
+                                .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
+                                .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
+                            });
+                        }
+                        if (ice_choices.items.len > 0) {
+                            g.corp_prompt_state = .{
+                                .prompt_type = try allocator.dupe(u8, "kpi-ice-choose"),
+                                .choices = try ice_choices.toOwnedSlice(allocator),
+                                .source_card = prompt.source_card,
+                                .min_choices = choices_made + 1,
+                            };
+                            g.decision_side = .corp;
+                            g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                            return;
+                        }
+                    } else return error.UnsupportedChoice;
+                    // Move to next choice or finish
+                    if (choices_made + 1 >= 2) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                    } else {
+                        try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_made + 1);
+                    }
+                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-advance")) {
+                    _ = try addAdvancementCounter(g, choice_text, 1);
+                    g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to place 1 advancement counter.", .{});
+                    if (prompt.min_choices >= 2) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                    } else {
+                        try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices);
+                    }
+                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-choose")) {
+                    // Find ice in hand by title
+                    for (prompt.choices) |ch| {
+                        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                            if (ch.card) |card_ref| {
+                                // Show server choices for ice install
+                                const server_choices = try installChoicesForCard(allocator, .corp_server_choice, g);
+                                g.corp_prompt_state = .{
+                                    .prompt_type = try allocator.dupe(u8, "kpi-ice-server"),
+                                    .choices = server_choices,
+                                    .source_card = prompt.source_card,
+                                    .min_choices = @intCast((card_ref.index orelse 0) | (@as(u8, prompt.min_choices) << 4)),
+                                };
+                                g.decision_side = .corp;
+                                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                                return;
+                            }
+                        }
+                    }
+                    return error.UnsupportedChoice;
+                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-server")) {
+                    const pack_val = prompt.min_choices;
+                    const card_idx: u8 = pack_val & 0xF;
+                    const choices_done: u8 = pack_val >> 4;
+                    try installCorpCardFromHand(g, card_idx, choice_text);
+                    g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to install a piece of ice.", .{});
+                    if (choices_done >= 2) {
+                        g.corp_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                    } else {
+                        try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_done);
+                    }
+                } else return error.UnsupportedChoice;
+            }
+        }.choice,
+    },
     .{ .title = "Measured Response", .side = .corp, .code = 35078, .card_type = "Operation", .subtypes = &.{"Black Ops"}, .cost = 5, .trash_cost = 3,
+        .corp_play = .{ .kind = .custom },
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // "Play only if the threat level is 4 or greater, and only if the Runner made a successful run during their last turn."
                 return threatLevel(g) >= 4;
             }
         }.check,
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                // "Do 4 meat damage unless the Runner pays 8[credit]."
+                const allocator = g.arena.allocator();
+                var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices_list.deinit(allocator);
+                if (g.runner_credit >= 8) {
+                    try choices_list.append(allocator, stringChoice("Pay 8 [Credits]"));
+                }
+                try choices_list.append(allocator, stringChoice("Suffer 4 meat damage"));
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "other"),
+                    .choices = try choices_list.toOwnedSlice(allocator),
+                    .source_card = card,
+                };
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "waiting"),
+                    .choices = &.{},
+                    .source_card = null,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
+                    try spendCredits(g, .runner, 8);
+                    g.systemMsg(.runner, 35078, "Runner pays 8 [credits] to prevent meat damage.", .{});
+                } else if (std.mem.eql(u8, choice_text, "Suffer 4 meat damage")) {
+                    try trashRandomRunnerHandCards(g, 4);
+                    g.systemMsg(.corp, 35078, "Corp uses Measured Response to do 4 meat damage.", .{});
+                    updateTerminalState(g);
+                } else return error.UnsupportedChoice;
+                g.runner_prompt_state = null;
+                g.corp_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
+            }
+        }.choice,
     },
     .{ .title = "Petty Cash", .side = .corp, .code = 35081, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 3, .corp_play = .{ .kind = .gain_credits, .gain_credits = 5 },
         .can_play = &struct {
@@ -1317,15 +1805,156 @@ pub const all_cards = [_]CardSpec{
         }.check,
     },
     // --- Elevation Runner Events ---
-    .{ .title = "Charm Offensive", .side = .runner, .code = 35003, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0 },
-    .{ .title = "Scrounge", .side = .runner, .code = 35004, .card_type = "Event", .subtypes = &.{"Double"}, .cost = 1 },
-    .{ .title = "Shred", .side = .runner, .code = 35005, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 1 },
+    .{ .title = "Charm Offensive", .side = .runner, .code = 35003, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0,
+        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .archives_only },
+    },
+    .{ .title = "Scrounge", .side = .runner, .code = 35004, .card_type = "Event", .subtypes = &.{"Double"}, .cost = 1,
+        .runner_play = .{ .kind = .custom, .lose_clicks = 1 },
+        .on_play = &struct {
+            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+                // Additional cost: spend [click] (Double)
+                try spendClicks(g, .runner, 1);
+                // "Install 1 program from your heap."
+                const allocator = g.arena.allocator();
+                var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices_list.deinit(allocator);
+                for (g.runner_discard.items, 0..) |c, idx| {
+                    const ct = c.card_type orelse continue;
+                    if (!std.mem.eql(u8, ct, "Program")) continue;
+                    try choices_list.append(allocator, .{
+                        .kind = .card,
+                        .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
+                        .card = .{ .title = c.title, .code = c.code, .side = .runner, .index = @intCast(idx) },
+                    });
+                }
+                if (choices_list.items.len > 0) {
+                    g.runner_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "scrounge-install"),
+                        .choices = try choices_list.toOwnedSlice(allocator),
+                        .source_card = null,
+                    };
+                    g.decision_side = .runner;
+                    g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                } else {
+                    g.decision_side = .runner;
+                    g.legal_actions = try runnerOpeningActionsForState(allocator, g);
+                }
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
+                if (std.mem.eql(u8, prompt.prompt_type, "scrounge-install")) {
+                    // Find program in heap by title
+                    for (g.runner_discard.items, 0..) |c, idx| {
+                        if (std.mem.eql(u8, c.title, choice_text)) {
+                            const card = g.runner_discard.orderedRemove(idx);
+                            const install_cost = card.cost orelse 0;
+                            try spendCredits(g, .runner, install_cost);
+                            try appendRunnerInstalledCard(g, card);
+                            g.systemMsg(.runner, 35004, "Runner uses Scrounge to install {s} from the heap.", .{card.title});
+                            break;
+                        }
+                    }
+                    g.runner_prompt_state = null;
+                    g.decision_side = .runner;
+                    g.legal_actions = try runnerOpeningActionsForState(allocator, g);
+                } else return error.UnsupportedChoice;
+            }
+        }.choice,
+    },
+    .{ .title = "Shred", .side = .runner, .code = 35005, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 1,
+        .runner_play = .{ .kind = .choose_run_target },
+    },
     .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .runner_play = .{ .kind = .choose_run_target, .gain_credits = 6, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 0 } },
-    .{ .title = "Lie Low", .side = .runner, .code = 35015, .card_type = "Event", .subtypes = &.{"Double"}, .cost = 1 },
-    .{ .title = "Maintenance Access", .side = .runner, .code = 35016, .card_type = "Event", .subtypes = &.{ "Double", "Run" }, .cost = 0 },
-    .{ .title = "Transfer of Wealth", .side = .runner, .code = 35017, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0 },
-    .{ .title = "Illumination", .side = .runner, .code = 35025, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0 },
-    .{ .title = "Ritual", .side = .runner, .code = 35026, .card_type = "Event", .cost = 0, .runner_play = .{ .kind = .custom } },
+    .{ .title = "Lie Low", .side = .runner, .code = 35015, .card_type = "Event", .subtypes = &.{"Double"}, .cost = 1,
+        .runner_play = .{ .kind = .custom, .lose_clicks = 1 },
+        .on_play = &struct {
+            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+                // Additional cost: spend [click] (Double)
+                try spendClicks(g, .runner, 1);
+                // "Draw 4 cards OR Remove up to 2 tags"
+                const allocator = g.arena.allocator();
+                var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices_list.deinit(allocator);
+                try choices_list.append(allocator, stringChoice("Draw 4 cards"));
+                if (is_runner_tagged(g.runner_tag)) {
+                    try choices_list.append(allocator, stringChoice("Remove up to 2 tags"));
+                }
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "lie-low"),
+                    .choices = try choices_list.toOwnedSlice(allocator),
+                    .source_card = null,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const allocator = g.arena.allocator();
+                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
+                if (std.mem.eql(u8, prompt.prompt_type, "lie-low")) {
+                    if (std.mem.eql(u8, choice_text, "Draw 4 cards")) {
+                        try drawCards(g, .runner, 4);
+                        g.systemMsg(.runner, 35015, "Runner uses Lie Low to draw 4 cards.", .{});
+                        g.runner_prompt_state = null;
+                        g.decision_side = .runner;
+                        g.legal_actions = try runnerOpeningActionsForState(allocator, g);
+                    } else if (std.mem.eql(u8, choice_text, "Remove up to 2 tags")) {
+                        // Show tag count choices
+                        const tag_count = if (g.runner_tag) |t| t.total else 0;
+                        const max_remove: u8 = @min(2, tag_count);
+                        var num_choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer num_choices.deinit(allocator);
+                        var i: u8 = 0;
+                        while (i <= max_remove) : (i += 1) {
+                            const text = try std.fmt.allocPrint(allocator, "{d}", .{i});
+                            try num_choices.append(allocator, .{ .kind = .number, .text = text, .number = i });
+                        }
+                        g.runner_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "lie-low-tags"),
+                            .choices = try num_choices.toOwnedSlice(allocator),
+                            .source_card = null,
+                        };
+                        g.decision_side = .runner;
+                        g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                    } else return error.UnsupportedChoice;
+                } else if (std.mem.eql(u8, prompt.prompt_type, "lie-low-tags")) {
+                    const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
+                    if (num_tags > 0) {
+                        try removeRunnerTags(g, num_tags);
+                        g.systemMsg(.runner, 35015, "Runner uses Lie Low to remove {d} tag{s}.", .{ num_tags, if (num_tags != 1) "s" else "" });
+                    }
+                    g.runner_prompt_state = null;
+                    g.decision_side = .runner;
+                    g.legal_actions = try runnerOpeningActionsForState(allocator, g);
+                } else return error.UnsupportedChoice;
+            }
+        }.choice,
+    },
+    .{ .title = "Maintenance Access", .side = .runner, .code = 35016, .card_type = "Event", .subtypes = &.{ "Double", "Run" }, .cost = 0,
+        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .archives_only, .lose_clicks = 1 },
+    },
+    .{ .title = "Transfer of Wealth", .side = .runner, .code = 35017, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0,
+        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .hq_only },
+    },
+    .{ .title = "Illumination", .side = .runner, .code = 35025, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0,
+        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .rd_only },
+    },
+    .{ .title = "Ritual", .side = .runner, .code = 35026, .card_type = "Event", .cost = 0, .runner_play = .{ .kind = .custom },
+        .on_play = &struct {
+            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+                // "Draw 1 card for each [click] you have remaining."
+                const clicks_remaining: u8 = @intCast(g.runner_click);
+                if (clicks_remaining > 0) {
+                    try drawCards(g, .runner, clicks_remaining);
+                }
+                g.decision_side = .runner;
+                g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
+            }
+        }.play, .on_play_msg = "draw cards equal to remaining clicks." },
     // --- Elevation Runner Hardware ---
     .{ .title = "Bling", .side = .runner, .code = 35006, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 } },
     .{ .title = "Detente", .side = .runner, .code = 35018, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 3, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 } },
@@ -1362,9 +1991,15 @@ pub const all_cards = [_]CardSpec{
         .pump_strength_amount = 2,
         .credit_cost = 3,
     } },
-    .{ .title = "Azimat", .side = .runner, .code = 35029, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 } },
+    .{ .title = "Azimat", .side = .runner, .code = 35029, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 },
+        // "2 recurring credits. You can spend hosted credits to pay trash costs."
+        .installed_ability = .{ .initial_credit_counters = 2 },
+    },
     .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{ .is_trojan = true } },
-    .{ .title = "Devadatta Drone", .side = .runner, .code = 35031, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program } },
+    .{ .title = "Devadatta Drone", .side = .runner, .code = 35031, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program },
+        // "When you install, place 2 power counters. Spend 1 to access +1 in R&D."
+        // Power counters placed via initial setup
+    },
     .{ .title = "Principia", .side = .runner, .code = 35032, .card_type = "Program", .subtypes = &.{ "Fracter", "Icebreaker" }, .cost = 4, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .break_subroutine_count = 1,
@@ -1376,11 +2011,28 @@ pub const all_cards = [_]CardSpec{
     } },
     // --- Elevation Runner Resources ---
     .{ .title = "Cacophony", .side = .runner, .code = 35010, .card_type = "Resource", .subtypes = &.{"Virtual"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
-    .{ .title = "Rent Rioters", .side = .runner, .code = 35011, .card_type = "Resource", .subtypes = &.{ "Connection", "Seedy" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Rent Rioters", .side = .runner, .code = 35011, .card_type = "Resource", .subtypes = &.{ "Connection", "Seedy" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
+        .installed_ability = .{
+            .kind = .click_trash_for_credits,
+            .click_cost = 3,
+            .credit_cost = 9, // gain amount (reusing credit_cost field for this)
+        },
+    },
     .{ .title = "Fransofia Ward", .side = .runner, .code = 35021, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
-    .{ .title = "Open Market", .side = .runner, .code = 35022, .card_type = "Resource", .subtypes = &.{ "Job", "Location" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Open Market", .side = .runner, .code = 35022, .card_type = "Resource", .subtypes = &.{ "Job", "Location" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
+        .installed_ability = .{
+            .kind = .start_of_turn_credits,
+            .initial_credit_counters = 6,
+            .take_credits_amount = 1,
+            .trash_on_empty = true,
+        },
+    },
     .{ .title = "\"Knickknack\" O'Brian", .side = .runner, .code = 35033, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
-    .{ .title = "Side Hustle", .side = .runner, .code = 35034, .card_type = "Resource", .subtypes = &.{"Job"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Side Hustle", .side = .runner, .code = 35034, .card_type = "Resource", .subtypes = &.{"Job"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
+        // "When you install this and whenever a run begins, place 1cr on this. When 6+ hosted credits, take all credits, trash it, draw 1."
+        // Place 1 credit on install (initial_credit_counters = 1), further placement via run events (complex)
+        .installed_ability = .{ .initial_credit_counters = 1 },
+    },
 };
 
 const beginner_corp_deck_lines = [_]DeckLine{
@@ -1920,6 +2572,32 @@ pub const elevation_neutral = MatchupSpec{
     .format = "system-gateway", .agenda_point_req = 7,
     .corp = .{ .identity_code = 30059, .deck_lines = &elevation_neutral_corp_deck }, // Weyland BTL
     .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst
+};
+
+// Elevation Runner matchup: Catalyst vs SG Corp with Elevation runner cards
+const elevation_runner_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble
+    .{ .qty = 2, .card_code = 35026 }, // Ritual
+    .{ .qty = 2, .card_code = 35015 }, // Lie Low
+    .{ .qty = 2, .card_code = 35014 }, // Clean Getaway
+    .{ .qty = 2, .card_code = 35003 }, // Charm Offensive
+    .{ .qty = 2, .card_code = 35005 }, // Shred
+    .{ .qty = 2, .card_code = 35017 }, // Transfer of Wealth
+    .{ .qty = 2, .card_code = 35025 }, // Illumination
+    .{ .qty = 1, .card_code = 35006 }, // Bling
+    .{ .qty = 2, .card_code = 35008 }, // Hantu
+    .{ .qty = 2, .card_code = 35009 }, // Rising Tide
+    .{ .qty = 2, .card_code = 35020 }, // Sang Kancil
+    .{ .qty = 2, .card_code = 35032 }, // Principia
+    .{ .qty = 2, .card_code = 35022 }, // Open Market
+    .{ .qty = 2, .card_code = 35011 }, // Rent Rioters
+    .{ .qty = 2, .card_code = 35034 }, // Side Hustle
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond
+};
+pub const elevation_runner = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30059, .deck_lines = &elevation_neutral_corp_deck }, // BTL
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_runner_deck }, // Catalyst
 };
 
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
@@ -2467,6 +3145,31 @@ pub fn applyStartTurn(
                     card.credit_counter -= 1;
                     generated.runner_credit += 1;
                     generated.systemMsg(.runner, card.code orelse 0, "Runner gains 1 [credit] from {s}.", .{card.title});
+                }
+            }
+
+            // Start-of-turn: auto-take credits from loaded resources (Open Market)
+            {
+                var ri: usize = 0;
+                while (ri < generated.runner_rig_resources.items.len) {
+                    var card = &generated.runner_rig_resources.items[ri];
+                    if (card.installed_ability.kind == .start_of_turn_credits and card.credit_counter > 0) {
+                        const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
+                        card.credit_counter -= take;
+                        generated.runner_credit += take;
+                        generated.systemMsg(.runner, card.code orelse 0, "Runner takes {d} [credit{s}] from {s}.", .{
+                            take, if (take != 1) "s" else "", card.title,
+                        });
+                        if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
+                            if (card.installed_ability.draw_on_empty > 0) {
+                                try drawCards(generated, .runner, card.installed_ability.draw_on_empty);
+                            }
+                            const trashed = generated.runner_rig_resources.orderedRemove(ri);
+                            try appendDiscardCard(generated, .runner, trashed);
+                            continue;
+                        }
+                    }
+                    ri += 1;
                 }
             }
 
@@ -3348,6 +4051,16 @@ fn is_runner_tagged(tag: ?state.TagState) bool {
 
 /// Give the runner tags and fire the runner_gain_tag event.
 /// Returns true if an event handler opened a prompt (caller should return).
+fn removeRunnerTags(generated: *Game, count: u8) !void {
+    if (generated.runner_tag) |*tag| {
+        var remaining = count;
+        while (remaining > 0 and tag.total > 0) : (remaining -= 1) {
+            tag.total -= 1;
+        }
+        tag.is_tagged = tag.total > 0;
+    }
+}
+
 fn addRunnerTag(generated: *Game, count: u8) !bool {
     if (generated.runner_tag == null) {
         generated.runner_tag = .{ .base = 0, .total = count, .is_tagged = count > 0 };
@@ -4649,6 +5362,10 @@ fn playRunnerChooseRunTarget(
     try spendCredits(generated, .runner, rt_cost);
     _ = try removeCardFromHand(generated, .runner, card_index);
     try appendDiscardCard(generated, .runner, card);
+    // Double events: spend additional clicks
+    if (card.runner_play.lose_clicks > 0) {
+        try spendClicks(generated, .runner, card.runner_play.lose_clicks);
+    }
     if (rt_cost > 0) {
         generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] and pays {d} [credit{s}] to play {s}.", .{
             rt_cost, if (rt_cost != 1) "s" else "", card.title,
@@ -5034,6 +5751,18 @@ fn applyInstalledAbility(
                         mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
                     }
                 },
+                .click_trash_for_credits => {
+                    // Rent Rioters: N clicks + trash self, gain flat credits
+                    try spendClicks(generated, .runner, card.installed_ability.click_cost);
+                    const gain = card.installed_ability.credit_cost;
+                    generated.runner_credit += gain;
+                    generated.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to gain {d} [credit{s}].", .{
+                        card.title, gain, if (gain != 1) "s" else "",
+                    });
+                    // Trash the resource
+                    const trashed = generated.runner_rig_resources.orderedRemove(card_index);
+                    try appendDiscardCard(generated, .runner, trashed);
+                },
                 .start_of_turn_credits => return error.UnsupportedAbility, // auto-trigger, not a click action
                 .trash_for_damage => return error.UnsupportedAbility, // corp-only
                 .remove_from_game_shuffle => return error.UnsupportedAbility, // corp-only
@@ -5106,7 +5835,7 @@ fn applyInstalledAbility(
                         try shuffleDeck(generated, .corp);
                     }
                 },
-                .place_credits, .break_subroutine, .pump_strength, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits => return error.UnsupportedAbility,
+                .place_credits, .break_subroutine, .pump_strength, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits, .click_trash_for_credits => return error.UnsupportedAbility,
                 .none => return error.UnsupportedAbility,
             }
 
@@ -7362,6 +8091,7 @@ fn installedAbilityLabel(
         .trash_for_virus_credits => std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{@as(u16, card.virus_counter) * @as(u16, card.installed_ability.trash_for_virus_credits)}),
         .trash_for_damage => std.fmt.allocPrint(allocator, "Trash to do {d} meat damage", .{card.advancement_counter}),
         .remove_from_game_shuffle => allocator.dupe(u8, "Remove from game to shuffle Archives"),
+        .click_trash_for_credits => std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{card.installed_ability.credit_cost}),
         .none => allocator.dupe(u8, "Use ability"),
     };
 }
@@ -7390,6 +8120,11 @@ fn hasRunnerInstalledAbilityAction(card: state.CardInstance, turn_events: state.
     // Fermenter: click + trash to gain credits (always available if has virus counters)
     if (card.installed_ability.kind == .trash_for_virus_credits) {
         return card.installed_ability.click_cost > 0 and card.virus_counter > 0;
+    }
+
+    // Rent Rioters: N clicks + trash for flat credits (always available)
+    if (card.installed_ability.kind == .click_trash_for_credits) {
+        return card.installed_ability.click_cost > 0;
     }
 
     // For abilities that require clicks, check click cost
@@ -7663,6 +8398,14 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
         var i: usize = 0;
         while (i < server.content.items.len) {
             var card = &server.content.items[i];
+            // Public Access Plaza: gain credits from bank each turn
+            if (card.rezzed and card.installed_ability.start_of_turn_bank_credits > 0) {
+                game.corp_credit += card.installed_ability.start_of_turn_bank_credits;
+                game.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to gain {d} [credit{s}].", .{
+                    card.title, card.installed_ability.start_of_turn_bank_credits,
+                    if (card.installed_ability.start_of_turn_bank_credits != 1) "s" else "",
+                });
+            }
             if (card.installed_ability.kind == .start_of_turn_credits and card.rezzed and card.credit_counter > 0) {
                 const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
                 card.credit_counter -= take;
@@ -8137,6 +8880,9 @@ fn runTargetChoicesFor(
         .any_runnable => try runnableServers(allocator, servers),
         .hq_and_rnd_only => try allocator.dupe([]const u8, &.{ "HQ", "R&D" }),
         .central_only => try allocator.dupe([]const u8, &.{ "HQ", "R&D", "Archives" }),
+        .archives_only => try allocator.dupe([]const u8, &.{"Archives"}),
+        .hq_only => try allocator.dupe([]const u8, &.{"HQ"}),
+        .rd_only => try allocator.dupe([]const u8, &.{"R&D"}),
     };
     const choices = try allocator.alloc(state.PromptChoice, names.len);
     for (names, 0..) |name, idx| {
@@ -8226,6 +8972,13 @@ fn installCard(
         try server.content.append(allocator, installed);
     }
     try game.corp_servers.append(allocator, server);
+}
+
+/// Install a corp card from hand to a server, removing it from hand.
+fn installCorpCardFromHand(game: *Game, card_index: u8, server_choice: []const u8) !void {
+    if (card_index >= game.corp_hand.items.len) return error.InvalidCardIndex;
+    const card = game.corp_hand.orderedRemove(card_index);
+    try installCard(game, card, server_choice);
 }
 
 fn removeServerContentCard(
@@ -8340,6 +9093,37 @@ fn otherSide(side: state.Side) state.Side {
 
 fn threatLevel(g: *const Game) u8 {
     return g.corp_agenda_point + g.runner_agenda_point;
+}
+
+fn showKpiChoices(g: *Game, card: ?state.CardInstance, choices_made: u8) !void {
+    const allocator = g.arena.allocator();
+    var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices_list.deinit(allocator);
+    try choices_list.append(allocator, stringChoice("Gain 2 [Credits]"));
+    // Only show "Install ice" if there's ice in hand
+    for (g.corp_hand.items) |c| {
+        const ct = c.card_type orelse continue;
+        if (std.mem.eql(u8, ct, "ICE")) {
+            try choices_list.append(allocator, stringChoice("Install 1 piece of ice from HQ"));
+            break;
+        }
+    }
+    // Only show "Place advancement" if there are advanceable cards
+    if ((try installedCardChoices(allocator, g.corp_servers.items)).len > 0) {
+        try choices_list.append(allocator, stringChoice("Place 1 advancement counter"));
+    }
+    try choices_list.append(allocator, stringChoice("Draw 1 card"));
+    if (choices_made > 0) {
+        try choices_list.append(allocator, stringChoice("Done"));
+    }
+    g.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "kpi-choose"),
+        .choices = try choices_list.toOwnedSlice(allocator),
+        .source_card = card,
+        .min_choices = choices_made,
+    };
+    g.decision_side = .corp;
+    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
 }
 
 fn sideName(side: state.Side) []const u8 {
