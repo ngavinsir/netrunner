@@ -128,6 +128,12 @@ pub const SubroutineKind = enum(u8) {
     trash_program_or_etr, // Ballista: trash 1 program, or ETR if no programs
     corp_install_from_hq_archives, // Ansel 1.0: install a card from HQ or Archives
     prevent_steal_trash, // Ansel 1.0: prevent stealing/trashing for rest of run
+    conditional_net_damage_if_tagged, // Doomscroll: do N net damage if runner has N+ tags
+    conditional_etr_threat, // N-Pot: ETR if threat level >= amount
+    net_damage_unless_etr, // Semak-samun: ETR unless runner suffers N net damage
+    trash_program_or_resource_or_etr, // Biawak: trash 1 program (or resource) or ETR
+    runner_loses_credits_and_net_damage, // Syailendra: runner loses N credits + net damage
+    tag_or_pay_credits_etr, // Lamplighter: give 1 tag unless runner pays N; ETR if tagged
 };
 
 pub const SubroutineSpec = struct {
@@ -248,6 +254,8 @@ pub const GameEvent = enum(u8) {
     runner_trash_corp_card, // Loup: first trash-on-access
     successful_run_ends, // Zahya: gain credits on HQ/R&D run end
     corp_end_turn, // Jinteki: Restoring Humanity
+    corp_rez_ice, // Barry: install on rez
+    operation_played, // Nebula, Zwicky: operation triggers
 };
 
 pub const CardReference = struct {
@@ -298,6 +306,8 @@ pub const CardInstance = struct {
     advancement_counter: u8 = 0,
     credit_counter: u16 = 0,
     virus_counter: u16 = 0,
+    power_counter: u16 = 0,
+    agenda_counter: u8 = 0,
     ability_used_this_turn: bool = false,
     installed_this_turn: bool = false, // Seamless Launch: cannot target cards installed this turn
     used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?

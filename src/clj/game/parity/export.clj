@@ -1346,6 +1346,116 @@
                    (set-up/init-game {:gameid 1 :format "system-gateway" :seed seed
                                       :players [{:side "Corp" :user {:username "Corp"} :deck (prepare-precon-deck "Corp" corp-deck)}
                                                  {:side "Runner" :user {:username "Runner"} :deck (prepare-precon-deck "Runner" runner-deck)}]}))
+                 (clojure.string/starts-with? (str matchup) "elevation-")
+                 (let [_ (ensure-card-defs-loaded!)
+                       _ (register-complete-cards!)
+                       ;; Parse matchup string: "elevation-hb", "elevation-weyland", etc.
+                       faction (subs (str matchup) (count "elevation-"))
+                       [corp-id-code corp-id-title runner-id-code runner-id-title corp-cards runner-cards]
+                       (case faction
+                         "hb" [35035 "LEO Construction: Labor Solutions" 30076 "The Catalyst: Convention Breaker"
+                               [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Send a Message"}
+                                {:qty 2 :card "Aggressive Trendsetting"} {:qty 2 :card "Project Ingatan"}
+                                {:qty 2 :card "Otto Campaign"} {:qty 2 :card "Humanoid Resources"}
+                                {:qty 2 :card "Bumi 1.0"} {:qty 2 :card "Scatter Field"}
+                                {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Nanomanagement"}
+                                {:qty 2 :card "Top-Down Solutions"} {:qty 2 :card "Mercia B4LL4RD"}
+                                {:qty 3 :card "Palisade"} {:qty 2 :card "Brân 1.0"}
+                                {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Seamless Launch"}]
+                               [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                {:qty 1 :card "T400 Memory Diamond"}]]
+                         "weyland" [35069 "The Zwicky Group: Invisible Hands" 30076 "The Catalyst: Convention Breaker"
+                                    [{:qty 3 :card "Offworld Office"} {:qty 3 :card "Greenmail"}
+                                     {:qty 2 :card "Off the Books"} {:qty 2 :card "Send a Message"}
+                                     {:qty 2 :card "Anthill Excavation Contract"} {:qty 2 :card "Plutus"}
+                                     {:qty 2 :card "Biawak"} {:qty 2 :card "Kessleroid"}
+                                     {:qty 2 :card "Syailendra"} {:qty 3 :card "Hedge Fund"}
+                                     {:qty 2 :card "Key Performance Indicators"} {:qty 2 :card "Measured Response"}
+                                     {:qty 2 :card "Petty Cash"} {:qty 3 :card "Palisade"}
+                                     {:qty 2 :card "Nico Campaign"}]
+                                    [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                     {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                     {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                     {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                     {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                     {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                     {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                     {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                     {:qty 1 :card "T400 Memory Diamond"}]]
+                         "nbn" [35057 "Nebula Talent Management: Making Stars" 30076 "The Catalyst: Convention Breaker"
+                                [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Embedded Reporting"}
+                                 {:qty 2 :card "Next Big Thing"} {:qty 2 :card "Send a Message"}
+                                 {:qty 2 :card "Idiosyncresis"} {:qty 2 :card "Public Access Plaza"}
+                                 {:qty 2 :card "Doomscroll"} {:qty 2 :card "N-Pot"}
+                                 {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Bigger Picture"}
+                                 {:qty 2 :card "Touch-ups"} {:qty 3 :card "Palisade"}
+                                 {:qty 2 :card "Ping"} {:qty 2 :card "Nico Campaign"}
+                                 {:qty 2 :card "Seamless Launch"}]
+                                [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                 {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                 {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                 {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                 {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                 {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                 {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                 {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                 {:qty 1 :card "T400 Memory Diamond"}]]
+                         "jinteki" [35046 "AU Co.: The Gold Standard in Clones" 30076 "The Catalyst: Convention Breaker"
+                                    [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Proprionegation"}
+                                     {:qty 2 :card "Sericulture Expansion"} {:qty 2 :card "Send a Message"}
+                                     {:qty 2 :card "Byte!"} {:qty 2 :card "Phật Gioan Baotixita"}
+                                     {:qty 2 :card "Empiricist"} {:qty 2 :card "Semak-samun"}
+                                     {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Peer Review"}
+                                     {:qty 2 :card "Mitra Aman"} {:qty 3 :card "Palisade"}
+                                     {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Seamless Launch"}
+                                     {:qty 2 :card "Urtica Cipher"}]
+                                    [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                     {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                     {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                     {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                     {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                     {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                     {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                     {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                     {:qty 1 :card "T400 Memory Diamond"}]]
+                         "neutral" [30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker"
+                                    [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Greenmail"}
+                                     {:qty 2 :card "Send a Message"} {:qty 2 :card "Orbital Superiority"}
+                                     {:qty 3 :card "Flyswatter"} {:qty 3 :card "Lamplighter"}
+                                     {:qty 3 :card "Kessleroid"} {:qty 3 :card "Palisade"}
+                                     {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Petty Cash"}
+                                     {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Regolith Mining License"}
+                                     {:qty 2 :card "Seamless Launch"} {:qty 2 :card "Mahkota Langit Grid"}]
+                                    [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                     {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                     {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                     {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                     {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                     {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                     {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                     {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                     {:qty 1 :card "T400 Memory Diamond"}]])
+                       ;; Register all card names so they resolve
+                       all-card-names (concat (map :card corp-cards) (map :card runner-cards)
+                                              [corp-id-title runner-id-title])
+                       _ (doseq [card-name all-card-names]
+                           (when-not (get @all-cards card-name)
+                             (when-let [found (first (filter #(= card-name (:title %)) (vals @all-cards)))]
+                               (swap! all-cards assoc card-name found))))
+                       corp-deck {:identity {:title corp-id-title :side "Corp" :code corp-id-code}
+                                  :cards corp-cards}
+                       runner-deck {:identity {:title runner-id-title :side "Runner" :code runner-id-code}
+                                    :cards runner-cards}]
+                   (set-up/init-game {:gameid 1 :format "system-gateway" :seed seed
+                                      :players [{:side "Corp" :user {:username "Corp"} :deck (prepare-precon-deck "Corp" corp-deck)}
+                                                 {:side "Runner" :user {:username "Runner"} :deck (prepare-precon-deck "Runner" runner-deck)}]}))
                  :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
      (doseq [[idx action] (map-indexed vector actions)]

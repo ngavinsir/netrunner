@@ -1165,6 +1165,221 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
+    // ====================================================================
+    // ELEVATION PACK (35001–35082)
+    // ====================================================================
+    // --- Elevation Identities ---
+    .{ .title = "Ry\xc5\x8d \xe2\x80\x9cPhoenix\xe2\x80\x9d \xc5\x8cno: Out of the Ashes", .side = .runner, .code = 35001, .card_type = "Identity", .subtypes = &.{"G-mod"} },
+    .{ .title = "Topan: Ormas Leader", .side = .runner, .code = 35002, .card_type = "Identity", .subtypes = &.{"Natural"} },
+    .{ .title = "Barry \xe2\x80\x9cBaz\xe2\x80\x9d Wong: Tri-Maf Veteran", .side = .runner, .code = 35012, .card_type = "Identity", .subtypes = &.{"Cyborg"} },
+    .{ .title = "MuslihaT: Multifarious Marketeer", .side = .runner, .code = 35013, .card_type = "Identity", .subtypes = &.{"Natural"} },
+    .{ .title = "Dewi Subrotoputri: Pedagogical Dhalang", .side = .runner, .code = 35023, .card_type = "Identity", .subtypes = &.{"Natural"} },
+    .{ .title = "Magdalene Keino-Chemutai: Cryptarchitect", .side = .runner, .code = 35024, .card_type = "Identity", .subtypes = &.{"Cyborg"} },
+    .{ .title = "LEO Construction: Labor Solutions", .side = .corp, .code = 35035, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "Po\xc3\xa9tr\xc3\xaf Luxury Brands: All the Rage", .side = .corp, .code = 35036, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "AU Co.: The Gold Standard in Clones", .side = .corp, .code = 35046, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "PT Untaian: Life's Building Blocks", .side = .corp, .code = 35047, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "Nebula Talent Management: Making Stars", .side = .corp, .code = 35057, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "Synapse Global: Faster than Thought", .side = .corp, .code = 35058, .card_type = "Identity", .subtypes = &.{"Division"} },
+    .{ .title = "BANGUN: When Disaster Strikes", .side = .corp, .code = 35068, .card_type = "Identity", .subtypes = &.{"Corp"} },
+    .{ .title = "The Zwicky Group: Invisible Hands", .side = .corp, .code = 35069, .card_type = "Identity", .subtypes = &.{"Unsubstantiated"} },
+    // --- Elevation Agendas ---
+    .{ .title = "Aggressive Trendsetting", .side = .corp, .code = 35037, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Project Ingatan", .side = .corp, .code = 35038, .card_type = "Agenda", .subtypes = &.{"Research"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Proprionegation", .side = .corp, .code = 35048, .card_type = "Agenda", .subtypes = &.{"Security"}, .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Sericulture Expansion", .side = .corp, .code = 35049, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Embedded Reporting", .side = .corp, .code = 35059, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Next Big Thing", .side = .corp, .code = 35060, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 2 } },
+    .{ .title = "Off the Books", .side = .corp, .code = 35071, .card_type = "Agenda", .subtypes = &.{"Initiative"}, .agenda_points = 2, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only } },
+    // --- Elevation ICE ---
+    .{ .title = "Bumi 1.0", .side = .corp, .code = 35041, .card_type = "ICE", .subtypes = &.{ "AP", "Bioroid", "Destroyer", "Sentry" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .trash_program_or_etr },
+        .{ .kind = .do_brain_damage, .amount = 1 },
+    }, .runner_abilities = &.{
+        .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
+    } },
+    .{ .title = "Scatter Field", .side = .corp, .code = 35042, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 3, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .corp_install_from_hq_archives },
+        .{ .kind = .end_the_run },
+    } },
+    .{ .title = "Empiricist", .side = .corp, .code = 35052, .card_type = "ICE", .subtypes = &.{ "AP", "Observer", "Sentry" }, .cost = 7, .strength = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .none }, // draw 1 card, may add 1 from HQ to top of R&D (custom)
+        .{ .kind = .do_net_damage, .amount = 1 }, // + give 1 tag
+        .{ .kind = .do_net_damage, .amount = 2 },
+    } },
+    .{ .title = "Mycoweb", .side = .corp, .code = 35053, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 8, .strength = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .none }, // install ice from archives
+        .{ .kind = .none }, // rez ice -2
+        .{ .kind = .none }, // resolve sentry sub
+        .{ .kind = .none }, // resolve code gate sub
+    } },
+    .{ .title = "Semak-samun", .side = .corp, .code = 35054, .card_type = "ICE", .subtypes = &.{ "AP", "Barrier" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .net_damage_unless_etr, .amount = 3 },
+    } },
+    .{ .title = "Doomscroll", .side = .corp, .code = 35063, .card_type = "ICE", .subtypes = &.{ "AP", "Observer", "Sentry" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .tag_runner },
+        .{ .kind = .do_net_damage, .amount = 1 },
+        .{ .kind = .conditional_net_damage_if_tagged, .amount = 2 },
+    } },
+    .{ .title = "N-Pot", .side = .corp, .code = 35064, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 4, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .end_the_run },
+        .{ .kind = .conditional_etr_threat, .amount = 2 },
+        .{ .kind = .conditional_etr_threat, .amount = 4 },
+    } },
+    .{ .title = "Biawak", .side = .corp, .code = 35074, .card_type = "ICE", .subtypes = &.{ "Destroyer", "Sentry" }, .cost = 14, .strength = 6, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .trash_program_or_resource_or_etr, .amount = 0 }, // trash 1 program or ETR
+        .{ .kind = .trash_program_or_resource_or_etr, .amount = 1 }, // trash 1 resource or ETR
+        .{ .kind = .end_the_run },
+    } },
+    .{ .title = "Kessleroid", .side = .corp, .code = 35075, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .end_the_run },
+        .{ .kind = .end_the_run },
+    } },
+    .{ .title = "Syailendra", .side = .corp, .code = 35076, .card_type = "ICE", .subtypes = &.{ "AP", "Code Gate" }, .cost = 4, .strength = 5, .advanceable = true, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .none }, // place 1 advancement counter
+        .{ .kind = .runner_loses_credits, .amount = 2 },
+        .{ .kind = .do_net_damage, .amount = 1 },
+    } },
+    .{ .title = "Flyswatter", .side = .corp, .code = 35079, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .end_the_run },
+    } },
+    .{ .title = "Lamplighter", .side = .corp, .code = 35080, .card_type = "ICE", .subtypes = &.{ "Observer", "Sentry" }, .cost = 2, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .kind = .tag_or_pay_credits_etr, .amount = 3 },
+        .{ .kind = .none }, // ETR if tagged (custom)
+    } },
+    // --- Elevation Assets ---
+    .{ .title = "Humanoid Resources", .side = .corp, .code = 35039, .card_type = "Asset", .cost = 1, .trash_cost = 1, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
+        .kind = .start_of_turn_credits,
+        .initial_credit_counters = 6,
+        .take_credits_amount = 2,
+        .trash_on_empty = true,
+    } },
+    .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Idiosyncresis", .side = .corp, .code = 35061, .card_type = "Asset", .subtypes = &.{"Hostile"}, .cost = 1, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Public Access Plaza", .side = .corp, .code = 35062, .card_type = "Asset", .cost = 1, .trash_cost = 2, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
+        .kind = .start_of_turn_credits,
+        .initial_credit_counters = 8,
+        .take_credits_amount = 4,
+        .trash_on_empty = true,
+        .draw_on_empty = 0,
+    } },
+    .{ .title = "Plutus", .side = .corp, .code = 35073, .card_type = "Asset", .subtypes = &.{"Deep Net"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
+    // --- Elevation Upgrades ---
+    .{ .title = "Mercia B4LL4RD", .side = .corp, .code = 35045, .card_type = "Upgrade", .subtypes = &.{ "Academic", "Bioroid" }, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
+    .{ .title = "Mitra Aman", .side = .corp, .code = 35056, .card_type = "Upgrade", .subtypes = &.{"Clone"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_server_choice } },
+    .{ .title = "Mahkota Langit Grid", .side = .corp, .code = 35082, .card_type = "Upgrade", .subtypes = &.{"Region"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
+    // --- Elevation Operations ---
+    .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .corp_play = .{ .kind = .custom }, .on_play = &struct {
+        fn play(g: *Game, _: state.CardInstance) anyerror!void {
+            g.corp_click += 2;
+        }
+    }.play, .on_play_msg = "gain [Click][Click]." },
+    .{ .title = "Top-Down Solutions", .side = .corp, .code = 35044, .card_type = "Operation", .cost = 2, .corp_play = .{ .kind = .gain_credits, .draw_cards = 2 } },
+    .{ .title = "Peer Review", .side = .corp, .code = 35055, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 4 },
+    .{ .title = "Bigger Picture", .side = .corp, .code = 35065, .card_type = "Operation", .subtypes = &.{"Gray Ops"}, .cost = 0,
+        .can_play = &struct {
+            fn check(g: *const Game) bool {
+                // "Play only if the Runner is tagged."
+                return if (g.runner_tag) |t| t.is_tagged else false;
+            }
+        }.check,
+    },
+    .{ .title = "IP Enforcement", .side = .corp, .code = 35066, .card_type = "Operation", .subtypes = &.{"Gray Ops"}, .cost = 0,
+        .can_play = &struct {
+            fn check(g: *const Game) bool {
+                // Requires runner to be tagged and have stolen agendas
+                const tagged = if (g.runner_tag) |t| t.is_tagged else false;
+                return tagged and g.runner_scored.items.len > 0;
+            }
+        }.check,
+    },
+    .{ .title = "Touch-ups", .side = .corp, .code = 35067, .card_type = "Operation", .subtypes = &.{"Double"}, .cost = 2 },
+    .{ .title = "Key Performance Indicators", .side = .corp, .code = 35077, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 1 },
+    .{ .title = "Measured Response", .side = .corp, .code = 35078, .card_type = "Operation", .subtypes = &.{"Black Ops"}, .cost = 5, .trash_cost = 3,
+        .can_play = &struct {
+            fn check(g: *const Game) bool {
+                // "Play only if the threat level is 4 or greater, and only if the Runner made a successful run during their last turn."
+                return threatLevel(g) >= 4;
+            }
+        }.check,
+    },
+    .{ .title = "Petty Cash", .side = .corp, .code = 35081, .card_type = "Operation", .subtypes = &.{"Transaction"}, .cost = 3, .corp_play = .{ .kind = .gain_credits, .gain_credits = 5 },
+        .can_play = &struct {
+            fn check(g: *const Game) bool {
+                // "Play only if you have not finished an action yet this turn."
+                return g.corp_click == g.corp_click_per_turn;
+            }
+        }.check,
+    },
+    // --- Elevation Runner Events ---
+    .{ .title = "Charm Offensive", .side = .runner, .code = 35003, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0 },
+    .{ .title = "Scrounge", .side = .runner, .code = 35004, .card_type = "Event", .subtypes = &.{"Double"}, .cost = 1 },
+    .{ .title = "Shred", .side = .runner, .code = 35005, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 1 },
+    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .runner_play = .{ .kind = .choose_run_target, .gain_credits = 6, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 0 } },
+    .{ .title = "Lie Low", .side = .runner, .code = 35015, .card_type = "Event", .subtypes = &.{"Double"}, .cost = 1 },
+    .{ .title = "Maintenance Access", .side = .runner, .code = 35016, .card_type = "Event", .subtypes = &.{ "Double", "Run" }, .cost = 0 },
+    .{ .title = "Transfer of Wealth", .side = .runner, .code = 35017, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0 },
+    .{ .title = "Illumination", .side = .runner, .code = 35025, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 0 },
+    .{ .title = "Ritual", .side = .runner, .code = 35026, .card_type = "Event", .cost = 0, .runner_play = .{ .kind = .custom } },
+    // --- Elevation Runner Hardware ---
+    .{ .title = "Bling", .side = .runner, .code = 35006, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 } },
+    .{ .title = "Detente", .side = .runner, .code = 35018, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 3, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 } },
+    .{ .title = "Maglectric Rapid (748 Mod)", .side = .runner, .code = 35019, .card_type = "Hardware", .subtypes = &.{"Weapon"}, .cost = 1, .runner_install = .{ .kind = .hardware, .mu_cost = 0 } },
+    .{ .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .side = .runner, .code = 35027, .card_type = "Hardware", .subtypes = &.{"Mod"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 } },
+    .{ .title = "Madani", .side = .runner, .code = 35028, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true } },
+    // --- Elevation Runner Programs ---
+    .{ .title = "Gourmand", .side = .runner, .code = 35007, .card_type = "Program", .cost = 0, .runner_install = .{ .kind = .program } },
+    .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .kind = .break_subroutine,
+        .break_subroutine_count = 1,
+        .credit_cost = 1,
+        .virus_on_install = true,
+    }, .pump_ability = .{
+        .kind = .pump_strength,
+        .pump_strength_amount = 2,
+        .virus_ice_strength_reduction = 0,
+    } },
+    .{ .title = "Rising Tide", .side = .runner, .code = 35009, .card_type = "Program", .subtypes = &.{ "Fracter", "Icebreaker" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .kind = .break_subroutine,
+        .break_subroutine_count = 1,
+        .credit_cost = 1,
+    }, .pump_ability = .{
+        .kind = .pump_strength,
+        .pump_strength_amount = 1,
+        .credit_cost = 1,
+    } },
+    .{ .title = "Sang Kancil", .side = .runner, .code = 35020, .card_type = "Program", .subtypes = &.{ "Decoder", "Icebreaker" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .kind = .break_subroutine,
+        .break_subroutine_count = 1,
+        .credit_cost = 1,
+    }, .pump_ability = .{
+        .kind = .pump_strength,
+        .pump_strength_amount = 2,
+        .credit_cost = 3,
+    } },
+    .{ .title = "Azimat", .side = .runner, .code = 35029, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 } },
+    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{ .is_trojan = true } },
+    .{ .title = "Devadatta Drone", .side = .runner, .code = 35031, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program } },
+    .{ .title = "Principia", .side = .runner, .code = 35032, .card_type = "Program", .subtypes = &.{ "Fracter", "Icebreaker" }, .cost = 4, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+        .kind = .break_subroutine,
+        .break_subroutine_count = 1,
+        .credit_cost = 1,
+    }, .pump_ability = .{
+        .kind = .pump_strength,
+        .pump_strength_amount = 2,
+        .credit_cost = 2,
+    } },
+    // --- Elevation Runner Resources ---
+    .{ .title = "Cacophony", .side = .runner, .code = 35010, .card_type = "Resource", .subtypes = &.{"Virtual"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Rent Rioters", .side = .runner, .code = 35011, .card_type = "Resource", .subtypes = &.{ "Connection", "Seedy" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Fransofia Ward", .side = .runner, .code = 35021, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Open Market", .side = .runner, .code = 35022, .card_type = "Resource", .subtypes = &.{ "Job", "Location" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "\"Knickknack\" O'Brian", .side = .runner, .code = 35033, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Side Hustle", .side = .runner, .code = 35034, .card_type = "Resource", .subtypes = &.{"Job"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
 };
 
 const beginner_corp_deck_lines = [_]DeckLine{
@@ -1564,6 +1779,146 @@ pub const gnk_nbn_vs_loup = MatchupSpec{
     .format = "system-gateway", .agenda_point_req = 7,
     .corp = .{ .identity_code = 30051, .deck_lines = &gnk_corp_deck_lines },
     .runner = .{ .identity_code = 30001, .deck_lines = &gnk_runner_deck_lines },
+};
+
+// Elevation HB: LEO Construction vs Catalyst (SG runner)
+// Uses HB Elevation cards + SG filler for a legal 40-card corp deck
+const elevation_hb_corp_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 2, .card_code = 35037 }, // Aggressive Trendsetting
+    .{ .qty = 2, .card_code = 35038 }, // Project Ingatan
+    .{ .qty = 2, .card_code = 35040 }, // Otto Campaign
+    .{ .qty = 2, .card_code = 35039 }, // Humanoid Resources
+    .{ .qty = 2, .card_code = 35041 }, // Bumi 1.0
+    .{ .qty = 2, .card_code = 35042 }, // Scatter Field
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 2, .card_code = 35043 }, // Nanomanagement
+    .{ .qty = 2, .card_code = 35044 }, // Top-Down Solutions
+    .{ .qty = 2, .card_code = 35045 }, // Mercia B4LL4RD
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30039 }, // Brân 1.0
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 2, .card_code = 30040 }, // Seamless Launch
+};
+const elevation_hb_runner_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30028 }, // Jailbreak
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble
+    .{ .qty = 3, .card_code = 30002 }, // Wildcat Strike
+    .{ .qty = 2, .card_code = 30021 }, // VRcation
+    .{ .qty = 1, .card_code = 30012 }, // Tread Lightly
+    .{ .qty = 1, .card_code = 30023 }, // Pantograph
+    .{ .qty = 2, .card_code = 30005 }, // Buzzsaw
+    .{ .qty = 2, .card_code = 30006 }, // Cleaver
+    .{ .qty = 2, .card_code = 30025 }, // Echelon
+    .{ .qty = 2, .card_code = 30026 }, // Unity
+    .{ .qty = 2, .card_code = 30024 }, // Conduit
+    .{ .qty = 2, .card_code = 30008 }, // Leech
+    .{ .qty = 2, .card_code = 30007 }, // Fermenter
+    .{ .qty = 2, .card_code = 30033 }, // Smartware Distributor
+    .{ .qty = 2, .card_code = 30034 }, // Verbal Plasticity
+    .{ .qty = 2, .card_code = 30027 }, // Telework Contract
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond
+};
+pub const elevation_hb = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 35035, .deck_lines = &elevation_hb_corp_deck },
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst
+};
+
+// Elevation Weyland: Zwicky vs Catalyst
+const elevation_weyland_corp_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 3, .card_code = 35070 }, // Greenmail
+    .{ .qty = 2, .card_code = 35071 }, // Off the Books
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 2, .card_code = 35072 }, // Anthill Excavation Contract
+    .{ .qty = 2, .card_code = 35073 }, // Plutus
+    .{ .qty = 2, .card_code = 35074 }, // Biawak
+    .{ .qty = 2, .card_code = 35075 }, // Kessleroid
+    .{ .qty = 2, .card_code = 35076 }, // Syailendra
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 2, .card_code = 35077 }, // Key Performance Indicators
+    .{ .qty = 2, .card_code = 35078 }, // Measured Response
+    .{ .qty = 2, .card_code = 35081 }, // Petty Cash
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+};
+pub const elevation_weyland = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 35069, .deck_lines = &elevation_weyland_corp_deck },
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst (shared)
+};
+
+// Elevation NBN: Nebula vs Catalyst
+const elevation_nbn_corp_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 35059 }, // Embedded Reporting
+    .{ .qty = 2, .card_code = 35060 }, // Next Big Thing
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 2, .card_code = 35061 }, // Idiosyncresis
+    .{ .qty = 2, .card_code = 35062 }, // Public Access Plaza
+    .{ .qty = 2, .card_code = 35063 }, // Doomscroll
+    .{ .qty = 2, .card_code = 35064 }, // N-Pot
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 2, .card_code = 35065 }, // Bigger Picture
+    .{ .qty = 2, .card_code = 35067 }, // Touch-ups
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30055 }, // Ping
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 2, .card_code = 30040 }, // Seamless Launch
+};
+pub const elevation_nbn = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 35057, .deck_lines = &elevation_nbn_corp_deck },
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst (shared)
+};
+
+// Elevation Jinteki: AU Co. vs Catalyst
+const elevation_jinteki_corp_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 35048 }, // Proprionegation
+    .{ .qty = 2, .card_code = 35049 }, // Sericulture Expansion
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 2, .card_code = 35050 }, // Byte!
+    .{ .qty = 2, .card_code = 35051 }, // Phật Gioan
+    .{ .qty = 2, .card_code = 35052 }, // Empiricist
+    .{ .qty = 2, .card_code = 35054 }, // Semak-samun
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 2, .card_code = 35055 }, // Peer Review
+    .{ .qty = 2, .card_code = 35056 }, // Mitra Aman
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 2, .card_code = 30040 }, // Seamless Launch
+    .{ .qty = 2, .card_code = 30045 }, // Urtica Cipher
+};
+pub const elevation_jinteki = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 35046, .deck_lines = &elevation_jinteki_corp_deck },
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst (shared)
+};
+
+// Elevation neutral ICE test: uses Flyswatter + Lamplighter + Kessleroid
+const elevation_neutral_corp_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 35070 }, // Greenmail
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 2, .card_code = 30068 }, // Orbital Superiority
+    .{ .qty = 3, .card_code = 35079 }, // Flyswatter
+    .{ .qty = 3, .card_code = 35080 }, // Lamplighter
+    .{ .qty = 3, .card_code = 35075 }, // Kessleroid
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 2, .card_code = 35081 }, // Petty Cash
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 2, .card_code = 30071 }, // Regolith Mining License
+    .{ .qty = 2, .card_code = 30040 }, // Seamless Launch
+    .{ .qty = 2, .card_code = 35082 }, // Mahkota Langit Grid
+};
+pub const elevation_neutral = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30059, .deck_lines = &elevation_neutral_corp_deck }, // Weyland BTL
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst
 };
 
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
@@ -4076,7 +4431,8 @@ fn playCorpOperation(
             } else {
                 return error.UnsupportedOperation;
             }
-            return;
+            // If handler opened a prompt, don't override legal actions
+            if (generated.corp_prompt_state != null or generated.runner_prompt_state != null) return;
         },
         .no_op => {},
         .none => return error.UnsupportedOperation,
@@ -5062,6 +5418,12 @@ fn subroutineLabel(allocator: std.mem.Allocator, sub: state.SubroutineSpec, idx:
         .trash_program_or_etr => std.fmt.allocPrint(allocator, "Trash 1 program or end the run", .{}),
         .corp_install_from_hq_archives => std.fmt.allocPrint(allocator, "Install a card from HQ or Archives", .{}),
         .prevent_steal_trash => std.fmt.allocPrint(allocator, "The Runner cannot steal or trash Corp cards for the remainder of this run", .{}),
+        .conditional_net_damage_if_tagged => std.fmt.allocPrint(allocator, "Do {d} net damage if the Runner is tagged", .{sub.amount}),
+        .conditional_etr_threat => std.fmt.allocPrint(allocator, "End the run if threat >= {d}", .{sub.amount}),
+        .net_damage_unless_etr => std.fmt.allocPrint(allocator, "End the run unless the Runner suffers {d} net damage", .{sub.amount}),
+        .trash_program_or_resource_or_etr => std.fmt.allocPrint(allocator, "Trash 1 installed card or end the run", .{}),
+        .runner_loses_credits_and_net_damage => std.fmt.allocPrint(allocator, "The Runner loses {d} [Credits]", .{sub.amount}),
+        .tag_or_pay_credits_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
         .none => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
     };
 }
@@ -5412,6 +5774,111 @@ fn resolveEncounteredIceSubroutines(
                 if (generated.run) |*mutable_run| {
                     mutable_run.no_steal_or_trash = true;
                 }
+            },
+            .conditional_net_damage_if_tagged => {
+                // Doomscroll: do N net damage if runner has N+ tags
+                const tag_count = if (generated.runner_tag) |t| t.base else 0;
+                if (tag_count >= sub.amount) {
+                    const damage = sub.amount;
+                    try trashRandomRunnerHandCards(generated, damage);
+                    updateTerminalState(generated);
+                    if (generated.game_over) return;
+                }
+            },
+            .conditional_etr_threat => {
+                // N-Pot: ETR if threat level >= amount
+                if (threatLevel(generated) >= sub.amount) {
+                    try completeUnsuccessfulRun(generated);
+                    return;
+                }
+            },
+            .net_damage_unless_etr => {
+                // Semak-samun: ETR unless runner suffers N net damage
+                const run = &(generated.run orelse return error.NoRunInProgress);
+                run.pending_subroutine = .{
+                    .server_index = @intCast(server_index),
+                    .ice_index = @intCast(ice_index),
+                    .subroutine_index = @intCast(idx + 1),
+                };
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                try choices.append(allocator, stringChoice("End the run"));
+                const text = try std.fmt.allocPrint(allocator, "Suffer {d} net damage", .{sub.amount});
+                try choices.append(allocator, stringChoice(text));
+                generated.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "net-damage-or-etr"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = ice,
+                };
+                generated.decision_side = .runner;
+                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+                return;
+            },
+            .trash_program_or_resource_or_etr => {
+                // Biawak: trash 1 program or 1 resource, or ETR if none
+                const has_programs = generated.runner_rig_program.items.len > 0;
+                const has_resources = generated.runner_rig_resources.items.len > 0;
+                if (!has_programs and !has_resources) {
+                    try completeUnsuccessfulRun(generated);
+                    return;
+                }
+                generated.run.?.pending_subroutine = .{
+                    .server_index = @intCast(server_index),
+                    .ice_index = @intCast(ice_index),
+                    .subroutine_index = @intCast(idx + 1),
+                };
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                // Use sub.amount to distinguish: 0 = programs only, 1 = resources only
+                if (sub.amount == 0 or sub.amount == 2) {
+                    for (generated.runner_rig_program.items, 0..) |prog, pidx| {
+                        const label = try std.fmt.allocPrint(allocator, "p|{d}", .{pidx});
+                        try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
+                    }
+                }
+                if (sub.amount == 1 or sub.amount == 2) {
+                    for (generated.runner_rig_resources.items, 0..) |res, ridx| {
+                        const label = try std.fmt.allocPrint(allocator, "r|{d}", .{ridx});
+                        try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = res.title, .side = .runner, .index = @intCast(ridx) } });
+                    }
+                }
+                generated.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "ballista-trash"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = ice,
+                };
+                generated.decision_side = .corp;
+                generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+                return;
+            },
+            .runner_loses_credits_and_net_damage => {
+                // Syailendra: runner loses N credits
+                const loss = @min(sub.amount, @as(u8, @intCast(generated.runner_credit)));
+                generated.runner_credit -= loss;
+            },
+            .tag_or_pay_credits_etr => {
+                // Lamplighter: give 1 tag unless runner pays N; then ETR if tagged
+                const run = &(generated.run orelse return error.NoRunInProgress);
+                run.pending_subroutine = .{
+                    .server_index = @intCast(server_index),
+                    .ice_index = @intCast(ice_index),
+                    .subroutine_index = @intCast(idx + 1),
+                };
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                try choices.append(allocator, stringChoice("Take 1 tag"));
+                if (generated.runner_credit >= sub.amount) {
+                    const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{sub.amount});
+                    try choices.append(allocator, stringChoice(text));
+                }
+                generated.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "trace"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = ice,
+                };
+                generated.decision_side = .runner;
+                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+                return;
             },
             .none => {},
         }
@@ -7850,6 +8317,10 @@ fn otherSide(side: state.Side) state.Side {
         .corp => .runner,
         .runner => .corp,
     };
+}
+
+fn threatLevel(g: *const Game) u8 {
+    return g.corp_agenda_point + g.runner_agenda_point;
 }
 
 fn sideName(side: state.Side) []const u8 {
