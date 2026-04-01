@@ -68,7 +68,8 @@ var log_scroll_offset: usize = 0; // 0 = bottom (newest), >0 = scrolled back
 var log_panel_x: u16 = 0; // left edge of log panel for scroll hit testing
 var log_at_top: bool = true; // true when first entry is visible (no more to scroll up)
 // Map log panel rows to log entry indices for hover detection
-var log_row_entry: [256]usize = [_]usize{0} ** 256; // row -> log_entries index (0-based)
+const log_row_no_entry: usize = std.math.maxInt(usize); // sentinel: no log entry for this row
+var log_row_entry: [256]usize = [_]usize{log_row_no_entry} ** 256; // row -> log_entries index
 var log_row_entry_count: u16 = 0; // how many rows are mapped
 var action_replay: ?replay.Replay = null; // action history for save/load
 
@@ -87,6 +88,37 @@ var log_entries: [max_log_entries][]const u8 = undefined;
 var log_card_codes: [max_log_entries]c_int = [_]c_int{0} ** max_log_entries;
 var log_count: usize = 0;
 var log_alloc: std.heap.ArenaAllocator = undefined;
+var last_synced_log: usize = 0; // tracks how many engine log entries we've copied
+
+fn sync_engine_log(h: ?*anyopaque) void {
+    const total: usize = @intCast(api.netrunner_log_count(h));
+    var synced_any = false;
+    while (last_synced_log < total) {
+        var buf: [512]u8 = undefined;
+        const len = api.netrunner_log_text(h, @intCast(last_synced_log), &buf, buf.len);
+        const text = if (len > 0) buf[0..@intCast(len)] else "?";
+        const card_code = api.netrunner_log_card_code(h, @intCast(last_synced_log));
+        const msg = std.fmt.allocPrint(log_alloc.allocator(), "{s}", .{text}) catch {
+            last_synced_log += 1;
+            continue;
+        };
+        if (log_count < max_log_entries) {
+            log_entries[log_count] = msg;
+            log_card_codes[log_count] = card_code;
+            log_count += 1;
+        } else {
+            for (0..max_log_entries - 1) |i| {
+                log_entries[i] = log_entries[i + 1];
+                log_card_codes[i] = log_card_codes[i + 1];
+            }
+            log_entries[max_log_entries - 1] = msg;
+            log_card_codes[max_log_entries - 1] = card_code;
+        }
+        last_synced_log += 1;
+        synced_any = true;
+    }
+    if (synced_any) log_scroll_offset = 0;
+}
 
 fn add_log_with_card(card_code: c_int, comptime f: []const u8, args: anytype) void {
     const msg = std.fmt.allocPrint(log_alloc.allocator(), f, args) catch return;
@@ -346,61 +378,71 @@ fn render_log(win: Window) void {
 
     _ = content.print(&.{.{ .text = "Log", .style = sty.header }}, .{ .row_offset = 0 });
     log_row_entry_count = 0;
+    @memset(&log_row_entry, log_row_no_entry);
     if (content.height < 3 or cw < 4) return;
 
-    // Calculate how many rows each entry needs (for word wrapping + 1 padding)
-    // Walk backwards from the scroll anchor to find first_visible,
-    // then forward from first_visible to fill the panel completely.
     const available = content.height -| 1;
-    const anchor = if (log_count > log_scroll_offset) log_count - log_scroll_offset else 0;
     if (log_scroll_offset > log_count) log_scroll_offset = log_count;
+    const anchor = if (log_count > log_scroll_offset) log_count - log_scroll_offset else 0;
+
+    // Calculate rows needed per entry (accounting for step number prefix width)
+    const entryRows = struct {
+        fn calc(entry: []const u8, width: u16, idx: usize) u16 {
+            if (width == 0) return 1;
+            const prefix_len = digitCount(idx + 1) + 2; // "{d}. "
+            const first_line_w = if (width > prefix_len) width - prefix_len else 1;
+            if (entry.len <= first_line_w) return 1;
+            const rest = entry.len - first_line_w;
+            return 1 + @as(u16, @intCast((rest + width - 1) / width));
+        }
+        fn digitCount(n: usize) u16 {
+            var v = n;
+            var d: u16 = 0;
+            while (v > 0) : (v /= 10) d += 1;
+            return if (d == 0) 1 else d;
+        }
+    };
 
     // Walk backwards from anchor to find first_visible
     var total_rows: u16 = 0;
     var first_visible: usize = anchor;
     while (first_visible > 0) {
-        first_visible -= 1;
-        const entry = log_entries[first_visible];
-        const entry_rows: u16 = @intCast(if (entry.len == 0) 1 else (entry.len + cw - 1) / cw);
-        const rows_with_pad = entry_rows + 1;
-        if (total_rows + rows_with_pad > available) {
-            first_visible += 1;
-            break;
+        const idx = first_visible - 1;
+        const rows = entryRows.calc(log_entries[idx], cw, idx);
+        const needed = rows + 1; // +1 for padding between entries
+        if (total_rows + rows > available and first_visible < anchor) {
+            break; // this entry won't fit, stop
         }
-        total_rows += rows_with_pad;
-    }
-    // Walk forward from anchor to fill remaining space
-    var last_visible: usize = anchor;
-    while (last_visible < log_count and total_rows < available) {
-        const entry = log_entries[last_visible];
-        const entry_rows: u16 = @intCast(if (entry.len == 0) 1 else (entry.len + cw - 1) / cw);
-        const rows_with_pad = entry_rows + 1;
-        if (total_rows + rows_with_pad > available) break;
-        total_rows += rows_with_pad;
-        last_visible += 1;
+        first_visible = idx;
+        total_rows += needed;
+        if (total_rows >= available) break;
     }
     log_at_top = first_visible == 0;
 
+    // Render entries top-down from first_visible to anchor
     var row: u16 = 1;
-    for (log_entries[first_visible..last_visible], first_visible..) |entry, i| {
+    var ei: usize = first_visible;
+    while (ei < anchor) : (ei += 1) {
         if (row >= content.height) break;
-        // Color by side; older entries fade out
-        const entry_style = if (std.mem.startsWith(u8, entry, "Corp:"))
+        const entry = log_entries[ei];
+
+        // Color by side
+        const entry_style = if (std.mem.startsWith(u8, entry, "Corp"))
             Cell.Style{ .fg = color.corp }
-        else if (std.mem.startsWith(u8, entry, "Runner:"))
+        else if (std.mem.startsWith(u8, entry, "Runner"))
             Cell.Style{ .fg = color.runner }
         else
             sty.dim_text;
 
         // First line: show step number prefix
-        const num_text = fmt("{d}. ", .{i + 1});
+        const num_text = fmt("{d}. ", .{ei + 1});
         const prefix_len = num_text.len;
         _ = content.print(&.{
             .{ .text = num_text, .style = sty.dim_text },
             .{ .text = entry[0..@min(entry.len, cw -| prefix_len)], .style = entry_style },
         }, .{ .row_offset = row });
         if (row < log_row_entry.len) {
-            log_row_entry[row] = i;
+            log_row_entry[row] = ei;
             log_row_entry_count = row + 1;
         }
         row +|= 1;
@@ -414,7 +456,7 @@ fn render_log(win: Window) void {
                 .row_offset = row,
             });
             if (row < log_row_entry.len) {
-                log_row_entry[row] = i;
+                log_row_entry[row] = ei;
                 log_row_entry_count = row + 1;
             }
             offset += line_len;
@@ -593,6 +635,35 @@ fn render_player_section(win: Window, h: ?*anyopaque, player: c_int, start_row: 
         _ = win.print(&.{.{ .text = stat, .style = sty.credits }}, .{ .row_offset = row });
     }
     row +|= 1;
+
+    // Scored area
+    const scored_count = api.netrunner_scored_count(h, player);
+    if (scored_count > 0) {
+        var scored_line: []const u8 = " Scored:";
+        var si: c_int = 0;
+        while (si < scored_count) : (si += 1) {
+            var sbuf: [128]u8 = undefined;
+            const slen = api.netrunner_scored_name(h, player, si, &sbuf, sbuf.len);
+            const sname = api_name(&sbuf, slen);
+            const pts = api.netrunner_scored_points(h, player, si);
+            const scode = api.netrunner_scored_code(h, player, si);
+            scored_line = fmt("{s} {s}({d})", .{ scored_line, sname, pts });
+            // Register hover target for scored card
+            if (scode > 0 and board_card_count < board_cards.len) {
+                const col_start: u16 = @intCast(scored_line.len -| (sname.len + 3));
+                board_cards[board_card_count] = .{
+                    .row = row,
+                    .col_start = col_start,
+                    .col_end = @intCast(scored_line.len),
+                    .code = scode,
+                };
+                board_card_count += 1;
+            }
+            if (si < scored_count - 1) scored_line = fmt("{s},", .{scored_line});
+        }
+        _ = win.print(&.{.{ .text = scored_line, .style = sty.dim_text }}, .{ .row_offset = row });
+        row +|= 1;
+    }
 
     if (player == 0) return render_servers(win, h, row) else return render_rig(win, h, row);
 }
@@ -953,7 +1024,7 @@ fn handle_mouse(mouse: vaxis.Mouse) void {
         hover_card_code = 0;
         if (row < log_row_entry_count) {
             const entry_idx = log_row_entry[row];
-            if (entry_idx < log_count) {
+            if (entry_idx != log_row_no_entry and entry_idx < log_count) {
                 hover_card_code = log_card_codes[entry_idx];
             }
         }
@@ -1003,6 +1074,7 @@ fn start_game_with(matchup: c_int, seed: u64) void {
         selected_action = 0;
         game_step = 0;
         log_count = 0;
+        last_synced_log = 0;
         status_msg = "";
         input_len = 0;
         auto_advance();
@@ -1010,14 +1082,9 @@ fn start_game_with(matchup: c_int, seed: u64) void {
 }
 
 fn log_and_apply(h: ?*anyopaque, idx: c_int) bool {
-    var buf: [256]u8 = undefined;
-    const len = api.netrunner_action_description(h, idx, &buf, buf.len);
-    const desc = if (len > 0) buf[0..@intCast(len)] else "?";
-    const deciding = api.netrunner_current_player(h);
-    const card_code = api.netrunner_context_card_code(h, idx);
-
     if (api.netrunner_apply_action(h, idx) == 0) {
-        add_log_with_card(card_code, "{s}: {s}", .{ side_label(deciding), desc });
+        sync_engine_log(h);
+        log_scroll_offset = 0;
         if (action_replay) |*r| r.record(idx) catch {};
         game_step += 1;
         return true;
@@ -1151,24 +1218,21 @@ fn load_game() void {
     selected_action = 0;
     game_step = 0;
     log_count = 0;
+    last_synced_log = 0;
     add_log("Loaded {s}", .{path});
     status_msg = "";
     input_len = 0;
 
-    // Replay all saved actions, logging each one (without re-recording to replay)
+    // Replay all saved actions
     for (loaded.actions.items) |idx| {
-        var buf: [256]u8 = undefined;
-        const len = api.netrunner_action_description(h, idx, &buf, buf.len);
-        const desc = if (len > 0) buf[0..@intCast(len)] else "?";
-        const deciding = api.netrunner_current_player(h);
-        const card_code = api.netrunner_context_card_code(h, idx);
         if (api.netrunner_apply_action(h, idx) != 0) {
             status_msg = "Replay failed";
             break;
         }
-        add_log_with_card(card_code, "{s}: {s}", .{ side_label(deciding), desc });
         game_step += 1;
     }
+    sync_engine_log(h);
+    log_scroll_offset = 0;
     auto_advance();
 }
 
@@ -1266,6 +1330,9 @@ pub fn main() !void {
 
         const win = vx.window();
         win.clear();
+
+        // Sync any new engine log entries before render
+        if (game_handle) |h| sync_engine_log(h);
 
         switch (current_screen) {
             .menu => render_menu(win),

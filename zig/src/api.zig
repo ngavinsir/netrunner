@@ -917,3 +917,61 @@ pub export fn netrunner_prompt_source(handle: ?*anyopaque, player: c_int, buf: [
     const card = prompt.source_card orelse return 0;
     return write_str(buf, buf_size, card.title);
 }
+
+// ============================================================
+// Game log
+// ============================================================
+
+pub export fn netrunner_log_count(handle: ?*anyopaque) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    return @intCast(game.log_entries.items.len);
+}
+
+pub export fn netrunner_log_side(handle: ?*anyopaque, index: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return -1;
+    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.items.len) return -1;
+    return if (game.log_entries.items[@intCast(index)].side == .corp) 0 else 1;
+}
+
+pub export fn netrunner_log_text(handle: ?*anyopaque, index: c_int, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.items.len) return 0;
+    return write_str(buf, buf_size, game.log_entries.items[@intCast(index)].text);
+}
+
+pub export fn netrunner_log_card_code(handle: ?*anyopaque, index: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.items.len) return 0;
+    return @intCast(game.log_entries.items[@intCast(index)].card_code);
+}
+
+// ============================================================
+// Scored cards
+// ============================================================
+
+pub export fn netrunner_scored_count(handle: ?*anyopaque, player: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    const scored = if (player == 0) game.corp_scored.items else game.runner_scored.items;
+    return @intCast(scored.len);
+}
+
+pub export fn netrunner_scored_name(handle: ?*anyopaque, player: c_int, index: c_int, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    const scored = if (player == 0) game.corp_scored.items else game.runner_scored.items;
+    if (index < 0 or @as(usize, @intCast(index)) >= scored.len) return 0;
+    return write_str(buf, buf_size, scored[@intCast(index)].title);
+}
+
+pub export fn netrunner_scored_code(handle: ?*anyopaque, player: c_int, index: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    const scored = if (player == 0) game.corp_scored.items else game.runner_scored.items;
+    if (index < 0 or @as(usize, @intCast(index)) >= scored.len) return 0;
+    return @intCast(scored[@intCast(index)].code orelse 0);
+}
+
+pub export fn netrunner_scored_points(handle: ?*anyopaque, player: c_int, index: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return 0;
+    const scored = if (player == 0) game.corp_scored.items else game.runner_scored.items;
+    if (index < 0 or @as(usize, @intCast(index)) >= scored.len) return 0;
+    return @intCast(scored[@intCast(index)].agenda_points orelse 0);
+}
