@@ -61,6 +61,10 @@ pub const CardSpec = struct {
     on_score_msg: ?[]const u8 = null, // logged after on_score_fn fires
     // For prompt-based abilities: auto-log choice text as "{Side} uses {title} to {choice}."
     log_prompt_choice: bool = false,
+    // Identity click ability (Topan, AU Co.)
+    identity_ability_click_cost: u8 = 0, // 0 = no identity ability; N = costs N clicks
+    identity_ability_once_per_turn: bool = true,
+    identity_ability_label: ?[]const u8 = null,
 };
 
 /// Deferred effect for the async continuation queue.
@@ -1207,7 +1211,66 @@ pub const all_cards = [_]CardSpec{
     },
     .{ .title = "Topan: Ormas Leader", .side = .runner, .code = 35002, .card_type = "Identity", .subtypes = &.{"Natural"},
         // "click: Install 1 card from grip, paying 2cr less. Suffer 1 meat damage."
-        // Needs identity click ability (new action type) — complex engine pattern
+        .identity_ability_click_cost = 1,
+        .identity_ability_once_per_turn = true,
+        .identity_ability_label = "Install 1 card, paying 2[credit] less. Suffer 1 meat damage.",
+        .on_play = &struct {
+            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+                // Build installable choices from grip (hardware, resource, program that can be afforded -2cr)
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                defer choices.deinit(allocator);
+                for (g.runner_hand.items) |h| {
+                    if (h.runner_install.kind == .none) continue;
+                    const base_cost: u16 = h.cost orelse 0;
+                    const adjusted_cost = if (base_cost >= 2) base_cost - 2 else 0;
+                    if (g.runner_credit < adjusted_cost) continue;
+                    try choices.append(allocator, .{ .kind = .card, .text = h.title, .card = .{
+                        .title = h.title, .code = h.code, .side = .runner,
+                    } });
+                }
+                if (choices.items.len == 0) return; // no installable cards
+                try choices.append(allocator, stringChoice("No action"));
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "topan-install"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = g.runner_identity,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                if (std.mem.eql(u8, choice_text, "No action")) {
+                    g.runner_prompt_state = null;
+                    const allocator = g.arena.allocator();
+                    g.decision_side = .runner;
+                    g.legal_actions = try runnerOpeningActionsForState(allocator, g);
+                    return;
+                }
+                // Find card in hand and install paying 2cr less
+                for (g.runner_hand.items, 0..) |card, idx| {
+                    if (std.mem.eql(u8, card.title, choice_text)) {
+                        const base_cost: u16 = card.cost orelse 0;
+                        const adjusted_cost = if (base_cost >= 2) base_cost - 2 else 0;
+                        g.runner_prompt_state = null;
+                        try completeRunnerInstall(g, @intCast(idx), card, adjusted_cost);
+                        // Suffer 1 meat damage (trash top card of hand)
+                        if (g.runner_hand.items.len > 0) {
+                            const trashed = g.runner_hand.orderedRemove(0);
+                            try appendDiscardCard(g, .runner, trashed);
+                        }
+                        updateTerminalState(g);
+                        if (g.game_over) return;
+                        const allocator = g.arena.allocator();
+                        g.decision_side = .runner;
+                        g.legal_actions = try runnerOpeningActionsForState(allocator, g);
+                        return;
+                    }
+                }
+            }
+        }.choice,
     },
     .{ .title = "Barry \xe2\x80\x9cBaz\xe2\x80\x9d Wong: Tri-Maf Veteran", .side = .runner, .code = 35012, .card_type = "Identity", .subtypes = &.{"Cyborg"},
         // "Whenever the Corp rezzes a piece of ice, you may install 1 resource or piece of hardware from your grip."
@@ -3678,6 +3741,9 @@ pub fn applyAction(
             const choice = action.choice orelse return error.MissingChoice;
             const choice_text = choice.text orelse return error.MissingChoice;
             try applyScoreAgendaChoice(generated, choice_text);
+        },
+        .use_identity_ability => {
+            try applyIdentityAbility(generated, action.side);
         },
         else => return error.UnsupportedAction,
     }
@@ -6357,6 +6423,31 @@ fn applyRunFromAbility(
     generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
 }
 
+fn applyIdentityAbility(generated: *Game, side: state.Side) !void {
+    const identity = if (side == .runner) &generated.runner_identity else &generated.corp_identity;
+    const code = identity.code orelse return error.UnsupportedAction;
+    const spec = lookupCardSpecByCode(code) orelse return error.UnsupportedAction;
+    if (spec.identity_ability_click_cost == 0) return error.UnsupportedAction;
+    if (spec.identity_ability_once_per_turn and identity.ability_used_this_turn) return error.AbilityAlreadyUsed;
+
+    try spendClicks(generated, side, spec.identity_ability_click_cost);
+    identity.ability_used_this_turn = true;
+
+    if (spec.on_play) |handler| {
+        generated.systemMsg(side, code, "{s} spends [click] to use {s}.", .{ sideName(side), identity.title });
+        try handler(generated, identity.*);
+    }
+    if (!hasActivePrompt(generated)) {
+        const allocator = generated.arena.allocator();
+        generated.decision_side = side;
+        if (side == .runner) {
+            generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+        } else {
+            generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
+        }
+    }
+}
+
 fn applyInstalledAbility(
     generated: *Game,
     side: state.Side,
@@ -8879,11 +8970,23 @@ fn runnerOpeningActionsForState(
     const program_ability_count = countRunnerInstalledAbilityActions(g.runner_rig_program.items, g.turn_events);
     const installed_ability_count = resource_ability_count + hardware_ability_count + program_ability_count;
 
+    // Identity click ability (Topan: install from grip paying 2cr less)
+    const identity_ability_available = blk: {
+        if (lookupCardSpecByCode(g.runner_identity.code orelse 0)) |id_spec| {
+            if (id_spec.identity_ability_click_cost > 0 and
+                g.runner_click >= id_spec.identity_ability_click_cost and
+                (!id_spec.identity_ability_once_per_turn or !g.runner_identity.ability_used_this_turn))
+                break :blk true;
+        }
+        break :blk false;
+    };
+
     var count: usize = playable_hand_count + installed_ability_count;
     if (g.runner_click >= 1) count += 1; // gain credit
     if (g.runner_click >= 1 and g.runner_deck.items.len > 0) count += 1; // draw card
     if (g.runner_click >= 1) count += runnable_servers.len; // run actions
     if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) count += 1;
+    if (identity_ability_available) count += 1;
 
     const actions = try allocator.alloc(state.LegalAction, count);
     var next: usize = 0;
@@ -8958,6 +9061,17 @@ fn runnerOpeningActionsForState(
     if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) {
         actions[next] = try basicAbilityAction(allocator, .runner, .remove_tag, "Remove 1 tag");
         next += 1;
+    }
+    if (identity_ability_available) {
+        if (lookupCardSpecByCode(g.runner_identity.code orelse 0)) |id_spec| {
+            actions[next] = .{
+                .kind = .use_identity_ability,
+                .side = .runner,
+                .card_title = try allocator.dupe(u8, g.runner_identity.title),
+                .label = try allocator.dupe(u8, id_spec.identity_ability_label orelse "Use identity ability"),
+            };
+            next += 1;
+        }
     }
 
     return actions;

@@ -1077,6 +1077,7 @@ fn actionKindName(kind: state.ActionKind) []const u8 {
         .rez_ice => "rez-ice",
         .advance => "advance",
         .score => "score",
+        .use_identity_ability => "use-ability", // Map to Clojure's use-ability for oracle
     };
 }
 

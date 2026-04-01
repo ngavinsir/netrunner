@@ -36,6 +36,7 @@ pub const ActionKind = enum {
     rez_ice,
     advance,
     score,
+    use_identity_ability, // Topan, AU Co.: click ability on identity card
 };
 
 pub const BasicAction = enum(u8) {

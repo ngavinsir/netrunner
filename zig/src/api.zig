@@ -237,6 +237,7 @@ fn format_action(game: *Game, action: state.LegalAction, buf: *[256]u8) []const 
             break :blk std.fmt.bufPrint(buf, "Score: {s}", .{title}) catch "Score";
         },
         .flashback => std.fmt.bufPrint(buf, "Flashback: {s}", .{action.card_title orelse "?"}) catch "Flashback",
+        .use_identity_ability => std.fmt.bufPrint(buf, "ID: {s}", .{action.label orelse action.card_title orelse "?"}) catch "ID ability",
     };
 }
 

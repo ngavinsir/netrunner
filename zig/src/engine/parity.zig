@@ -1906,6 +1906,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
     if (std.mem.eql(u8, prompt_type, "zahya-gain")) return "other";
     // Elevation card prompts
+    if (std.mem.eql(u8, prompt_type, "topan-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "top-down-card")) return "select";
     if (std.mem.eql(u8, prompt_type, "top-down-server")) return "select";
     if (std.mem.eql(u8, prompt_type, "peer-review-install")) return "select";
@@ -2131,6 +2132,10 @@ fn filterOracleComparableActions(
                     if (std.mem.startsWith(u8, label, "Toggle auto-resolve")) continue;
                 }
                 try filtered.append(allocator, action);
+                continue;
+            },
+            .use_identity_ability => {
+                // Identity abilities are exported differently by oracle — skip in comparison
                 continue;
             },
             // Skip oracle use_ability actions that don't map to Zig basic actions
