@@ -580,7 +580,7 @@ pub const all_cards = [_]CardSpec{
     },
     .{ .title = "Wildcat Strike", .side = .runner, .code = 30002, .card_type = "Event", .cost = 2, .runner_play = .{ .kind = .custom }, .log_prompt_choice = true,
         .on_play = &struct {
-            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -590,7 +590,7 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try wildcat_strike_choices(allocator),
-                    .source_card = null,
+                    .source_card = card,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
@@ -2829,6 +2829,16 @@ fn applyPromptChoice(
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "ballista-trash")) {
         try applyBallistaTrashChoice(generated, choice_text);
         return;
+    }
+
+    // Install-ICE subroutine prompt (Brân, Scatter Field): "other" type with pending_subroutine
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "other")) {
+        if (generated.run) |run| {
+            if (run.pending_subroutine) |_| {
+                try applyBranInstallIceChoice(generated, choice_text);
+                return;
+            }
+        }
     }
 
     // Funhouse on-encounter and other ICE on-encounter prompts

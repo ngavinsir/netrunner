@@ -5323,3 +5323,71 @@ test "empiricist install parity test" {
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
+
+test "e2e elevation neutral game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 3;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var last_turn: u16 = 0;
+    var step: u32 = 0;
+    while (step < 3000 and !generated.game_over) : (step += 1) {
+        // Resolve discard prompts locally (not recorded)
+        if (resolveOneDiscardPrompt(&generated) catch false) continue;
+
+        // Oracle parity check at each new turn
+        if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
+            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
+            defer allocator.free(scenario_actions);
+            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== ELEVATION NEUTRAL DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d}\n", .{
+                    replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
+                    replay.snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    replay.snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
+                });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
+                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
+                std.debug.print("  last actions:\n", .{});
+                const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            last_turn = generated.turn;
+        }
+
+        const action = pickE2eAction(&generated);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== ELEVATION NEUTRAL ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" title={s}", .{t});
+            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            std.debug.print("\n", .{});
+            return err;
+        };
+    }
+
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
+}
