@@ -1255,6 +1255,7 @@ pub const all_cards = [_]CardSpec{
         .initial_credit_counters = 6,
         .take_credits_amount = 2,
         .trash_on_empty = true,
+        .clicks_on_empty = 2,
     } },
     .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
@@ -1265,7 +1266,7 @@ pub const all_cards = [_]CardSpec{
         .initial_credit_counters = 8,
         .take_credits_amount = 4,
         .trash_on_empty = true,
-        .draw_on_empty = 0,
+        .draw_on_take = 1,
     } },
     .{ .title = "Plutus", .side = .corp, .code = 35073, .card_type = "Asset", .subtypes = &.{"Deep Net"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     // --- Elevation Upgrades ---
@@ -7666,11 +7667,19 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
                 const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
                 card.credit_counter -= take;
                 game.corp_credit += take;
+                // Draw cards on each take (Anthill Excavation)
+                if (card.installed_ability.draw_on_take > 0) {
+                    try drawCards(game, .corp, card.installed_ability.draw_on_take);
+                }
 
                 if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
                     // Draw cards before trashing if draw_on_empty > 0
                     if (card.installed_ability.draw_on_empty > 0) {
                         try drawCards(game, .corp, card.installed_ability.draw_on_empty);
+                    }
+                    // Gain clicks on empty (Otto Campaign)
+                    if (card.installed_ability.clicks_on_empty > 0) {
+                        game.corp_click += card.installed_ability.clicks_on_empty;
                     }
                     const trashed = server.content.orderedRemove(i);
                     try appendDiscardCard(game, .corp, trashed);

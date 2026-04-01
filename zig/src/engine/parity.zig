@@ -5391,3 +5391,148 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
     try std.testing.expect(generated.game_over);
     try std.testing.expect(generated.winner != null);
 }
+
+test "e2e elevation hb game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 7;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var last_turn: u16 = 0;
+    var step: u32 = 0;
+    while (step < 3000 and !generated.game_over) : (step += 1) {
+        if (resolveOneDiscardPrompt(&generated) catch false) continue;
+        if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
+            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
+            defer allocator.free(scenario_actions);
+            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== ELEVATION HB DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" t={s}", .{t});
+                    if (sa.choice) |c| if (c.text) |t| std.debug.print(" c={s}", .{t});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            last_turn = generated.turn;
+        }
+        const action = pickE2eAction(&generated);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== ELEVATION HB ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" t={s}", .{t});
+            std.debug.print("\n", .{});
+            return err;
+        };
+    }
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
+}
+
+test "e2e elevation weyland game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 21;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var last_turn: u16 = 0;
+    var step: u32 = 0;
+    while (step < 3000 and !generated.game_over) : (step += 1) {
+        if (resolveOneDiscardPrompt(&generated) catch false) continue;
+        if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
+            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
+            defer allocator.free(scenario_actions);
+            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== ELEVATION WEYLAND DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" t={s}", .{t});
+                    if (sa.choice) |c| if (c.text) |t| std.debug.print(" c={s}", .{t});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            last_turn = generated.turn;
+        }
+        const action = pickE2eAction(&generated);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== ELEVATION WEYLAND ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" t={s}", .{t});
+            std.debug.print("\n", .{});
+            return err;
+        };
+    }
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
+}
+
+test "e2e elevation jinteki game plays to completion with oracle parity" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = 3;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
+    defer generated.deinit();
+
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    var last_turn: u16 = 0;
+    var step: u32 = 0;
+    while (step < 3000 and !generated.game_over) : (step += 1) {
+        if (resolveOneDiscardPrompt(&generated) catch false) continue;
+        if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
+            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
+            defer allocator.free(scenario_actions);
+            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
+            defer replay.deinit();
+            const gen_snapshot = try generated.toSnapshot();
+            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+                std.debug.print("\n=== ELEVATION JINTEKI DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
+                for (actions.items[start..], start..) |sa, ai| {
+                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
+                    if (sa.card_title) |t| std.debug.print(" t={s}", .{t});
+                    if (sa.choice) |c| if (c.text) |t| std.debug.print(" c={s}", .{t});
+                    std.debug.print("\n", .{});
+                }
+                return err;
+            };
+            last_turn = generated.turn;
+        }
+        const action = pickE2eAction(&generated);
+        takeAction(allocator, &actions, &generated, action) catch |err| {
+            std.debug.print("\n=== ELEVATION JINTEKI ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
+            std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
+            if (action.card_title) |t| std.debug.print(" t={s}", .{t});
+            std.debug.print("\n", .{});
+            return err;
+        };
+    }
+    try std.testing.expect(generated.game_over);
+    try std.testing.expect(generated.winner != null);
+}
