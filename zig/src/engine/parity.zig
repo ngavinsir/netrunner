@@ -4769,6 +4769,23 @@ fn findCardInstallByCode(_: *const game.Game, actions: []const state.LegalAction
     return null;
 }
 
+fn findCardInstallByType(gen: *const game.Game, actions: []const state.LegalAction, card_type: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand and a.kind != .install_from_hand) continue;
+        if (a.card_title) |title| {
+            // Check corp hand for matching card type
+            for (gen.corp_hand.items) |h| {
+                if (std.mem.eql(u8, h.title, title)) {
+                    if (h.card_type) |ct| {
+                        if (std.mem.eql(u8, ct, card_type)) return a;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}
+
 fn findAnyAdvanceAction(actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind == .advance) return a;
@@ -6844,6 +6861,612 @@ test "next big thing install parity test" {
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+// --- Parity tests for remaining Elevation runner cards (elevation-runner2 matchup) ---
+
+test "gourmand install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35007) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35007) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "cacophony install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35010 and g.runner_credit >= 3) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35010) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "detente install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35018 and g.runner_credit >= 3) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35018) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "maglectric rapid install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35019 and g.runner_credit >= 1) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35019) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "fransofia ward install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35021 and g.runner_credit >= 3) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35021) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "gamedragon pro install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35027 and g.runner_credit >= 2) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35027) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "madani install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35028 and g.runner_credit >= 2) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35028) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "azimat install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35029 and g.runner_credit >= 1) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35029) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "devadatta drone install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35031 and g.runner_credit >= 1) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35031) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "knickknack install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35033 and g.runner_credit >= 2) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35033) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "chromatophores install parity test" {
+    // Chromatophores is a trojan - needs ICE installed to host on
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 1000) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            flow.applyMulliganChoice(&g, .corp, .keep) catch continue;
+            flow.applyMulliganChoice(&g, .runner, .keep) catch continue;
+            generator.corpStartTurnFull(&g) catch continue;
+            // Check if corp has any ICE in hand
+            var has_ice_in_hand = false;
+            for (g.corp_hand.items) |h| {
+                if (h.install.kind == .corp_server_choice) { has_ice_in_hand = true; break; }
+            }
+            if (!has_ice_in_hand) continue;
+            // Install ICE from hand
+            if (findCardInstallByType(&g, g.legal_actions, "ICE")) |ice_action| {
+                flow.applyAction(&g, ice_action) catch continue;
+            } else continue;
+            // Handle server choice prompt
+            if (g.corp_prompt_state) |ps| {
+                if (ps.choices.len > 0) {
+                    flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = ps.prompt_type, .choice = ps.choices[0] }) catch continue;
+                }
+            }
+            // Gain credits for remaining clicks
+            var c: u8 = 0;
+            while (c < 2) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    flow.applyAction(&g, a) catch break
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                flow.applyAction(&g, a) catch continue;
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } }) catch break;
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                flow.applyAction(&g, a) catch continue
+            else continue;
+            // Check runner has Chromatophores and there is ICE
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35030 and g.runner_credit >= 1) {
+                    for (g.corp_servers.items) |server| {
+                        if (server.ices.items.len > 0) break :blk s;
+                    }
+                }
+            }
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    // Install ICE
+    try takeAction(allocator, &actions, &generated, findCardInstallByType(&generated, generated.legal_actions, "ICE") orelse return error.MissingAction);
+    if (generated.corp_prompt_state) |ps| {
+        if (ps.choices.len > 0) {
+            try takeAction(allocator, &actions, &generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = ps.prompt_type, .choice = ps.choices[0] });
+        }
+    }
+    // Corp gains credits
+    var c: u8 = 0;
+    while (c < 2) : (c += 1) {
+        if (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |a|
+            try takeAction(allocator, &actions, &generated, a)
+        else break;
+    }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35030) orelse return error.MissingAction);
+    // Handle trojan host selection prompt
+    if (generated.runner_prompt_state) |ps| {
+        if (ps.choices.len > 0) {
+            try takeAction(allocator, &actions, &generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = ps.prompt_type, .choice = ps.choices[0] });
+        }
+    }
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }

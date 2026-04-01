@@ -251,6 +251,19 @@ pub const InstalledAbilitySpec = struct {
     is_trojan: bool = false, // Botulus, Tranquilizer: install on ICE
     trojan_break_any: bool = false, // Botulus: spend virus counter to break any subroutine
     trojan_derez_threshold: u8 = 0, // Tranquilizer: derez host ICE at N+ virus counters
+    // Elevation pack fields
+    initial_virus_counters: u8 = 0, // Hantu: place N virus counters on install (instead of just 1)
+    pump_uses_virus_counters: bool = false, // Hantu: pump costs 1 virus counter instead of credits
+    strength_per_heap_fracter: bool = false, // Rising Tide: +1 str per fracter in heap
+    pump_discount_if_run_event: u16 = 0, // Sang Kancil: reduce pump cost by N if run event active
+    recurring_credits: u8 = 0, // Azimat: refill hosted credits to N each turn
+    initial_power_counters: u8 = 0, // Devadatta Drone: place N power counters on install
+    trojan_adds_all_subtypes: bool = false, // Chromatophores: host ICE gains all 3 subtypes
+    credit_on_run_start: bool = false, // Side Hustle: place 1 credit when any run starts
+    auto_trash_at_credits: u8 = 0, // Side Hustle: auto-trash + take all credits at N+ hosted credits
+    draw_on_auto_trash: u8 = 0, // Side Hustle: draw N cards when auto-trashed at threshold
+    rez_cost_increase: u8 = 0, // Fransofia Ward: increase rez cost of all ICE by N
+    install_cost_reduction_per_icebreaker: bool = false, // Principia: -1 install cost per installed icebreaker
 };
 
 pub const GameEvent = enum(u8) {
@@ -264,6 +277,7 @@ pub const GameEvent = enum(u8) {
     corp_rez_ice, // Barry: install on rez
     operation_played, // Nebula, Zwicky: operation triggers
     runner_turn_begins, // MuslihaT: top-of-deck peek
+    run_begins, // Side Hustle, Knickknack: triggers when any run begins
 };
 
 pub const CardReference = struct {
@@ -450,6 +464,8 @@ pub const TurnEvents = struct {
     runner_trash_corp_card_count: u8 = 0, // How many times runner trashed corp cards on access this turn
     successful_run_ends_count: u8 = 0, // How many successful runs ended this turn (for HQ/R&D)
     operation_played_count: u8 = 0, // How many operations played this turn (Zwicky)
+    cacophony_triggered: bool = false, // Cacophony: first steal/trash event this turn
+    knickknack_triggered: bool = false, // Knickknack: first run this turn
 };
 
 pub const LegalAction = struct {

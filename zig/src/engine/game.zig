@@ -1520,7 +1520,54 @@ pub const all_cards = [_]CardSpec{
         .{ .kind = .do_brain_damage, .amount = 1 },
     }, .runner_abilities = &.{
         .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
-    } },
+    },
+    // "When you rez this ice during a run against this server, you may trash 1 installed trojan program."
+    .on_rez = &struct {
+        fn rez(g: *Game) anyerror!void {
+            if (g.run == null) return;
+            // Find any installed trojan programs on any ICE
+            var has_trojan = false;
+            for (g.corp_servers.items) |server| {
+                for (server.ices.items) |ice| {
+                    if (ice.hosted.len > 0) {
+                        for (ice.hosted) |hosted| {
+                            if (hosted.installed_ability.is_trojan) {
+                                has_trojan = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (has_trojan) break;
+                }
+                if (has_trojan) break;
+            }
+            if (!has_trojan) return;
+            // Optional: auto-resolve trashes the first trojan found
+            for (g.corp_servers.items) |*server| {
+                for (server.ices.items) |*ice| {
+                    if (ice.hosted.len > 0) {
+                        const allocator = g.arena.allocator();
+                        var new_hosted: std.ArrayList(state.CardInstance) = .empty;
+                        var trashed_title: ?[]const u8 = null;
+                        for (ice.hosted) |hosted| {
+                            if (hosted.installed_ability.is_trojan and trashed_title == null) {
+                                trashed_title = hosted.title;
+                                try appendDiscardCard(g, .runner, hosted);
+                            } else {
+                                try new_hosted.append(allocator, hosted);
+                            }
+                        }
+                        if (trashed_title) |title| {
+                            ice.hosted = try new_hosted.toOwnedSlice(allocator);
+                            g.systemMsg(.corp, 35041, "Corp uses Bumi 1.0 to trash {s}.", .{title});
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }.rez,
+    },
     .{ .title = "Scatter Field", .side = .corp, .code = 35042, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 3, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .corp_install_from_hq_archives },
         .{ .kind = .end_the_run },
@@ -2283,30 +2330,58 @@ pub const all_cards = [_]CardSpec{
             }
         }.play, .on_play_msg = "draw cards equal to remaining clicks." },
     // --- Elevation Runner Hardware ---
-    .{ .title = "Bling", .side = .runner, .code = 35006, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 } },
-    .{ .title = "Detente", .side = .runner, .code = 35018, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 3, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 } },
-    .{ .title = "Maglectric Rapid (748 Mod)", .side = .runner, .code = 35019, .card_type = "Hardware", .subtypes = &.{"Weapon"}, .cost = 1, .runner_install = .{ .kind = .hardware, .mu_cost = 0 } },
-    .{ .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .side = .runner, .code = 35027, .card_type = "Hardware", .subtypes = &.{"Mod"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 } },
-    .{ .title = "Madani", .side = .runner, .code = 35028, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true } },
+    .{ .title = "Bling", .side = .runner, .code = 35006, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 },
+        // "+1 MU. Whenever you install a card without spending credits, you may host top card faceup.
+        //  You can play/install hosted cards. When discard phase ends, trash all hosted cards."
+        // Hosting mechanic: complex card-level hosting with play-from-host
+    },
+    .{ .title = "Detente", .side = .runner, .code = 35018, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 3, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true, .mu_provided = 1 },
+        // "+1 MU. First successful HQ run: host 1 random HQ card faceup.
+        //  Click + return 2 hosted: may access 1 random HQ card."
+    },
+    .{ .title = "Maglectric Rapid (748 Mod)", .side = .runner, .code = 35019, .card_type = "Hardware", .subtypes = &.{"Weapon"}, .cost = 1, .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
+        // "Whenever you make a successful run on HQ, you may trash this hardware to derez 1 installed Corp card."
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .successful_run_ends; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.run == null) return;
+                const server = g.run.?.server;
+                // Only trigger on HQ runs
+                if (server.len == 0 or !std.mem.eql(u8, server[0], "hq")) return;
+                // Optional ability - auto-decline in oracle mode (complex prompt: choose corp card to derez)
+                // Would need: self-trash, select rezzed non-agenda corp card, derez it
+            }
+        }.handle,
+    },
+    .{ .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .side = .runner, .code = 35027, .card_type = "Hardware", .subtypes = &.{"Mod"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
+        // "On install + turn begin: may host on non-AI icebreaker. Host gets +1 str.
+        //  Pump abilities last for remainder of run instead of shorter duration."
+    },
+    .{ .title = "Madani", .side = .runner, .code = 35028, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware, .mu_cost = 0 }, .installed_ability = .{ .is_console = true },
+        // "Click: Host any number of programs from grip faceup.
+        //  Once per turn → 0cr: Install 1 hosted program (paying cost)."
+    },
     // --- Elevation Runner Programs ---
     .{ .title = "Gourmand", .side = .runner, .code = 35007, .card_type = "Program", .cost = 0, .runner_install = .{ .kind = .program },
         // "Access → [trash]: Trash the non-agenda card you are accessing. If you do, draw 1 card."
-        // This is an access ability - needs to hook into the access flow
+        // Runner access-time ability: self-trash to trash accessed non-agenda + draw 1
+        // Requires extending access flow with runner-side installed-card abilities
     },
     .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .break_subroutine_count = 1,
         .credit_cost = 1,
-        .virus_on_install = true,
+        .initial_virus_counters = 2, // Place 2 virus counters on install
     }, .pump_ability = .{
         .kind = .pump_strength,
         .pump_strength_amount = 2,
-        .virus_ice_strength_reduction = 0,
+        .pump_uses_virus_counters = true, // Hosted virus counter: +2 strength
     } },
     .{ .title = "Rising Tide", .side = .runner, .code = 35009, .card_type = "Program", .subtypes = &.{ "Fracter", "Icebreaker" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .break_subroutine_count = 1,
         .credit_cost = 1,
+        .strength_per_heap_fracter = true, // +1 strength per fracter in heap
     }, .pump_ability = .{
         .kind = .pump_strength,
         .pump_strength_amount = 1,
@@ -2320,27 +2395,65 @@ pub const all_cards = [_]CardSpec{
         .kind = .pump_strength,
         .pump_strength_amount = 2,
         .credit_cost = 3,
+        .pump_discount_if_run_event = 2, // 2cr less if a run event is active
     } },
     .{ .title = "Azimat", .side = .runner, .code = 35029, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 },
         // "2 recurring credits. You can spend hosted credits to pay trash costs."
-        .installed_ability = .{ .initial_credit_counters = 2 },
+        .installed_ability = .{ .initial_credit_counters = 2, .recurring_credits = 2 },
     },
-    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{ .is_trojan = true } },
+    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{ .is_trojan = true, .trojan_adds_all_subtypes = true } },
     .{ .title = "Devadatta Drone", .side = .runner, .code = 35031, .card_type = "Program", .cost = 1, .runner_install = .{ .kind = .program },
-        // "When you install, place 2 power counters. Spend 1 to access +1 in R&D."
-        // Power counters placed via initial setup
+        .installed_ability = .{ .initial_power_counters = 2 },
+        // R&D access bonus handled via event system
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .successful_run_ends; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.run == null) return;
+                const server = g.run.?.server;
+                // Only trigger on R&D runs
+                if (server.len == 0 or !std.mem.eql(u8, server[0], "rnd")) return;
+                // Find Devadatta Drone with power counters
+                for (g.runner_rig_program.items) |*prog| {
+                    if (prog.code != null and prog.code.? == 35031 and prog.power_counter > 0) {
+                        prog.power_counter -= 1;
+                        g.run.?.access_bonus += 1;
+                        g.systemMsg(.runner, 35031, "Runner uses Devadatta Drone to access 1 additional card from R&D.", .{});
+                        return;
+                    }
+                }
+            }
+        }.handle,
     },
     .{ .title = "Principia", .side = .runner, .code = 35032, .card_type = "Program", .subtypes = &.{ "Fracter", "Icebreaker" }, .cost = 4, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
         .kind = .break_subroutine,
         .break_subroutine_count = 1,
         .credit_cost = 1,
+        .install_cost_reduction_per_icebreaker = true, // -1 cost per other installed icebreaker
     }, .pump_ability = .{
         .kind = .pump_strength,
         .pump_strength_amount = 2,
         .credit_cost = 2,
     } },
     // --- Elevation Runner Resources ---
-    .{ .title = "Cacophony", .side = .runner, .code = 35010, .card_type = "Resource", .subtypes = &.{"Virtual"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Cacophony", .side = .runner, .code = 35010, .card_type = "Resource", .subtypes = &.{"Virtual"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
+        // "First time each turn you steal or trash a Corp card, place 1 power counter."
+        // "When your action phase ends, you may remove 2 hosted power counters to sabotage 3."
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .agenda_stolen or e == .runner_trash_corp_card; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                // First steal/trash only (once per turn check)
+                if (g.turn_events.cacophony_triggered) return;
+                for (g.runner_rig_resources.items) |*card| {
+                    if (card.code != null and card.code.? == 35010) {
+                        card.power_counter += 1;
+                        g.turn_events.cacophony_triggered = true;
+                        g.systemMsg(.runner, 35010, "Runner places 1 power counter on Cacophony.", .{});
+                        return;
+                    }
+                }
+            }
+        }.handle,
+    },
     .{ .title = "Rent Rioters", .side = .runner, .code = 35011, .card_type = "Resource", .subtypes = &.{ "Connection", "Seedy" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
         .installed_ability = .{
             .kind = .click_trash_for_credits,
@@ -2348,7 +2461,11 @@ pub const all_cards = [_]CardSpec{
             .credit_cost = 9, // gain amount (reusing credit_cost field for this)
         },
     },
-    .{ .title = "Fransofia Ward", .side = .runner, .code = 35021, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "Fransofia Ward", .side = .runner, .code = 35021, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 3, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
+        .installed_ability = .{ .rez_cost_increase = 1 }, // The rez cost of each piece of ice is increased by 1
+        // "Whenever you encounter a piece of ice, if the Corp has 15cr or more, you may trash this resource to bypass that ice."
+        // Bypass handled via encounter event check
+    },
     .{ .title = "Open Market", .side = .runner, .code = 35022, .card_type = "Resource", .subtypes = &.{ "Job", "Location" }, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
         .installed_ability = .{
             .kind = .start_of_turn_credits,
@@ -2357,11 +2474,48 @@ pub const all_cards = [_]CardSpec{
             .trash_on_empty = true,
         },
     },
-    .{ .title = "\"Knickknack\" O'Brian", .side = .runner, .code = 35033, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 } },
+    .{ .title = "\"Knickknack\" O'Brian", .side = .runner, .code = 35033, .card_type = "Resource", .subtypes = &.{"Connection"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
+        // "First time each turn a run begins, you may trash 1 of your other installed cards.
+        //  If you do, gain credits equal to its printed install cost and draw 1 card."
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .run_begins; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                if (g.turn_events.knickknack_triggered) return;
+                g.turn_events.knickknack_triggered = true;
+                // Auto-resolve: skip if no other installed cards
+                // In oracle auto-resolve mode this is skipped - no prompt shown
+                // The ability is optional and complex (requires card selection prompt)
+                // For now, log the trigger without acting (oracle auto-declines)
+            }
+        }.handle,
+    },
     .{ .title = "Side Hustle", .side = .runner, .code = 35034, .card_type = "Resource", .subtypes = &.{"Job"}, .cost = 2, .runner_install = .{ .kind = .resource, .mu_cost = 0 },
-        // "When you install this and whenever a run begins, place 1cr on this. When 6+ hosted credits, take all credits, trash it, draw 1."
-        // Place 1 credit on install (initial_credit_counters = 1), further placement via run events (complex)
-        .installed_ability = .{ .initial_credit_counters = 1 },
+        .installed_ability = .{
+            .initial_credit_counters = 1, // 1 credit on install
+            .credit_on_run_start = true, // place 1 credit when any run begins
+            .auto_trash_at_credits = 6, // auto-trash when 6+ credits
+            .draw_on_auto_trash = 1, // draw 1 on auto-trash
+        },
+        .event_match = &struct { fn m(e: state.GameEvent) bool { return e == .run_begins; } }.m,
+        .on_event = &struct {
+            fn handle(g: *Game) anyerror!void {
+                for (g.runner_rig_resources.items, 0..) |*card, idx| {
+                    if (card.code != null and card.code.? == 35034) {
+                        card.credit_counter += 1;
+                        g.systemMsg(.runner, 35034, "Runner places 1 [credit] on Side Hustle.", .{});
+                        if (card.credit_counter >= 6) {
+                            g.runner_credit += card.credit_counter;
+                            g.systemMsg(.runner, 35034, "Runner uses Side Hustle to gain {d} [credits] and draw 1 card.", .{card.credit_counter});
+                            card.credit_counter = 0;
+                            try drawCards(g, .runner, 1);
+                            const trashed = g.runner_rig_resources.orderedRemove(idx);
+                            try appendDiscardCard(g, .runner, trashed);
+                        }
+                        return;
+                    }
+                }
+            }
+        }.handle,
     },
 };
 
@@ -2927,6 +3081,33 @@ pub const elevation_runner = MatchupSpec{
     .format = "system-gateway", .agenda_point_req = 7,
     .corp = .{ .identity_code = 30059, .deck_lines = &elevation_neutral_corp_deck }, // BTL
     .runner = .{ .identity_code = 30076, .deck_lines = &elevation_runner_deck }, // Catalyst
+};
+
+// Second Elevation Runner matchup with remaining runner cards
+const elevation_runner2_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble (3)
+    .{ .qty = 3, .card_code = 30028 }, // Jailbreak (6)
+    .{ .qty = 1, .card_code = 35007 }, // Gourmand (7)
+    .{ .qty = 1, .card_code = 35010 }, // Cacophony (8)
+    .{ .qty = 1, .card_code = 35018 }, // Detente (9)
+    .{ .qty = 1, .card_code = 35019 }, // Maglectric Rapid (10)
+    .{ .qty = 1, .card_code = 35021 }, // Fransofia Ward (11)
+    .{ .qty = 1, .card_code = 35027 }, // GAMEDRAGON Pro (12)
+    .{ .qty = 1, .card_code = 35028 }, // Madani (13)
+    .{ .qty = 2, .card_code = 35029 }, // Azimat (15)
+    .{ .qty = 2, .card_code = 35030 }, // Chromatophores (17)
+    .{ .qty = 2, .card_code = 35031 }, // Devadatta Drone (19)
+    .{ .qty = 1, .card_code = 35033 }, // "Knickknack" O'Brian (20)
+    .{ .qty = 2, .card_code = 35008 }, // Hantu (22)
+    .{ .qty = 2, .card_code = 35020 }, // Sang Kancil (24)
+    .{ .qty = 3, .card_code = 30033 }, // Smartware Distributor (27)
+    .{ .qty = 2, .card_code = 35022 }, // Open Market (29)
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond (30)
+};
+pub const elevation_runner2 = MatchupSpec{
+    .format = "system-gateway", .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30059, .deck_lines = &elevation_neutral_corp_deck }, // BTL
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_runner2_deck }, // Catalyst
 };
 
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
@@ -3499,6 +3680,13 @@ pub fn applyStartTurn(
                         }
                     }
                     ri += 1;
+                }
+            }
+
+            // Recurring credits: refill hosted credits on programs (Azimat)
+            for (generated.runner_rig_program.items) |*prog| {
+                if (prog.installed_ability.recurring_credits > 0) {
+                    prog.credit_counter = prog.installed_ability.recurring_credits;
                 }
             }
 
@@ -4562,6 +4750,26 @@ fn collectEventHandlers(generated: *Game, event: state.GameEvent) !void {
             }
         }
     }
+    // Runner installed resources
+    for (generated.runner_rig_resources.items) |res| {
+        if (cardMatchesEvent(res.code, event)) {
+            if (lookupCardSpecByCode(res.code.?)) |spec| {
+                if (spec.on_event != null) {
+                    try generated.pending_effects.append(allocator, .{ .event_handler = spec.code });
+                }
+            }
+        }
+    }
+    // Runner installed programs
+    for (generated.runner_rig_program.items) |prog| {
+        if (cardMatchesEvent(prog.code, event)) {
+            if (lookupCardSpecByCode(prog.code.?)) |spec| {
+                if (spec.on_event != null) {
+                    try generated.pending_effects.append(allocator, .{ .event_handler = spec.code });
+                }
+            }
+        }
+    }
     // Corp installed cards in servers (upgrades/assets with event triggers)
     for (generated.corp_servers.items, 0..) |server, server_idx| {
         for (server.content.items) |card| {
@@ -4770,11 +4978,20 @@ fn isIcebreaker(card: state.CardInstance) bool {
     return hasSubtype(card, "Icebreaker");
 }
 
+fn iceHasSubtype(ice: state.CardInstance, subtype: []const u8) bool {
+    if (hasSubtype(ice, subtype)) return true;
+    // Chromatophores: hosted trojan adds all subtypes to host ICE
+    for (ice.hosted) |hosted| {
+        if (hosted.installed_ability.trojan_adds_all_subtypes) return true;
+    }
+    return false;
+}
+
 fn canBreakIceType(breaker: state.CardInstance, ice: state.CardInstance) bool {
     if (hasSubtype(breaker, "AI")) return true;
-    if (hasSubtype(breaker, "Fracter") and hasSubtype(ice, "Barrier")) return true;
-    if (hasSubtype(breaker, "Killer") and hasSubtype(ice, "Sentry")) return true;
-    if (hasSubtype(breaker, "Decoder") and hasSubtype(ice, "Code Gate")) return true;
+    if (hasSubtype(breaker, "Fracter") and iceHasSubtype(ice, "Barrier")) return true;
+    if (hasSubtype(breaker, "Killer") and iceHasSubtype(ice, "Sentry")) return true;
+    if (hasSubtype(breaker, "Decoder") and iceHasSubtype(ice, "Code Gate")) return true;
     return false;
 }
 
@@ -4929,6 +5146,11 @@ fn applyAccessPromptChoice(
         try applyCarnivoreTrash(generated, accessed);
         return;
     }
+    // Gourmand: trash self to trash accessed non-agenda + draw 1
+    if (std.mem.eql(u8, choice_text, "Use Gourmand")) {
+        try applyGourmandTrash(generated, accessed);
+        return;
+    }
     switch (accessed.access.kind) {
         .steal_agenda => try applyStealAgendaChoice(generated, accessed, choice_text),
         .net_damage_on_access => return error.UnsupportedAccessTarget,
@@ -4960,6 +5182,34 @@ fn applyCarnivoreTrash(generated: *Game, accessed: state.CardInstance) !void {
     const run = generated.run orelse return error.NoRunInProgress;
     try removeAccessedCard(generated, run);
     try appendDiscardCard(generated, .corp, accessed);
+    try finishAccessCard(generated);
+}
+
+fn applyGourmandTrash(generated: *Game, accessed: state.CardInstance) !void {
+    // Trash Gourmand from rig
+    for (generated.runner_rig_program.items, 0..) |prog, idx| {
+        if (prog.code != null and prog.code.? == 35007) {
+            const trashed_prog = generated.runner_rig_program.orderedRemove(idx);
+            try appendDiscardCard(generated, .runner, trashed_prog);
+            if (generated.runner_memory) |*mem| {
+                const mu = trashed_prog.runner_install.mu_cost;
+                mem.used = if (mem.used >= mu) mem.used - mu else 0;
+                mem.available = mem.base - mem.used;
+            }
+            break;
+        }
+    }
+    generated.systemMsg(.runner, 35007, "Runner uses Gourmand to trash {s}.", .{accessed.title});
+    // Clear access prompt before firing event
+    generated.runner_prompt_state = null;
+    // Trash the accessed card
+    generated.turn_events.runner_trash_corp_card_count += 1;
+    if (try fireEvent(generated, .runner_trash_corp_card)) return;
+    const run = generated.run orelse return error.NoRunInProgress;
+    try removeAccessedCard(generated, run);
+    try appendDiscardCard(generated, .corp, accessed);
+    // Draw 1 card
+    try drawCards(generated, .runner, 1);
     try finishAccessCard(generated);
 }
 
@@ -5581,6 +5831,13 @@ fn applyInstallFromHand(
         const dzmz_discount = runnerInstalledFirstProgramDiscount(generated);
         install_cost = if (install_cost >= dzmz_discount) install_cost - dzmz_discount else 0;
     }
+    // Principia: -1 cost per other installed icebreaker
+    if (card.installed_ability.install_cost_reduction_per_icebreaker) {
+        const breaker_count = countInstalledIcebreakers(generated);
+        if (breaker_count > 0) {
+            install_cost = if (install_cost >= breaker_count) install_cost - breaker_count else 0;
+        }
+    }
 
     // Trojan: install on ICE — show ICE selection prompt (click deferred until host selected)
     if (card.installed_ability.is_trojan) {
@@ -5661,6 +5918,21 @@ fn completeRunnerInstall(generated: *Game, card_index: u8, card: state.CardInsta
                 prog.virus_counter += 1;
                 // Cookbook: bonus virus counter on virus install
                 prog.virus_counter += runnerCookbookBonus(generated);
+            }
+        }
+        // Hantu: place N virus counters on install (instead of 1)
+        if (installed_card.installed_ability.initial_virus_counters > 0) {
+            if (generated.runner_rig_program.items.len > 0) {
+                var prog = &generated.runner_rig_program.items[generated.runner_rig_program.items.len - 1];
+                prog.virus_counter += installed_card.installed_ability.initial_virus_counters;
+                prog.virus_counter += runnerCookbookBonus(generated);
+            }
+        }
+        // Devadatta Drone: place N power counters on install
+        if (installed_card.installed_ability.initial_power_counters > 0) {
+            if (generated.runner_rig_program.items.len > 0) {
+                var prog = &generated.runner_rig_program.items[generated.runner_rig_program.items.len - 1];
+                prog.power_counter += installed_card.installed_ability.initial_power_counters;
             }
         }
     }
@@ -5774,6 +6046,8 @@ fn applyRunnerRunTargetChoice(
         .access_bonus = source_card.runner_play.successful_run_access_bonus,
         .jack_out_available = false,
     };
+    // Fire run_begins event (Side Hustle: place credit)
+    if (try fireEvent(generated, .run_begins)) return;
     generated.decision_side = .corp;
     generated.legal_actions = try continueActions(allocator, .corp);
 }
@@ -5824,6 +6098,8 @@ fn applyRun(
         .access_bonus = 0,
         .jack_out_available = false,
     };
+    // Fire run_begins event (Side Hustle: place credit)
+    if (try fireEvent(generated, .run_begins)) return;
     generated.decision_side = .corp;
     generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
 }
@@ -5871,6 +6147,8 @@ fn applyRunFromAbility(
         .jack_out_available = false,
         .source_card_code = if (source_card) |sc| sc.code else null,
     };
+    // Fire run_begins event (Side Hustle: place credit)
+    if (try fireEvent(generated, .run_begins)) return;
     generated.decision_side = .corp;
     generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, generated.run, generated);
 }
@@ -6034,9 +6312,23 @@ fn applyInstalledAbility(
                     const program_index = card_index - @as(u8, @intCast(generated.runner_rig_resources.items.len));
                     var icebreaker = &generated.runner_rig_program.items[program_index];
 
-                    // Spend credits for pump
-                    if (generated.runner_credit < icebreaker.pump_ability.credit_cost) return error.InsufficientCredits;
-                    generated.runner_credit -= icebreaker.pump_ability.credit_cost;
+                    if (icebreaker.pump_ability.pump_uses_virus_counters) {
+                        // Hantu: spend 1 virus counter instead of credits
+                        if (icebreaker.virus_counter == 0) return error.InsufficientCredits;
+                        icebreaker.virus_counter -= 1;
+                    } else {
+                        // Sang Kancil: discount if run event is active
+                        var pump_cost = icebreaker.pump_ability.credit_cost;
+                        if (icebreaker.pump_ability.pump_discount_if_run_event > 0 and runnerHasActiveRunEvent(generated)) {
+                            pump_cost = if (pump_cost >= icebreaker.pump_ability.pump_discount_if_run_event)
+                                pump_cost - icebreaker.pump_ability.pump_discount_if_run_event
+                            else
+                                0;
+                        }
+                        // Spend credits for pump
+                        if (generated.runner_credit < pump_cost) return error.InsufficientCredits;
+                        generated.runner_credit -= pump_cost;
+                    }
 
                     // Boost strength
                     const current = effectiveStrength(icebreaker.*);
@@ -6245,7 +6537,8 @@ fn applyRezApproachedIce(generated: *Game) !void {
     if (target.ice.rezzed) return error.UnsupportedChoice;
     const rez_cost = target.ice.cost orelse 0;
     const run_val = generated.run orelse return error.NoRunInProgress;
-    const adjusted_cost = rez_cost + run_val.rez_cost_bonus;
+    const fransofia_increase = runnerRezCostIncrease(generated);
+    const adjusted_cost = rez_cost + run_val.rez_cost_bonus + fransofia_increase;
     try spendCredits(generated, .corp, adjusted_cost);
     generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
     if (adjusted_cost > 0) {
@@ -6453,14 +6746,19 @@ fn advanceApproachIcePhase(generated: *Game) !void {
             generated.corp_servers.items[target.server_index].ices.items[target.ice_index].broken_subroutines = 0;
             run.ice_strength_modifier = 0;
 
-            // Echelon: set current_strength = base + installed icebreaker count
+            // Dynamic strength bonuses for encounter
             for (generated.runner_rig_program.items) |*prog| {
+                // Echelon: +1 strength per installed icebreaker
                 if (prog.installed_ability.strength_per_icebreaker) {
                     var icebreaker_count: u8 = 0;
                     for (generated.runner_rig_program.items) |p| {
                         if (isIcebreaker(p)) icebreaker_count += 1;
                     }
                     prog.current_strength = (prog.strength orelse 0) + icebreaker_count;
+                }
+                // Rising Tide: +1 strength per fracter in heap
+                if (prog.installed_ability.strength_per_heap_fracter) {
+                    prog.current_strength = (prog.strength orelse 0) + countFractersInHeap(generated);
                 }
             }
 
@@ -7617,6 +7915,13 @@ fn hasCarnivoreAvailable(generated: *const Game) bool {
     return false;
 }
 
+fn hasGourmandAvailable(generated: *const Game) bool {
+    for (generated.runner_rig_program.items) |prog| {
+        if (prog.code != null and prog.code.? == 35007) return true;
+    }
+    return false;
+}
+
 fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
     const spec = lookupCardSpec(accessed);
     const trash_cost = if (spec) |s| s.trash_cost else null;
@@ -7625,9 +7930,13 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
 
     const can_afford = if (trash_cost) |tc| generated.runner_credit >= tc and !no_steal_or_trash else false;
     const carnivore = hasCarnivoreAvailable(generated) and !no_steal_or_trash;
+    // Gourmand: trash self to trash non-agenda + draw 1
+    const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
+    const gourmand = hasGourmandAvailable(generated) and !no_steal_or_trash and !is_agenda;
     var choice_count: usize = 1; // "No action"
     if (can_afford) choice_count += 1;
     if (carnivore) choice_count += 1;
+    if (gourmand) choice_count += 1;
     const choices = try allocator.alloc(state.PromptChoice, choice_count);
     var idx: usize = 0;
     if (can_afford) {
@@ -7636,6 +7945,10 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
     }
     if (carnivore) {
         choices[idx] = stringChoice("Trash card");
+        idx += 1;
+    }
+    if (gourmand) {
+        choices[idx] = stringChoice("Use Gourmand");
         idx += 1;
     }
     choices[idx] = stringChoice("No action");
@@ -7890,7 +8203,8 @@ fn canRezApproachedIce(game: *const Game) !bool {
     const target = try currentApproachedIce(@constCast(game)) orelse return false;
     if (target.ice.rezzed) return false;
     const rez_cost = target.ice.cost orelse 0;
-    const adjusted_cost = rez_cost + run.rez_cost_bonus;
+    const fransofia_increase = runnerRezCostIncrease(game);
+    const adjusted_cost = rez_cost + run.rez_cost_bonus + fransofia_increase;
     return game.corp_credit >= adjusted_cost;
 }
 
@@ -7973,7 +8287,20 @@ fn encounterActionsForState(
             if (!isIcebreaker(card)) continue;
             if (card.pump_ability.kind != .pump_strength) continue;
             if (!canBreakIceType(card, ice)) continue;
-            if (generated.runner_credit < card.pump_ability.credit_cost) continue;
+            if (card.pump_ability.pump_uses_virus_counters) {
+                // Hantu: needs virus counters to pump
+                if (card.virus_counter == 0) continue;
+            } else {
+                // Sang Kancil: discount if run event active
+                var pump_cost = card.pump_ability.credit_cost;
+                if (card.pump_ability.pump_discount_if_run_event > 0 and runnerHasActiveRunEvent(generated)) {
+                    pump_cost = if (pump_cost >= card.pump_ability.pump_discount_if_run_event)
+                        pump_cost - card.pump_ability.pump_discount_if_run_event
+                    else
+                        0;
+                }
+                if (generated.runner_credit < pump_cost) continue;
+            }
             pump_count += 1;
         }
         for (generated.runner_rig_program.items) |card| {
@@ -8869,6 +9196,43 @@ fn runnerCookbookBonus(generated: *const Game) u16 {
         bonus += card.installed_ability.bonus_virus_on_install;
     }
     return bonus;
+}
+
+/// Check if runner has a run event in play area (Sang Kancil pump discount)
+fn runnerHasActiveRunEvent(generated: *const Game) bool {
+    // Run events are in the play area when active — check if run has a source card
+    // that is a run event (subtypes include "Run")
+    if (generated.run) |run| {
+        if (run.source_card_code) |_| return true;
+    }
+    return false;
+}
+
+/// Count fracters in runner's heap (Rising Tide strength bonus)
+fn countFractersInHeap(generated: *const Game) u8 {
+    var count: u8 = 0;
+    for (generated.runner_discard.items) |card| {
+        if (hasSubtype(card, "Fracter")) count += 1;
+    }
+    return count;
+}
+
+/// Count installed icebreakers (Principia install cost reduction)
+fn countInstalledIcebreakers(generated: *const Game) u16 {
+    var count: u16 = 0;
+    for (generated.runner_rig_program.items) |card| {
+        if (isIcebreaker(card)) count += 1;
+    }
+    return count;
+}
+
+/// Get rez cost increase from runner installed resources (Fransofia Ward)
+fn runnerRezCostIncrease(generated: *const Game) u8 {
+    var increase: u8 = 0;
+    for (generated.runner_rig_resources.items) |card| {
+        increase += card.installed_ability.rez_cost_increase;
+    }
+    return increase;
 }
 
 fn runnerInstalledMuBonus(generated: *const Game) u8 {

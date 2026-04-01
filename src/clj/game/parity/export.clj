@@ -1459,7 +1459,26 @@
                                     {:qty 2 :card "Rent Rioters"} {:qty 2 :card "Side Hustle"}
                                     {:qty 2 :card "Charm Offensive"}
                                     {:qty 2 :card "Smartware Distributor"}
-                                    {:qty 1 :card "T400 Memory Diamond"}]])
+                                    {:qty 1 :card "T400 Memory Diamond"}]]
+                         "runner2" [30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker"
+                                    [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Greenmail"}
+                                     {:qty 2 :card "Send a Message"} {:qty 2 :card "Orbital Superiority"}
+                                     {:qty 3 :card "Flyswatter"} {:qty 3 :card "Lamplighter"}
+                                     {:qty 3 :card "Kessleroid"} {:qty 3 :card "Palisade"}
+                                     {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Petty Cash"}
+                                     {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Regolith Mining License"}
+                                     {:qty 2 :card "Seamless Launch"} {:qty 2 :card "Mahkota Langit Grid"}]
+                                    [{:qty 3 :card "Sure Gamble"} {:qty 3 :card "Jailbreak"}
+                                     {:qty 1 :card "Gourmand"} {:qty 1 :card "Cacophony"}
+                                     {:qty 1 :card "Detente"} {:qty 1 :card "Maglectric Rapid (748 Mod)"}
+                                     {:qty 1 :card "Fransofia Ward"}
+                                     {:qty 1 :card "GAMEDRAGON™ Pro"} {:qty 1 :card "Madani"}
+                                     {:qty 2 :card "Azimat"} {:qty 2 :card "Chromatophores"}
+                                     {:qty 2 :card "Devadatta Drone"}
+                                     {:qty 1 :card "\"Knickknack\" O'Brian"}
+                                     {:qty 2 :card "Hantu"} {:qty 2 :card "Sang Kancil"}
+                                     {:qty 3 :card "Smartware Distributor"}
+                                     {:qty 2 :card "Open Market"} {:qty 1 :card "T400 Memory Diamond"}]])
                        ;; Register all card names so they resolve
                        all-card-names (concat (map :card corp-cards) (map :card runner-cards)
                                               [corp-id-title runner-id-title])
