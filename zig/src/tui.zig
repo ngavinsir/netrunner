@@ -406,15 +406,18 @@ fn render_log(win: Window) void {
     // Walk backwards from anchor to find first_visible
     var total_rows: u16 = 0;
     var first_visible: usize = anchor;
+    var is_first_entry = true;
     while (first_visible > 0) {
         const idx = first_visible - 1;
         const rows = entryRows.calc(log_entries[idx], cw, idx);
-        const needed = rows + 1; // +1 for padding between entries
-        if (total_rows + rows > available and first_visible < anchor) {
+        // No padding after the bottommost entry (first one we encounter walking back)
+        const needed = if (is_first_entry) rows else rows + 1;
+        if (total_rows + needed > available and first_visible < anchor) {
             break; // this entry won't fit, stop
         }
         first_visible = idx;
         total_rows += needed;
+        is_first_entry = false;
         if (total_rows >= available) break;
     }
     log_at_top = first_visible == 0;
@@ -424,6 +427,11 @@ fn render_log(win: Window) void {
     var ei: usize = first_visible;
     while (ei < anchor) : (ei += 1) {
         if (row >= content.height) break;
+
+        // Padding before entry (except the first)
+        if (ei > first_visible) row +|= 1;
+        if (row >= content.height) break;
+
         const entry = log_entries[ei];
 
         // Color by side
@@ -462,8 +470,6 @@ fn render_log(win: Window) void {
             offset += line_len;
             row +|= 1;
         }
-        // Padding between entries
-        row +|= 1;
     }
 }
 
@@ -923,8 +929,11 @@ fn render_actions(win: Window, h: ?*anyopaque, start_row: u16) void {
             _ = win.print(&.{.{ .text = fmt(" {s}", .{status_msg}), .style = sty.prompt_text }}, .{ .row_offset = status_row });
         } else {
             _ = win.print(&.{.{ .text = " #/j/k + ENTER | Ctrl+S save | q quit", .style = sty.dim_text }}, .{ .row_offset = status_row });
-            if (status_row > 1) {
-                _ = win.print(&.{.{ .text = " $=Credits Cl=Clicks H=Hand D=Deck Dc=Discard Sc=Score MU=Mem Lk=Link T=Tags BP=BadPub A=Adv V=Virus ?=Unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row - 1 });
+            if (status_row > 2) {
+                _ = win.print(&.{.{ .text = " A=Adv V=Virus BP=BadPub T=Tags Lk=Link MU=Mem ?=Unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row - 1, .wrap = .none });
+                _ = win.print(&.{.{ .text = " $=Credits Cl=Clicks H=Hand D=Deck Dc=Discard Sc=Score", .style = sty.dim_text }}, .{ .row_offset = status_row - 2, .wrap = .none });
+            } else if (status_row > 1) {
+                _ = win.print(&.{.{ .text = " $=Credits Cl=Clicks H=Hand D=Deck Dc=Discard Sc=Score MU=Mem T=Tags ?=Unrezzed", .style = sty.dim_text }}, .{ .row_offset = status_row - 1, .wrap = .none });
             }
         }
     }
