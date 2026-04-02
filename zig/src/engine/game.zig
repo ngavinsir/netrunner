@@ -244,71 +244,39 @@ pub const all_cards = [_]CardSpec{
         }},
     },
     .{ .title = "T\xc4\x81o Salonga: Telepresence Magician", .side = .runner, .code = 30019, .card_type = "Identity",
-        .event_abilities = &.{
-            .{
-                .event = .agenda_scored,
-                .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                        const g = gameFromEffectContext(ctx);
-                // Count installed ICE across all servers
-                var ice_count: usize = 0;
-                for (g.corp_servers.items) |server| {
-                    ice_count += server.ices.items.len;
-                }
-                if (ice_count < 2) return; // need at least 2 ICE to swap
-                const allocator = g.arena.allocator();
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                for (g.corp_servers.items, 0..) |server, si| {
-                    for (server.ices.items, 0..) |ice, ii| {
-                        // Format: "server_idx|ice_idx|title"
-                        const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
-                        try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
+        .event_abilities = blk: {
+            const H = struct {
+                fn trigger(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    var ice_count: usize = 0;
+                    for (g.corp_servers.items) |server| {
+                        ice_count += server.ices.items.len;
                     }
-                }
-                try choices.append(allocator, stringChoice("Done"));
-                g.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "tao-swap-ice"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = null,
-                    .min_choices = 0,
-                };
-                g.decision_side = .runner;
-                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
-                    }
-                }.handle,
-            },
-            .{
-                .event = .agenda_stolen,
-                .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                        const g = gameFromEffectContext(ctx);
-                        var ice_count: usize = 0;
-                        for (g.corp_servers.items) |server| {
-                            ice_count += server.ices.items.len;
+                    if (ice_count < 2) return;
+                    const allocator = g.arena.allocator();
+                    var choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices.deinit(allocator);
+                    for (g.corp_servers.items, 0..) |server, si| {
+                        for (server.ices.items, 0..) |ice, ii| {
+                            const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
+                            try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
                         }
-                        if (ice_count < 2) return;
-                        const allocator = g.arena.allocator();
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        for (g.corp_servers.items, 0..) |server, si| {
-                            for (server.ices.items, 0..) |ice, ii| {
-                                const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
-                                try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
-                            }
-                        }
-                        try choices.append(allocator, stringChoice("Done"));
-                        g.runner_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "tao-swap-ice"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = null,
-                            .min_choices = 0,
-                        };
-                        g.decision_side = .runner;
-                        g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                     }
-                }.handle,
-            },
+                    try choices.append(allocator, stringChoice("Done"));
+                    g.runner_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "tao-swap-ice"),
+                        .choices = try choices.toOwnedSlice(allocator),
+                        .source_card = null,
+                        .min_choices = 0,
+                    };
+                    g.decision_side = .runner;
+                    g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                }
+            };
+            break :blk &.{
+                .{ .event = .agenda_scored, .handler = &H.trigger },
+                .{ .event = .agenda_stolen, .handler = &H.trigger },
+            };
         },
     },
     .{ .title = "Zahya Sadeghi: Versatile Smuggler", .side = .runner, .code = 30010, .card_type = "Identity",
@@ -1313,25 +1281,16 @@ pub const all_cards = [_]CardSpec{
     // --- Phase 3: Consoles ---
     .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }}, .installed_ability = .{ .trash_access_hand_cost = 2 } },
     .{ .title = "Pantograph", .side = .runner, .code = 30023, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 2, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }},
-        .event_abilities = &.{
-            .{
-                .event = .agenda_scored,
-                .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                        const g = gameFromEffectContext(ctx);
-                        try beginRunnerOptionalInstallConfirmPrompt(g, self_card.*);
-                    }
-                }.handle,
-            },
-            .{
-                .event = .agenda_stolen,
-                .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                        const g = gameFromEffectContext(ctx);
-                        try beginRunnerOptionalInstallConfirmPrompt(g, self_card.*);
-                    }
-                }.handle,
-            },
+        .event_abilities = blk: {
+            const H = struct {
+                fn trigger(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
+                    try beginRunnerOptionalInstallConfirmPrompt(gameFromEffectContext(ctx), self_card.*);
+                }
+            };
+            break :blk &.{
+                .{ .event = .agenda_scored, .handler = &H.trigger },
+                .{ .event = .agenda_stolen, .handler = &H.trigger },
+            };
         },
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
@@ -1732,68 +1691,37 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Po\xc3\xa9tr\xc3\xaf Luxury Brands: All the Rage", .side = .corp, .code = 35036, .card_type = "Identity", .subtypes = &.{"Division"},
         // "When you score an agenda, look at top 3 R&D. May install 1 non-agenda non-operation."
         // "When an agenda is stolen, may install 1 non-agenda non-operation from HQ."
-        .event_abilities = &.{
-            .{
-                .event = .agenda_scored,
-                .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                        const g = gameFromEffectContext(ctx);
-                // For agenda_stolen: offer to install from HQ
-                // For agenda_scored: simplified - just offer install from HQ too
-                // (R&D peek is complex - would need card reveal + choice)
-                const allocator = g.arena.allocator();
-                var choices_list: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices_list.deinit(allocator);
-                for (g.corp_hand.items, 0..) |c, idx| {
-                    const ct = c.card_type orelse continue;
-                    if (std.mem.eql(u8, ct, "Agenda") or std.mem.eql(u8, ct, "Operation")) continue;
-                    try choices_list.append(allocator, .{
-                        .kind = .card,
-                        .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
-                        .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
-                    });
+        .event_abilities = blk: {
+            const H = struct {
+                fn trigger(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.arena.allocator();
+                    var choices_list: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices_list.deinit(allocator);
+                    for (g.corp_hand.items, 0..) |c, idx| {
+                        const ct = c.card_type orelse continue;
+                        if (std.mem.eql(u8, ct, "Agenda") or std.mem.eql(u8, ct, "Operation")) continue;
+                        try choices_list.append(allocator, .{
+                            .kind = .card,
+                            .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
+                            .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
+                        });
+                    }
+                    if (choices_list.items.len == 0) return;
+                    try choices_list.append(allocator, stringChoice("No action"));
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "poetri-install"),
+                        .choices = try choices_list.toOwnedSlice(allocator),
+                        .source_card = g.corp_identity,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
-                if (choices_list.items.len == 0) return;
-                try choices_list.append(allocator, stringChoice("No action"));
-                g.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "poetri-install"),
-                    .choices = try choices_list.toOwnedSlice(allocator),
-                    .source_card = g.corp_identity,
-                };
-                g.decision_side = .corp;
-                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                    }
-                }.handle,
-            },
-            .{
-                .event = .agenda_stolen,
-                .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                        const g = gameFromEffectContext(ctx);
-                        const allocator = g.arena.allocator();
-                        var choices_list: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices_list.deinit(allocator);
-                        for (g.corp_hand.items, 0..) |c, idx| {
-                            const ct = c.card_type orelse continue;
-                            if (std.mem.eql(u8, ct, "Agenda") or std.mem.eql(u8, ct, "Operation")) continue;
-                            try choices_list.append(allocator, .{
-                                .kind = .card,
-                                .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
-                                .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
-                            });
-                        }
-                        if (choices_list.items.len == 0) return;
-                        try choices_list.append(allocator, stringChoice("No action"));
-                        g.corp_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "poetri-install"),
-                            .choices = try choices_list.toOwnedSlice(allocator),
-                            .source_card = g.corp_identity,
-                        };
-                        g.decision_side = .corp;
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                    }
-                }.handle,
-            },
+            };
+            break :blk &.{
+                .{ .event = .agenda_scored, .handler = &H.trigger },
+                .{ .event = .agenda_stolen, .handler = &H.trigger },
+            };
         },
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
