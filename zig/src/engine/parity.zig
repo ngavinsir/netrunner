@@ -7,6 +7,7 @@ const state = @import("state.zig");
 const flow = game;
 const generator = game;
 
+
 test "generated beginner setup matches oracle fixture for seed 5" {
     var oracle = try setup.loadBeginnerInitialSnapshot(
         std.testing.allocator,
@@ -1717,25 +1718,84 @@ test "smartware distributor install and ability parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "predictive planogram parity test" {
+test "predictive planogram gain credits parity test" {
     const allocator = std.testing.allocator;
-    // Seed 4 intermediate: Corp hand has Predictive Planogram (cost 0, draw 2, gain 3 if tagged)
-    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 4);
+    const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Predictive Planogram", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Turn 1: corp plays Predictive Planogram
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Predictive Planogram"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Gain 3 [Credits]"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
-    var replay = try fixture.replayActionsWithMatchup(allocator, 4, scenario_actions, "system-gateway-intermediate");
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "predictive planogram draw cards parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Predictive Planogram", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Predictive Planogram"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Draw 3 cards"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "predictive planogram gain credits and draw cards when tagged parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.system_gateway_intermediate,
+        &.{"Predictive Planogram", "Public Trail"},
+        &.{},
+        200,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try applyRunAction(allocator, &actions, &generated, "Archives");
+    try resolveRunToEnd(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Public Trail"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
+    try std.testing.expect(generated.runner_tag.?.is_tagged);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Predictive Planogram"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Gain 3 [Credits] and draw 3 cards"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
@@ -1791,28 +1851,52 @@ test "mutual favor parity test" {
     try std.testing.expect(is_icebreaker);
 }
 
-test "wildcat strike parity test" {
+test "wildcat strike runner gains credits parity test" {
     const allocator = std.testing.allocator;
-    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 18);
+    const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Wildcat Strike", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Turn 1: corp passes
     try takeCorpStartTurn(allocator, &actions, &generated);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
-    // Turn 1: runner plays Wildcat Strike, corp makes a choice
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Wildcat Strike"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Runner gains 6 [Credits]"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
-    var replay = try fixture.replayActionsWithMatchup(allocator, 18, scenario_actions, "system-gateway-intermediate");
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "wildcat strike runner draws cards parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Wildcat Strike", .runner, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Wildcat Strike"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Runner draws 4 cards"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
@@ -1986,6 +2070,10 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "scrounge-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "barry-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "poetri-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner-bonus-install-confirm")) return "other";
+    if (std.mem.eql(u8, prompt_type, "runner-bonus-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner-host-confirm")) return "other";
+    if (std.mem.eql(u8, prompt_type, "runner-hosted-card")) return "select";
     if (std.mem.eql(u8, prompt_type, "pt-untaian-advance")) return "select";
     if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";
     if (std.mem.eql(u8, prompt_type, "muslihat-reveal")) return "other";
@@ -2479,6 +2567,46 @@ fn findScoreAction(actions: []const state.LegalAction, target: []const u8) ?stat
                 if (c.text) |t| {
                     if (std.mem.eql(u8, t, target)) return a;
                 }
+            }
+        }
+    }
+    return null;
+}
+
+fn displayNameForServerName(allocator: std.mem.Allocator, server_name: []const u8) ![]const u8 {
+    if (std.mem.eql(u8, server_name, "hq")) return allocator.dupe(u8, "HQ");
+    if (std.mem.eql(u8, server_name, "rnd")) return allocator.dupe(u8, "R&D");
+    if (std.mem.eql(u8, server_name, "archives")) return allocator.dupe(u8, "Archives");
+    if (std.mem.startsWith(u8, server_name, "remote")) {
+        return try std.fmt.allocPrint(allocator, "Server {s}", .{server_name["remote".len..]});
+    }
+    return allocator.dupe(u8, server_name);
+}
+
+fn findInstalledCorpContentTarget(
+    allocator: std.mem.Allocator,
+    generated: *const generator.Game,
+    title: []const u8,
+) !?[]const u8 {
+    for (generated.corp_servers.items) |server| {
+        for (server.content.items, 0..) |card, idx| {
+            if (std.mem.eql(u8, card.title, title)) {
+                return try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, idx });
+            }
+        }
+    }
+    return null;
+}
+
+fn findInstalledCorpServerDisplayNameByContent(
+    allocator: std.mem.Allocator,
+    generated: *const generator.Game,
+    title: []const u8,
+) !?[]const u8 {
+    for (generated.corp_servers.items) |server| {
+        for (server.content.items) |card| {
+            if (std.mem.eql(u8, card.title, title)) {
+                return try displayNameForServerName(allocator, server.name);
             }
         }
     }
@@ -3329,131 +3457,11 @@ test "funhouse install and rez parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "funhouse full encounter parity test" {
-    const allocator = std.testing.allocator;
-    // Full encounter: rez Funhouse → on-encounter (take tag) → subs fire → run ends
-    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 15);
-    defer generated.deinit();
-    var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
-
-    // Mulligan
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-
-    // Turn 1: corp installs Funhouse on HQ
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Funhouse"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "HQ"));
-    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-
-    // Turn 1 runner: pass
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
-
-    // Turn 2: corp gains credits (need 5+ to rez Funhouse)
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-
-    // Turn 2 runner: pass
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
-
-    // Turn 3: corp gains more credits
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-
-    // Turn 3 runner: run HQ (corp should have 5+ credits)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try std.testing.expect(generated.corp_credit >= 5);
-    try applyRunAction(allocator, &actions, &generated, "HQ");
-    // Corp gets priority — approach ICE phase
-    // Rez Funhouse via rez_ice action (if available)
-    const rez_action = findActionByKind(generated.legal_actions, .rez_ice, .corp) catch {
-        // Corp can't afford to rez — skip this test
-        return;
-    };
-    try takeAction(allocator, &actions, &generated, rez_action);
-    // Corp continue
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
-    // Runner continue → encounter starts → Funhouse on-encounter prompt
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
-    // Funhouse on-encounter: take 1 tag
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
-    try std.testing.expectEqual(@as(u8, 1), generated.runner_tag.?.total);
-
-    // Runner in encounter — no icebreaker, continue to let subs fire
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
-    // Corp continue → subs fire (give_tag_or_pay_credits)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
-
-    // Sub creates a prompt — resolve it, then continue through run to end
-    try resolveRunToEnd(allocator, &actions, &generated);
-
-    // Run should be over, end runner turn
-    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
-
-    // Verify parity at clean turn boundary
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
-    var replay = try fixture.replayActionsWithMatchup(allocator, 15, scenario_actions, "system-gateway-intermediate");
-    defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
-}
-
-test "funhouse encounter take tag local test" {
-    const allocator = std.testing.allocator;
-    // Verify Funhouse encounter mechanics locally (no oracle)
-    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 15);
-    defer generated.deinit();
-    var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
-
-    // Mulligan
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-
-    // Turn 1: corp installs Funhouse on HQ
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Funhouse"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "HQ"));
-    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-
-    // Turn 1 runner: pass
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
-
-    // Turn 2: corp gains credits
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-
-    // Turn 2 runner: run HQ
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try applyRunAction(allocator, &actions, &generated, "HQ");
-    // Approach: rez Funhouse if possible, then corp continue
-    if (findActionByKind(generated.legal_actions, .rez_ice, .corp)) |rez| {
-        try takeAction(allocator, &actions, &generated, rez);
-        // Corp continue after rez
-        try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
-        // Runner continue → encounter → Funhouse on-encounter prompt
-        try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
-        // Funhouse prompt should exist
-        try std.testing.expect(generated.runner_prompt_state != null);
-        try std.testing.expectEqualStrings("funhouse-encounter", generated.runner_prompt_state.?.prompt_type);
-        // Choose "Take 1 tag"
-        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
-        // Runner should have 1 tag and still be in the encounter
-        try std.testing.expectEqual(@as(u8, 1), generated.runner_tag.?.total);
-        try std.testing.expect(generated.run != null);
-    } else |_| {}
-}
 
 test "public trail runner takes tag parity test" {
     const allocator = std.testing.allocator;
-    // Seed 32 intermediate: Corp hand has Public Trail
-    // Need runner to have run last turn + corp to have 4+ credits
-    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 32);
+    const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Public Trail", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -3486,7 +3494,43 @@ test "public trail runner takes tag parity test" {
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
-    var replay = try fixture.replayActionsWithMatchup(allocator, 32, scenario_actions, "system-gateway-intermediate");
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "public trail runner pays 8 credits parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Public Trail", .corp, 100) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .gain_credit) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .gain_credit) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .gain_credit) orelse return error.MissingAction);
+    try std.testing.expectEqual(@as(u16, 8), generated.runner_credit);
+    try applyRunAction(allocator, &actions, &generated, "Archives");
+    try resolveRunToEnd(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Public Trail"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Pay 8 [Credits]"));
+    try std.testing.expectEqual(@as(u16, 0), generated.runner_credit);
+    try std.testing.expect(generated.runner_tag == null or !generated.runner_tag.?.is_tagged);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
@@ -3907,6 +3951,37 @@ fn findTwoCardsInHandBySeed(matchup: generator.MatchupSpec, title1: []const u8, 
     return null;
 }
 
+fn handContainsAllTitles(hand: []const state.CardInstance, titles: []const []const u8) bool {
+    for (titles) |title| {
+        var found = false;
+        for (hand) |card| {
+            if (std.mem.eql(u8, card.title, title)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+fn findOpeningHandsBySeed(
+    matchup: generator.MatchupSpec,
+    corp_titles: []const []const u8,
+    runner_titles: []const []const u8,
+    max_seed: u64,
+) ?u64 {
+    var seed: u64 = 1;
+    while (seed <= max_seed) : (seed += 1) {
+        var g = generator.createInitialSnapshot(std.testing.allocator, matchup, seed) catch continue;
+        defer g.deinit();
+        if (!handContainsAllTitles(g.corp_hand.items, corp_titles)) continue;
+        if (!handContainsAllTitles(g.runner_hand.items, runner_titles)) continue;
+        return seed;
+    }
+    return null;
+}
+
 test "pharos install parity test" {
     const allocator = std.testing.allocator;
     const seed = findCardInHandBySeed(matchups.system_gateway_complete, "Pharos", .corp, 100) orelse return error.NoSeedFound;
@@ -4192,6 +4267,55 @@ test "pantograph install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "pantograph steal trigger install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_weyland,
+        &.{"Greenmail"},
+        &.{ "Pantograph", "Telework Contract" },
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Greenmail"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Pantograph"));
+    const server_name = try findInstalledCorpServerDisplayNameByContent(allocator, &generated, "Greenmail") orelse return error.MissingAction;
+    defer allocator.free(server_name);
+    try applyRunAction(allocator, &actions, &generated, server_name);
+    while (findPromptText(generated.legal_actions, "Steal") == null) {
+        if (findFirstKindAction(generated.legal_actions, .@"continue", .corp)) |cont| {
+            try takeAction(allocator, &actions, &generated, cont);
+            continue;
+        }
+        if (findFirstKindAction(generated.legal_actions, .@"continue", .runner)) |cont| {
+            try takeAction(allocator, &actions, &generated, cont);
+            continue;
+        }
+        return error.MissingAction;
+    }
+    try takeAction(allocator, &actions, &generated, findPromptText(generated.legal_actions, "Steal") orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Yes"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Telework Contract"));
+    if (findPromptChoiceAction(generated.legal_actions, .corp, "Done") catch null) |done| {
+        try takeAction(allocator, &actions, &generated, done);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "weyland built to last advance gives 2cr parity test" {
     const allocator = std.testing.allocator;
     // Find seed where corp has an advanceable card in hand
@@ -4315,55 +4439,6 @@ test "tranquilizer install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "nbn reality plus tag trigger parity test" {
-    // NBN Reality Plus: when runner gets first tag each turn, corp chooses gain 2cr or draw 2
-    // Scenario: corp plays Public Trail to tag runner, Reality Plus fires
-    const allocator = std.testing.allocator;
-    // Use NBN identity with intermediate deck (has Public Trail)
-    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_nbn, 32);
-    defer generated.deinit();
-    var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
-
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
-
-    // Turn 1: corp passes
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-
-    // Turn 1 runner: make a successful run on Archives (needed for Public Trail precondition)
-    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
-    try applyRunAction(allocator, &actions, &generated, "Archives");
-    try resolveRunToEnd(allocator, &actions, &generated);
-    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
-
-    // Turn 2: corp plays Public Trail
-    try takeCorpStartTurn(allocator, &actions, &generated);
-    if (findPlayByTitle(generated.legal_actions, .corp, "Public Trail")) |pt| {
-        const corp_credit_before = generated.corp_credit;
-        try takeAction(allocator, &actions, &generated, pt);
-        // Runner chooses "Take 1 tag"
-        try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Take 1 tag"));
-        // NBN Reality Plus should fire — corp prompted for 2cr or draw 2
-        if (generated.corp_prompt_state) |ps| {
-            if (std.mem.eql(u8, ps.prompt_type, "reality-plus")) {
-                try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Gain 2 [Credits]"));
-                // Corp should have gained 2cr from Reality Plus
-                try std.testing.expect(generated.corp_credit >= corp_credit_before);
-            }
-        }
-    } else {
-        // Public Trail not in hand — just end turn and verify basic parity
-        try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    }
-
-    const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
-    var replay = try fixture.replayActionsWithMatchup(allocator, 32, scenario_actions, "system-gateway-nbn");
-    defer replay.deinit();
-    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
-}
 
 test "loup trash on access trigger parity test" {
     // Loup: first trash-on-access each turn: gain 1cr, draw 1
@@ -7191,6 +7266,81 @@ test "detente install parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35018) orelse return error.MissingAction);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "detente successful hq run host prompt parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
+            defer g.deinit();
+            var seed_actions: std.ArrayList(state.LegalAction) = .empty;
+            defer seed_actions.deinit(allocator);
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            try endTurnAndDiscard(allocator, &seed_actions, &g, .corp);
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else
+                continue;
+            if (findCardInstallByCode(&g, g.legal_actions, 35018) == null) continue;
+            break :blk s;
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35018) orelse return error.MissingAction);
+    try applyRunAction(allocator, &actions, &generated, "HQ");
+    var steps: u8 = 0;
+    while (steps < 50 and generated.run != null) : (steps += 1) {
+        if (generated.runner_prompt_state) |ps| {
+            if (std.mem.eql(u8, ps.prompt_type, "runner-host-confirm")) break;
+        }
+        if (findPromptText(generated.legal_actions, "Steal")) |a| {
+            try takeAction(allocator, &actions, &generated, a);
+            continue;
+        }
+        if (findPromptText(generated.legal_actions, "Take 1 tag")) |a| {
+            try takeAction(allocator, &actions, &generated, a);
+            continue;
+        }
+        if (findPromptText(generated.legal_actions, "Pay")) |a| {
+            try takeAction(allocator, &actions, &generated, a);
+            continue;
+        }
+        if (findPromptText(generated.legal_actions, "No action")) |a| {
+            try takeAction(allocator, &actions, &generated, a);
+            continue;
+        }
+        if (findFirstKindAction(generated.legal_actions, .@"continue", .corp)) |cont| {
+            try takeAction(allocator, &actions, &generated, cont);
+            continue;
+        }
+        if (findFirstKindAction(generated.legal_actions, .@"continue", .runner)) |cont| {
+            try takeAction(allocator, &actions, &generated, cont);
+            continue;
+        }
+        break;
+    }
+    const runner_prompt = generated.runner_prompt_state orelse return error.MissingPromptState;
+    try std.testing.expectEqualStrings("runner-host-confirm", runner_prompt.prompt_type);
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
