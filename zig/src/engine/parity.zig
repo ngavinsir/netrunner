@@ -2061,6 +2061,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "kpi-advance")) return "select";
     if (std.mem.eql(u8, prompt_type, "kpi-ice-choose")) return "select";
     if (std.mem.eql(u8, prompt_type, "kpi-ice-server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "kpi-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "bigger-picture")) return "other";
     if (std.mem.eql(u8, prompt_type, "bigger-picture-tags")) return "other";
     if (std.mem.eql(u8, prompt_type, "ip-enforcement-tags")) return "other";
@@ -2068,12 +2069,21 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "lie-low")) return "other";
     if (std.mem.eql(u8, prompt_type, "lie-low-tags")) return "other";
     if (std.mem.eql(u8, prompt_type, "scrounge-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner-discard-to-deck")) return "select";
     if (std.mem.eql(u8, prompt_type, "barry-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "poetri-install")) return "select";
     if (std.mem.eql(u8, prompt_type, "runner-bonus-install-confirm")) return "other";
     if (std.mem.eql(u8, prompt_type, "runner-bonus-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner-host-mode")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner-host-from-grip")) return "select";
     if (std.mem.eql(u8, prompt_type, "runner-host-confirm")) return "other";
     if (std.mem.eql(u8, prompt_type, "runner-hosted-card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner-hosted-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer-review-private")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer-review-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer-review-server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "corp-free-install-card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "corp-free-install-server")) return "select";
     if (std.mem.eql(u8, prompt_type, "pt-untaian-advance")) return "select";
     if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";
     if (std.mem.eql(u8, prompt_type, "muslihat-reveal")) return "other";
@@ -2436,6 +2446,17 @@ fn takeAction(
 ) !void {
     try actions.append(allocator, selected);
     try flow.applyAction(generated, selected);
+}
+
+fn takeActionWithOracle(
+    allocator: std.mem.Allocator,
+    actions: *std.ArrayList(state.LegalAction),
+    generated: *generator.Game,
+    oracle_session: *fixture.ReplaySession,
+    selected: state.LegalAction,
+) !void {
+    try takeAction(allocator, actions, generated, selected);
+    try oracle_session.applyAction(selected);
 }
 
 fn takeCorpStartTurn(
@@ -2842,6 +2863,8 @@ test "e2e beginner game plays to completion with oracle parity" {
     const seed: u64 = 1;
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, null);
+    defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -2856,37 +2879,23 @@ test "e2e beginner game plays to completion with oracle parity" {
 
         // Check oracle parity at turn boundaries
         if (generated.turn != last_turn and generated.turn > 0) {
-            var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, null) catch |err| {
-                std.debug.print("\n=== ORACLE REPLAY FAILED at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
-                std.debug.print("  error: {s}\n", .{@errorName(err)});
-                const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
-                for (actions.items[start..], start..) |sa, ai| {
-                    std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
-                    if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
-                    if (sa.choice) |c| { if (c.text) |t| std.debug.print(" choice={s}", .{t}); }
-                    if (sa.server) |s| std.debug.print(" server={s}", .{s});
-                    std.debug.print("\n", .{});
-                }
-                return err;
-            };
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== PARITY DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
-                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
-                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
-                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
-                if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit, oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                if (oracle_snapshot.state.run != null or gen_snapshot.state.run != null)
                     std.debug.print("  run: oracle={s} zig={s}\n", .{
-                        if (replay.snapshot.state.run) |r| r.phase else "null",
+                        if (oracle_snapshot.state.run) |r| r.phase else "null",
                         if (gen_snapshot.state.run) |r| r.phase else "null",
                     });
-                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
-                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
                 const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
-                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_cprompt = if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
@@ -2905,7 +2914,7 @@ test "e2e beginner game plays to completion with oracle parity" {
         }
 
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== ACTION ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -4822,6 +4831,8 @@ test "e2e fullpack game plays to completion with oracle parity" {
     const seed: u64 = 7;
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, "system-gateway-fullpack");
+    defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -4835,37 +4846,33 @@ test "e2e fullpack game plays to completion with oracle parity" {
 
         // Per-action parity check starting from action 30 (every action)
         if (actions.items.len >= 30) {
-            var replay = fixture.replayActionsWithMatchup(allocator, seed, actions.items, "system-gateway-fullpack") catch |err| {
-                std.debug.print("\n=== FULLPACK REPLAY FAILED at step {d} ({d} actions) ===\n", .{ step_counter, actions.items.len });
-                return err;
-            };
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== FULLPACK PER-ACTION DIVERGENCE at step {d} turn {d} ({d} actions) ===\n", .{ step_counter, generated.turn, actions.items.len });
-                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
                 std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d} deck={d}/{d}\n", .{
-                    replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
-                    replay.snapshot.state.corp.click, gen_snapshot.state.corp.click,
-                    replay.snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
-                    replay.snapshot.state.corp.deck.len, gen_snapshot.state.corp.deck.len,
+                    oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
+                    oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    oracle_snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
+                    oracle_snapshot.state.corp.deck.len, gen_snapshot.state.corp.deck.len,
                 });
-                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
-                if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                if (oracle_snapshot.state.run != null or gen_snapshot.state.run != null)
                     std.debug.print("  run: oracle={s} zig={s}\n", .{
-                        if (replay.snapshot.state.run) |r| r.phase else "null",
+                        if (oracle_snapshot.state.run) |r| r.phase else "null",
                         if (gen_snapshot.state.run) |r| r.phase else "null",
                     });
                 std.debug.print("  oracle prompts: corp={s} runner={s}\n", .{
-                    if (replay.snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
-                    if (replay.snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
+                    if (oracle_snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
+                    if (oracle_snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
                 });
                 std.debug.print("  zig prompts: corp={s} runner={s}\n", .{
                     if (gen_snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
                     if (gen_snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
                 });
                 std.debug.print("  oracle actions={d} zig actions={d}\n", .{
-                    replay.snapshot.legal_actions.len,
+                    oracle_snapshot.legal_actions.len,
                     gen_snapshot.legal_actions.len,
                 });
                 if (gen_snapshot.state.runner.memory) |mem| {
@@ -4882,7 +4889,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 }
                 std.debug.print("\n", .{});
                 // Print filtered action comparison
-                const dbg_fe = try filterOracleComparableActions(std.testing.allocator, replay.snapshot.legal_actions);
+                const dbg_fe = try filterOracleComparableActions(std.testing.allocator, oracle_snapshot.legal_actions);
                 defer std.testing.allocator.free(dbg_fe);
                 const dbg_fa = try filterOracleComparableActions(std.testing.allocator, gen_snapshot.legal_actions);
                 defer std.testing.allocator.free(dbg_fa);
@@ -4926,7 +4933,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
         }
 
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== FULLPACK ERROR at step {d} turn {d} ===\n", .{ step_counter, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -5593,6 +5600,8 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
     const seed: u64 = 3;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, "elevation-neutral");
+    defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -5605,25 +5614,22 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
 
         // Oracle parity check at each new turn
         if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
-            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
-            defer allocator.free(scenario_actions);
-            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== ELEVATION NEUTRAL DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
-                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
                 std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d}\n", .{
-                    replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
-                    replay.snapshot.state.corp.click, gen_snapshot.state.corp.click,
-                    replay.snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
+                    oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
+                    oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    oracle_snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
                 });
-                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
-                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
-                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                const oracle_cprompt = if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
-                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
                 const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
                 std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
                 std.debug.print("  last actions:\n", .{});
@@ -5642,7 +5648,7 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
         }
 
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== ELEVATION NEUTRAL ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
@@ -5661,6 +5667,8 @@ test "e2e elevation hb game plays to completion with oracle parity" {
     const seed: u64 = 7;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, "elevation-hb");
+    defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -5670,17 +5678,14 @@ test "e2e elevation hb game plays to completion with oracle parity" {
     while (step < 3000 and !generated.game_over) : (step += 1) {
         if (resolveOneDiscardPrompt(&generated) catch false) continue;
         if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
-            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
-            defer allocator.free(scenario_actions);
-            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== ELEVATION HB DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
-                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
-                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
-                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
-                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit, oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
                 const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
@@ -5693,7 +5698,7 @@ test "e2e elevation hb game plays to completion with oracle parity" {
             last_turn = generated.turn;
         }
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== ELEVATION HB ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" t={s}", .{t});
@@ -5710,6 +5715,8 @@ test "e2e elevation weyland game plays to completion with oracle parity" {
     const seed: u64 = 21;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, "elevation-weyland");
+    defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -5719,16 +5726,13 @@ test "e2e elevation weyland game plays to completion with oracle parity" {
     while (step < 3000 and !generated.game_over) : (step += 1) {
         if (resolveOneDiscardPrompt(&generated) catch false) continue;
         if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
-            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
-            defer allocator.free(scenario_actions);
-            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== ELEVATION WEYLAND DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
-                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
-                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
-                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit, oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
@@ -5741,7 +5745,7 @@ test "e2e elevation weyland game plays to completion with oracle parity" {
             last_turn = generated.turn;
         }
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== ELEVATION WEYLAND ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" t={s}", .{t});
@@ -5758,6 +5762,8 @@ test "e2e elevation jinteki game plays to completion with oracle parity" {
     const seed: u64 = 3;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, "elevation-jinteki");
+    defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
@@ -5767,16 +5773,13 @@ test "e2e elevation jinteki game plays to completion with oracle parity" {
     while (step < 3000 and !generated.game_over) : (step += 1) {
         if (resolveOneDiscardPrompt(&generated) catch false) continue;
         if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
-            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
-            defer allocator.free(scenario_actions);
-            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== ELEVATION JINTEKI DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
-                std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
-                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit, replay.snapshot.state.corp.click, gen_snapshot.state.corp.click });
-                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
+                std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
+                std.debug.print("  corp: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit, oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click });
+                std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
@@ -5789,7 +5792,7 @@ test "e2e elevation jinteki game plays to completion with oracle parity" {
             last_turn = generated.turn;
         }
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== ELEVATION JINTEKI ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" t={s}", .{t});
@@ -6242,6 +6245,49 @@ test "top down solutions parity test" {
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "peer review install parity test" {
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_jinteki,
+        &.{"Peer Review", "Mitra Aman"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Peer Review"));
+
+    const pre_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(pre_actions);
+    var pre_replay = try fixture.replayActionsWithMatchup(allocator, seed, pre_actions, "elevation-jinteki");
+    defer pre_replay.deinit();
+    try expectSnapshotMatches(pre_replay.snapshot, try generated.toSnapshot());
+    try std.testing.expect(generated.corp_prompt_state != null);
+    try std.testing.expectEqualStrings("peer-review-private", generated.corp_prompt_state.?.prompt_type);
+
+    const private_choice = blk: {
+        for (generated.legal_actions) |action| {
+            if (action.kind != .prompt_choice or action.side != .corp or action.choice == null or action.choice.?.text == null) continue;
+            const text = action.choice.?.text.?;
+            if (!std.mem.eql(u8, text, "Mitra Aman")) break :blk action;
+        }
+        return error.MissingAction;
+    };
+    try takeAction(allocator, &actions, &generated, private_choice);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Mitra Aman"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try std.testing.expectEqual(@as(u16, 8), generated.corp_credit);
+    try std.testing.expect(generated.corp_prompt_state == null);
+    try std.testing.expectEqual(@as(usize, 1), generated.corp_servers.items[3].content.items.len);
+    try std.testing.expectEqualStrings("Mitra Aman", generated.corp_servers.items[3].content.items[0].title);
 }
 
 test "anthill excavation weyland matchup parity test" {
@@ -7830,46 +7876,45 @@ test "e2e elevation runner game plays to completion with oracle parity" {
     const seed: u64 = 7;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
+    var oracle_session = try fixture.ReplaySession.init(allocator, seed, "elevation-runner");
+    defer oracle_session.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
     defer actions.deinit(allocator);
 
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeActionWithOracle(allocator, &actions, &generated, &oracle_session, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeActionWithOracle(allocator, &actions, &generated, &oracle_session, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
     var last_turn: u16 = 0;
     for (0..3000) |step| {
         if (generated.game_over) break;
         if (generated.turn > last_turn and generated.turn > 0) {
-            const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
-            defer allocator.free(scenario_actions);
-            var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
-            defer replay.deinit();
+            const oracle_snapshot = oracle_session.snapshot.snapshot;
             const gen_snapshot = try generated.toSnapshot();
-            expectSnapshotMatches(replay.snapshot, gen_snapshot) catch |err| {
+            expectSnapshotMatches(oracle_snapshot, gen_snapshot) catch |err| {
                 std.debug.print("\n=== ELEVATION RUNNER DIVERGENCE at turn {d} step {d} ===\n", .{ generated.turn, step });
-                std.debug.print("  oracle turn={d} zig turn={d}\n", .{ replay.snapshot.state.turn, gen_snapshot.state.turn });
-                std.debug.print("  oracle decision={s} zig decision={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
+                std.debug.print("  oracle turn={d} zig turn={d}\n", .{ oracle_snapshot.state.turn, gen_snapshot.state.turn });
+                std.debug.print("  oracle decision={s} zig decision={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
                 std.debug.print("  oracle corp click/credit={d}/{d} zig={d}/{d}\n", .{
-                    replay.snapshot.state.corp.click,
-                    replay.snapshot.state.corp.credit,
+                    oracle_snapshot.state.corp.click,
+                    oracle_snapshot.state.corp.credit,
                     gen_snapshot.state.corp.click,
                     gen_snapshot.state.corp.credit,
                 });
                 std.debug.print("  oracle runner click/credit={d}/{d} zig={d}/{d}\n", .{
-                    replay.snapshot.state.runner.click,
-                    replay.snapshot.state.runner.credit,
+                    oracle_snapshot.state.runner.click,
+                    oracle_snapshot.state.runner.credit,
                     gen_snapshot.state.runner.click,
                     gen_snapshot.state.runner.credit,
                 });
                 std.debug.print("  oracle corp prompt={s} zig={s}\n", .{
-                    if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
+                    if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
                     if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
                 });
                 std.debug.print("  oracle runner prompt={s} zig={s}\n", .{
-                    if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
+                    if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
                     if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
                 });
-                const dbg_expected = try filterOracleComparableActions(std.testing.allocator, replay.snapshot.legal_actions);
+                const dbg_expected = try filterOracleComparableActions(std.testing.allocator, oracle_snapshot.legal_actions);
                 defer std.testing.allocator.free(dbg_expected);
                 const dbg_actual = try filterOracleComparableActions(std.testing.allocator, gen_snapshot.legal_actions);
                 defer std.testing.allocator.free(dbg_actual);
@@ -7908,7 +7953,7 @@ test "e2e elevation runner game plays to completion with oracle parity" {
             last_turn = generated.turn;
         }
         const action = pickE2eAction(&generated);
-        takeAction(allocator, &actions, &generated, action) catch |err| {
+        takeActionWithOracle(allocator, &actions, &generated, &oracle_session, action) catch |err| {
             std.debug.print("\n=== ELEVATION RUNNER ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" t={s}", .{t});

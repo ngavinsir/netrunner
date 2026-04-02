@@ -749,8 +749,11 @@
 
 (defn- resolve-prompt-choice
   [state side {:keys [choice-type value card] :as choice}]
-  (let [prompt (or (first (get-in @state [side :prompt]))
-                   (get-in @state [side :prompt-state]))
+  (let [prompt (or (first (filter #(not= :waiting (:prompt-type %))
+                                  (get-in @state [side :prompt])))
+                   (let [prompt-state (get-in @state [side :prompt-state])]
+                     (when (not= :waiting (:prompt-type prompt-state))
+                       prompt-state)))
         choices (:choices prompt)]
     (cond
       (and (sequential? choices)
@@ -1128,6 +1131,40 @@
         (when match
           (main/handle-action state :corp "choice" {:choice match})))
 
+      :runner-bonus-install-confirm
+      (let [choice-text (:choice action)
+            prompt-side (if (seq (filter #(not= :waiting (:prompt-type %)) (get-in @state [:runner :prompt])))
+                          :runner
+                          :corp)
+            prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [prompt-side :prompt])))
+            choices (:choices prompt)
+            match (first (filter #(= choice-text (if (map? %) (:value %) (str %))) choices))]
+        (when match
+          (main/handle-action state prompt-side "choice" {:choice (if (:uuid match) {:uuid (:uuid match)} match)})))
+
+      :runner-bonus-install
+      (let [choice-text (:choice action)]
+        (if (= choice-text "No action")
+          (let [prompt-side (if (seq (filter #(not= :waiting (:prompt-type %)) (get-in @state [:runner :prompt])))
+                              :runner
+                              :corp)
+                prompt (first (filter #(not= :waiting (:prompt-type %)) (get-in @state [prompt-side :prompt])))
+                choices (:choices prompt)
+                cancel-choice (or (first (filter #(= "No" (if (map? %) (:value %) (str %))) choices))
+                                  (first (filter #(= "Cancel" (if (map? %) (:value %) (str %))) choices)))]
+            (when cancel-choice
+              (main/handle-action state prompt-side "choice" {:choice (if (:uuid cancel-choice) {:uuid (:uuid cancel-choice)} cancel-choice)})))
+          (let [prompt-side (if (seq (filter #(= :select (:prompt-type %)) (get-in @state [:runner :prompt])))
+                              :runner
+                              :corp)
+                hand (get-in @state [:runner :hand])
+                card (first (filter #(= choice-text (:title %)) hand))
+                prompt (first (filter #(= :select (:prompt-type %)) (get-in @state [prompt-side :prompt])))
+                select-eid (or (:eid prompt)
+                               (:eid (first (get-in @state [prompt-side :selected]))))]
+            (when (and card select-eid)
+              (main/handle-action state prompt-side "select" {:card card :eid select-eid})))))
+
       :longevity-serum-trash
       ;; Longevity Serum: corp picks a card from HQ to trash (or "Done" to stop).
       (let [choice-text (:choice action)]
@@ -1300,21 +1337,10 @@
      :decision-side decision-side
      :legal-actions actions}))
 
-(defn bundle-after-actions
-  ([actions]
-   (bundle-after-actions 1 actions))
-  ([seed actions]
-   (let [state (beginner-state seed)]
-     (doseq [action actions]
-       (apply-action! state (normalize-action action)))
-     (canonical-bundle state))))
-
-(defn replay-bundle-after-actions
-  ([actions]
-   (replay-bundle-after-actions 1 actions))
-  ([seed actions]
-   (replay-bundle-after-actions seed actions nil))
-  ([seed actions matchup]
+(defn replay-state
+  ([seed]
+   (replay-state seed nil))
+  ([seed matchup]
    (let [make-identity-state (fn [corp-id-code corp-id-title runner-id-code runner-id-title]
                                (ensure-card-defs-loaded!)
                                (register-complete-cards!)
@@ -1345,15 +1371,13 @@
                                           :identity {:title "Tāo Salonga: Telepresence Magician" :side "Runner" :code 30019}
                                           :cards (-> (vec (:cards preconstructed/gateway-complete-runner))
                                                      (conj {:qty 1 :card "Carnivore"})
-                                                     ;; Remove 1 Fermenter to keep deck size balanced
                                                      (#(mapv (fn [c] (if (= "Fermenter" (:card c)) (assoc c :qty 1) c)) %))))]
                    (set-up/init-game {:gameid 1 :format "system-gateway" :seed seed
                                       :players [{:side "Corp" :user {:username "Corp"} :deck (prepare-precon-deck "Corp" corp-deck)}
                                                  {:side "Runner" :user {:username "Runner"} :deck (prepare-precon-deck "Runner" runner-deck)}]}))
-                 (clojure.string/starts-with? (str matchup) "elevation-")
+                 (string/starts-with? (str matchup) "elevation-")
                  (let [_ (ensure-card-defs-loaded!)
                        _ (register-complete-cards!)
-                       ;; Parse matchup string: "elevation-hb", "elevation-weyland", etc.
                        faction (subs (str matchup) (count "elevation-"))
                        [corp-id-code corp-id-title runner-id-code runner-id-title corp-cards runner-cards]
                        (case faction
@@ -1483,7 +1507,6 @@
                                      {:qty 2 :card "Hantu"} {:qty 2 :card "Sang Kancil"}
                                      {:qty 3 :card "Smartware Distributor"}
                                      {:qty 2 :card "Open Market"} {:qty 1 :card "T400 Memory Diamond"}]])
-                       ;; Register all card names so they resolve
                        all-card-names (concat (map :card corp-cards) (map :card runner-cards)
                                               [corp-id-title runner-id-title])
                        _ (doseq [card-name all-card-names]
@@ -1499,42 +1522,54 @@
                                                  {:side "Runner" :user {:username "Runner"} :deck (prepare-precon-deck "Runner" runner-deck)}]}))
                  :else (beginner-state seed))]
      (swap! state assoc :run-ice-windows-enabled true)
-     (doseq [[idx action] (map-indexed vector actions)]
-       (let [normalized-action (normalize-action action)]
-         (auto-dismiss-hide-prompts! state)
-         (auto-resolve-optional-virus-prompts! state)
-         (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
-         ;; Clear stale prompt-states when no run is active
-         (when-not (:run @state)
-           (doseq [side [:corp :runner]]
-             (when-let [ps (get-in @state [side :prompt-state])]
-               (when (#{:run :waiting} (:prompt-type ps))
-                 (swap! state assoc-in [side :prompt-state] nil)))
-             ;; Also clear stale prompt queue entries
-             (let [prompts (get-in @state [side :prompt])]
-               (when (seq prompts)
-                 (let [cleaned (vec (remove #(#{:run :waiting} (:prompt-type %)) prompts))]
-                   (when (not= (count cleaned) (count prompts))
-                     (swap! state assoc-in [side :prompt] cleaned)
-                     (swap! state assoc-in [side :prompt-state] (first cleaned))))))))
-         (apply-action! state normalized-action)
-         ;; Complete corp phase 12 — Clojure's start-turn uses async wait-for which
-         ;; doesn't finish inline. Manually call end-phase-12 to complete the mandatory
-         ;; draw before the oracle captures the snapshot.
-         (when (and (= :start-turn (:kind normalized-action))
-                    (= :corp (:side normalized-action))
-                    (:corp-phase-12 @state))
-           (game.core.turns/end-phase-12 state :corp nil))
-         ;; Auto-resolve optional identity prompts (Zahya "Gain credits?", etc.)
-         ;; Auto-resolve trigger ordering prompts (but NOT optional identity/card abilities
-         ;; like Zahya or Malapert — those are handled by explicit actions from Zig)
-         ;; After end-turn, auto-resolve discard-to-hand-size select prompts.
-         ;; Clojure's end-turn async chain handles discards internally; the waiting
-         ;; prompt eid mismatch prevents proper cleanup via effect-completed.
-         (when (= :end-turn (:kind normalized-action))
-           (auto-resolve-end-turn-discard! state (:side normalized-action)))))
-     (auto-dismiss-hide-prompts! state)
-     (auto-resolve-optional-virus-prompts! state)
+     state)))
+
+(defn advance-replay-state!
+  [state action]
+  (let [normalized-action (normalize-action action)]
+    (auto-dismiss-hide-prompts! state)
+    (auto-resolve-optional-virus-prompts! state)
+    (clear-leading-waiting-prompt-for-side! state (:side normalized-action))
+    (when-not (:run @state)
+      (doseq [side [:corp :runner]]
+        (when-let [ps (get-in @state [side :prompt-state])]
+          (when (#{:run :waiting} (:prompt-type ps))
+            (swap! state assoc-in [side :prompt-state] nil)))
+        (let [prompts (get-in @state [side :prompt])]
+          (when (seq prompts)
+            (let [cleaned (vec (remove #(#{:run :waiting} (:prompt-type %)) prompts))]
+              (when (not= (count cleaned) (count prompts))
+                (swap! state assoc-in [side :prompt] cleaned)
+                (swap! state assoc-in [side :prompt-state] (first cleaned))))))))
+    (apply-action! state normalized-action)
+    (when (and (= :start-turn (:kind normalized-action))
+               (= :corp (:side normalized-action))
+               (:corp-phase-12 @state))
+      (game.core.turns/end-phase-12 state :corp nil))
+    (when (= :end-turn (:kind normalized-action))
+      (auto-resolve-end-turn-discard! state (:side normalized-action)))
+    (auto-dismiss-hide-prompts! state)
+    (auto-resolve-optional-virus-prompts! state)
+    state))
+
+(defn bundle-after-actions
+  ([actions]
+   (bundle-after-actions 1 actions))
+  ([seed actions]
+   (let [state (beginner-state seed)]
+     (doseq [action actions]
+       (apply-action! state (normalize-action action)))
+     (canonical-bundle state))))
+
+(defn replay-bundle-after-actions
+  ([actions]
+   (replay-bundle-after-actions 1 actions))
+  ([seed actions]
+   (replay-bundle-after-actions seed actions nil))
+  ([seed actions matchup]
+   (let [state (replay-state seed matchup)]
+     (doseq [action actions]
+       (advance-replay-state! state action))
      (canonical-bundle state))))
 
 (defn- export-transition-tree

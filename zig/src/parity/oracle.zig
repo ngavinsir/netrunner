@@ -27,6 +27,72 @@ pub const ReplaySnapshot = struct {
     }
 };
 
+pub const ReplaySession = struct {
+    allocator: std.mem.Allocator,
+    socket_path: []const u8,
+    session_id: []const u8,
+    snapshot: ReplaySnapshot,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        seed: u64,
+        matchup: ?[]const u8,
+    ) !ReplaySession {
+        const repo_root = try repoRootPath(allocator);
+        defer allocator.free(repo_root);
+
+        const socket_path = try ensureSharedOracleServer(allocator, repo_root);
+        defer allocator.free(socket_path);
+        const response = blk: {
+            const request_payload = try buildSessionStartRequestJson(allocator, seed, matchup);
+            defer allocator.free(request_payload);
+            break :blk runOracleRequest(allocator, socket_path, request_payload) catch {
+                try recoverSharedOracleServer(allocator, repo_root, socket_path);
+                const retry_payload = try buildSessionStartRequestJson(allocator, seed, matchup);
+                defer allocator.free(retry_payload);
+                break :blk try runOracleRequest(allocator, socket_path, retry_payload);
+            };
+        };
+        defer allocator.free(response);
+        return replaySessionInitFromResponse(allocator, socket_path, response) catch {
+            try recoverSharedOracleServer(allocator, repo_root, socket_path);
+            const retry_payload = try buildSessionStartRequestJson(allocator, seed, matchup);
+            defer allocator.free(retry_payload);
+            const retry_response = try runOracleRequest(allocator, socket_path, retry_payload);
+            defer allocator.free(retry_response);
+            return try replaySessionInitFromResponse(allocator, socket_path, retry_response);
+        };
+    }
+
+    pub fn applyAction(self: *ReplaySession, action: state.LegalAction) !void {
+        if (shouldSkipAction(action) or isPhase12Continue(action)) return;
+
+        const request_payload = try buildSessionApplyActionRequestJson(self.allocator, self.session_id, action);
+        defer self.allocator.free(request_payload);
+
+        const response = try runOracleRequest(self.allocator, self.socket_path, request_payload);
+        defer self.allocator.free(response);
+
+        const next_snapshot = try parseReplaySnapshotResponse(self.allocator, response);
+        self.snapshot.deinit();
+        self.snapshot = next_snapshot;
+    }
+
+    pub fn deinit(self: *ReplaySession) void {
+        if (buildSessionCloseRequestJson(self.allocator, self.session_id)) |request_payload| {
+            defer self.allocator.free(request_payload);
+            if (runOracleRequest(self.allocator, self.socket_path, request_payload)) |response| {
+                self.allocator.free(response);
+            } else |_| {}
+        } else |_| {}
+
+        self.snapshot.deinit();
+        self.allocator.free(self.session_id);
+        self.allocator.free(self.socket_path);
+        self.* = undefined;
+    }
+};
+
 pub const FixtureSummary = struct {
     fixture_version: u16,
     fixture_kind: []const u8,
@@ -187,39 +253,32 @@ pub fn replayActionsWithMatchup(
     actions: []const state.LegalAction,
     matchup: ?[]const u8,
 ) !ReplaySnapshot {
-    var result: ReplaySnapshot = .{
-        .arena = std.heap.ArenaAllocator.init(backing_allocator),
-        .snapshot = undefined,
-    };
-    errdefer result.arena.deinit();
-
-    const allocator = result.arena.allocator();
+    const allocator = backing_allocator;
     const repo_root = try repoRootPath(allocator);
-    const root_value = blk: {
+    defer allocator.free(repo_root);
+    const response = blk: {
         const socket_path = try ensureSharedOracleServer(allocator, repo_root);
-        const first_response = runReplayOracleSocket(allocator, socket_path, seed, actions, matchup) catch {
+        defer allocator.free(socket_path);
+        const request_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
+        defer allocator.free(request_payload);
+        break :blk runOracleRequest(allocator, socket_path, request_payload) catch {
             try recoverSharedOracleServer(allocator, repo_root, socket_path);
-            const retry_response = try runReplayOracleSocket(allocator, socket_path, seed, actions, matchup);
-            break :blk try parseReplayResponse(allocator, retry_response);
-        };
-
-        break :blk parseReplayResponse(allocator, first_response) catch {
-            try recoverSharedOracleServer(allocator, repo_root, socket_path);
-            const retry_response = try runReplayOracleSocket(allocator, socket_path, seed, actions, matchup);
-            break :blk try parseReplayResponse(allocator, retry_response);
+            const retry_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
+            defer allocator.free(retry_payload);
+            break :blk try runOracleRequest(allocator, socket_path, retry_payload);
         };
     };
-
-    const root = root_value.object;
-    const oracle_state = try getRequired(.object, root, "oracle-state");
-    const legal_actions_value = try getRequired(.array, root, "legal-actions");
-
-    result.snapshot = .{
-        .state = try parseGameState(allocator, oracle_state),
-        .decision_side = try parseSide(try getRequired(.string, root, "decision-side")),
-        .legal_actions = try parseLegalActions(allocator, legal_actions_value),
+    defer allocator.free(response);
+    return parseReplaySnapshotResponse(backing_allocator, response) catch {
+        const socket_path = try ensureSharedOracleServer(allocator, repo_root);
+        defer allocator.free(socket_path);
+        try recoverSharedOracleServer(allocator, repo_root, socket_path);
+        const retry_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
+        defer allocator.free(retry_payload);
+        const retry_response = try runOracleRequest(allocator, socket_path, retry_payload);
+        defer allocator.free(retry_response);
+        return try parseReplaySnapshotResponse(backing_allocator, retry_response);
     };
-    return result;
 }
 
 pub fn freeSummary(allocator: std.mem.Allocator, summary: *FixtureSummary) void {
@@ -235,20 +294,15 @@ pub fn shutdownPersistentOracle() void {
     return;
 }
 
-fn runReplayOracleSocket(
+fn runOracleRequest(
     allocator: std.mem.Allocator,
     socket_path: []const u8,
-    seed: u64,
-    actions: []const state.LegalAction,
-    matchup: ?[]const u8,
+    request_payload: []const u8,
 ) ![]const u8 {
     var stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
     var write_buffer: [4096]u8 = undefined;
     var read_buffer: [4096]u8 = undefined;
-
-    const request_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
-    defer allocator.free(request_payload);
     var writer = stream.writer(&write_buffer);
     try writer.interface.writeAll(request_payload);
     try writer.interface.writeByte('\n');
@@ -280,6 +334,7 @@ fn recoverSharedOracleServer(
     socket_path: []const u8,
 ) !void {
     const lock_path = try oracleSiblingPath(allocator, socket_path, oracle_lock_name);
+    defer allocator.free(lock_path);
     var lock_file = try openOracleLockFile(lock_path);
     defer lock_file.close();
     try lock_file.lock(.exclusive);
@@ -290,6 +345,7 @@ fn recoverSharedOracleServer(
     try deleteFileIfPresent(socket_path);
 
     const pid_path = try oracleSiblingPath(allocator, socket_path, oracle_pid_name);
+    defer allocator.free(pid_path);
     try deleteFileIfPresent(pid_path);
 
     try spawnSharedOracleServer(allocator, repo_root, socket_path, pid_path);
@@ -352,6 +408,58 @@ fn buildReplayRequestJson(
     return try output.toOwnedSlice(allocator);
 }
 
+fn buildSessionStartRequestJson(
+    allocator: std.mem.Allocator,
+    seed: u64,
+    matchup: ?[]const u8,
+) ![]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+
+    var writer = output.writer(allocator);
+    try writer.writeByte('{');
+    try writeJsonFieldString(&writer, "op", "start-session", false);
+    try writeJsonFieldInteger(&writer, "seed", seed, true);
+    if (matchup) |m| try writeJsonFieldString(&writer, "matchup", m, true);
+    try writer.writeByte('}');
+    return try output.toOwnedSlice(allocator);
+}
+
+fn buildSessionApplyActionRequestJson(
+    allocator: std.mem.Allocator,
+    session_id: []const u8,
+    action: state.LegalAction,
+) ![]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+
+    var writer = output.writer(allocator);
+    try writer.writeByte('{');
+    try writeJsonFieldString(&writer, "op", "apply-action", false);
+    try writeJsonFieldString(&writer, "session-id", session_id, true);
+    try writer.writeByte(',');
+    try writeJsonString(&writer, "action");
+    try writer.writeByte(':');
+    try writeActionJson(&writer, action);
+    try writer.writeByte('}');
+    return try output.toOwnedSlice(allocator);
+}
+
+fn buildSessionCloseRequestJson(
+    allocator: std.mem.Allocator,
+    session_id: []const u8,
+) ![]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+
+    var writer = output.writer(allocator);
+    try writer.writeByte('{');
+    try writeJsonFieldString(&writer, "op", "close-session", false);
+    try writeJsonFieldString(&writer, "session-id", session_id, true);
+    try writer.writeByte('}');
+    return try output.toOwnedSlice(allocator);
+}
+
 fn extractJsonObject(response: []const u8) ![]const u8 {
     const start = std.mem.indexOfScalar(u8, response, '{') orelse return error.SyntaxError;
     const finish = std.mem.lastIndexOfScalar(u8, response, '}') orelse return error.SyntaxError;
@@ -366,6 +474,59 @@ fn parseReplayResponse(
     return std.json.parseFromSliceLeaky(std.json.Value, allocator, try extractJsonObject(response), .{});
 }
 
+fn parseReplaySnapshotResponse(
+    backing_allocator: std.mem.Allocator,
+    response: []const u8,
+) !ReplaySnapshot {
+    var result: ReplaySnapshot = .{
+        .arena = std.heap.ArenaAllocator.init(backing_allocator),
+        .snapshot = undefined,
+    };
+    errdefer result.arena.deinit();
+
+    const allocator = result.arena.allocator();
+    const root_value = try parseReplayResponse(allocator, response);
+    const root = root_value.object;
+    const oracle_state = try getRequired(.object, root, "oracle-state");
+    const legal_actions_value = try getRequired(.array, root, "legal-actions");
+
+    result.snapshot = .{
+        .state = try parseGameState(allocator, oracle_state),
+        .decision_side = try parseSide(try getRequired(.string, root, "decision-side")),
+        .legal_actions = try parseLegalActions(allocator, legal_actions_value),
+    };
+    return result;
+}
+
+fn replaySessionInitFromResponse(
+    allocator: std.mem.Allocator,
+    socket_path: []const u8,
+    response: []const u8,
+) !ReplaySession {
+    var scratch_arena = std.heap.ArenaAllocator.init(allocator);
+    defer scratch_arena.deinit();
+
+    const parsed = try parseReplayResponse(scratch_arena.allocator(), response);
+    const session_id = try allocator.dupe(u8, try getRequired(.string, parsed.object, "session-id"));
+    errdefer allocator.free(session_id);
+
+    const socket_path_copy = try allocator.dupe(u8, socket_path);
+    errdefer allocator.free(socket_path_copy);
+
+    const snapshot = try parseReplaySnapshotResponse(allocator, response);
+    errdefer {
+        var owned_snapshot = snapshot;
+        owned_snapshot.deinit();
+    }
+
+    return .{
+        .allocator = allocator,
+        .socket_path = socket_path_copy,
+        .session_id = session_id,
+        .snapshot = snapshot,
+    };
+}
+
 fn repoRootPath(allocator: std.mem.Allocator) ![]const u8 {
     return std.process.getEnvVarOwned(allocator, "PWD") catch try std.fs.cwd().realpathAlloc(allocator, ".");
 }
@@ -376,7 +537,9 @@ fn oracleSocketPath(allocator: std.mem.Allocator) ![]const u8 {
 
 fn defaultOracleSocketPath(allocator: std.mem.Allocator) ![]const u8 {
     const home = try std.process.getEnvVarOwned(allocator, "HOME");
+    defer allocator.free(home);
     const dir = try std.fs.path.join(allocator, &.{ home, oracle_dir_name });
+    defer allocator.free(dir);
     std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,

@@ -1,5 +1,6 @@
 (ns game.parity.oracle
   (:import
+   [java.util UUID]
    [java.net StandardProtocolFamily UnixDomainSocketAddress]
    [java.nio.channels Channels ServerSocketChannel]
    [java.nio.charset StandardCharsets]
@@ -9,9 +10,43 @@
    [clojure.java.io :as io]
    [game.parity.export :as export]))
 
+(defonce ^:private sessions (atom {}))
+(def ^:private request-lock (Object.))
+
 (defn request->bundle
   [{:keys [seed actions matchup]}]
   (export/replay-bundle-after-actions (or seed 1) (or actions []) matchup))
+
+(defn- session-state!
+  [session-id]
+  (or (get @sessions session-id)
+      (throw (ex-info "Unknown oracle session" {:session-id session-id}))))
+
+(defn- start-session!
+  [{:keys [seed matchup]}]
+  (let [session-id (str (UUID/randomUUID))
+        state (export/replay-state (or seed 1) matchup)]
+    (swap! sessions assoc session-id state)
+    (assoc (export/canonical-bundle state) :session-id session-id)))
+
+(defn- apply-session-action!
+  [{:keys [session-id action]}]
+  (let [state (session-state! session-id)]
+    (export/advance-replay-state! state action)
+    (assoc (export/canonical-bundle state) :session-id session-id)))
+
+(defn- close-session!
+  [{:keys [session-id]}]
+  (swap! sessions dissoc session-id)
+  {:ok true})
+
+(defn- handle-request
+  [request]
+  (case (:op request)
+    "start-session" (start-session! request)
+    "apply-action" (apply-session-action! request)
+    "close-session" (close-session! request)
+    (request->bundle request)))
 
 (defn read-request
   [path]
@@ -29,7 +64,8 @@
     (loop []
       (when-let [line (.readLine reader)]
         (let [request (json/parse-string line true)
-              response (json/generate-string (request->bundle request))]
+              response (locking request-lock
+                         (json/generate-string (handle-request request)))]
           (.write writer response)
           (.write writer "\n")
           (.flush writer))
@@ -48,7 +84,8 @@
                              (io/writer :encoding "UTF-8"))]
         (when-let [line (.readLine reader)]
           (let [request (json/parse-string line true)
-                response (json/generate-string (request->bundle request))]
+                response (locking request-lock
+                           (json/generate-string (handle-request request)))]
             (.write writer response)
             (.write writer "\n")
             (.flush writer))))

@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const shard_count = b.option(usize, "shards", "Number of parallel test shards for test-sharded") orelse 4;
+    const shard_count = b.option(usize, "shards", "Number of parallel test shards for test-sharded") orelse 16;
 
     // libvaxis dependency
     const vaxis_dep = b.dependency("vaxis", .{
@@ -78,15 +78,22 @@ pub fn build(b: *std.Build) void {
             .mode = .simple,
         },
     });
+
+    const launcher_module = b.createModule(.{
+        .root_source_file = b.path("src/test_shard_launcher.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const launcher = b.addExecutable(.{
+        .name = "netrunner-test-shard-launcher",
+        .root_module = launcher_module,
+    });
     const sharded_step = b.step("test-sharded", "Run unit tests across parallel shards");
-    const shard_total_text = b.fmt("{d}", .{shard_count});
-    for (0..shard_count) |shard_index| {
-        const run_shard = b.addRunArtifact(sharded_tests);
-        run_shard.setEnvironmentVariable("NETRUNNER_TEST_TOTAL", shard_total_text);
-        run_shard.setEnvironmentVariable("NETRUNNER_TEST_INDEX", b.fmt("{d}", .{shard_index}));
-        if (b.args) |args| {
-            run_shard.addArgs(args);
-        }
-        sharded_step.dependOn(&run_shard.step);
+    const run_launcher = b.addRunArtifact(launcher);
+    run_launcher.addArtifactArg(sharded_tests);
+    run_launcher.addArg(b.fmt("{d}", .{shard_count}));
+    if (b.args) |args| {
+        run_launcher.addArgs(args);
     }
+    sharded_step.dependOn(&run_launcher.step);
 }
