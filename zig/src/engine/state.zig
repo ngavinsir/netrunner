@@ -260,9 +260,11 @@ pub const InstalledAbilitySpec = struct {
     on_empty: ?InstalledAbilityCallback = null,
     on_break: ?InstalledAbilityCallback = null,
     on_pump: ?InstalledAbilityCallback = null,
+    on_use: ?InstalledAbilityCallback = null,
     can_use: ?InstalledAbilityConditionFn = null,
     amount_fn: ?InstalledAbilityValueFn = null,
     label_fn: ?InstalledAbilityLabelFn = null,
+    allow_opponent_use: bool = false,
     click_draw_bonus: u8 = 0,
     hq_access_bonus: u8 = 0,
     virus_ice_strength_reduction: u8 = 0, // Leech: spend 1 virus for -N ICE strength
@@ -284,9 +286,11 @@ pub const InstalledAbilitySpec = struct {
 pub const GameEvent = enum(u8) {
     agenda_scored,
     agenda_stolen,
+    access,
     runner_gain_tag,
     advance,
     runner_trash_corp_card, // Loup: first trash-on-access
+    successful_run, // In-run successful run window before access begins
     successful_run_ends, // Zahya: gain credits on HQ/R&D run end
     run_ends,
     corp_turn_begins,
@@ -297,6 +301,7 @@ pub const GameEvent = enum(u8) {
     run_begins, // Side Hustle, Knickknack: triggers when any run begins
     runner_lose_tag, // Synapse Global: corp installs on tag removal
     corp_install, // BANGUN: faceup install option
+    runner_end_turn, // Bling: discard-phase cleanup and similar effects
 };
 
 pub const EventAbility = struct {
@@ -383,6 +388,7 @@ pub const PendingInstall = struct {
     card: CardInstance,
     card_index: u8,
     runner_install_cost: u16 = 0,
+    runner_spend_click: bool = true,
 };
 
 pub const EncounterPhase = enum(u8) {

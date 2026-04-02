@@ -798,6 +798,17 @@ pub export fn netrunner_server_ice_rezzed(handle: ?*anyopaque, server_idx: c_int
     return server.ices.items[@intCast(ice_idx)].rezzed;
 }
 
+pub export fn netrunner_server_ice_strength(handle: ?*anyopaque, server_idx: c_int, ice_idx: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return -1;
+    if (server_idx < 0 or ice_idx < 0) return -1;
+    const strength = engine.effectiveIceStrengthForDisplay(
+        game,
+        @intCast(server_idx),
+        @intCast(ice_idx),
+    ) orelse return -1;
+    return @intCast(strength);
+}
+
 pub export fn netrunner_server_content_count(handle: ?*anyopaque, idx: c_int) callconv(.c) c_int {
     const game = get_game(handle) orelse return 0;
     if (idx < 0 or @as(usize, @intCast(idx)) >= game.corp_servers.items.len) return 0;
@@ -843,6 +854,14 @@ pub export fn netrunner_rig_program_name(handle: ?*anyopaque, idx: c_int, buf: [
     const game = get_game(handle) orelse return 0;
     if (idx < 0 or @as(usize, @intCast(idx)) >= game.runner_rig_program.items.len) return 0;
     return write_str(buf, buf_size, game.runner_rig_program.items[@intCast(idx)].title);
+}
+
+pub export fn netrunner_rig_program_strength(handle: ?*anyopaque, idx: c_int) callconv(.c) c_int {
+    const game = get_game(handle) orelse return -1;
+    if (idx < 0 or @as(usize, @intCast(idx)) >= game.runner_rig_program.items.len) return -1;
+    const card = game.runner_rig_program.items[@intCast(idx)];
+    if (card.strength == null and card.current_strength == null) return -1;
+    return @intCast(engine.effectiveStrength(card));
 }
 
 pub export fn netrunner_rig_hardware_name(handle: ?*anyopaque, idx: c_int, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {

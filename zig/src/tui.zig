@@ -695,9 +695,23 @@ fn render_servers(win: Window, h: ?*anyopaque, start_row: u16) u16 {
             const ice_len = api.netrunner_server_ice_name(h, i, j, &ice_buf, ice_buf.len);
             const rezzed = api.netrunner_server_ice_rezzed(h, i, j);
             const adv = api.netrunner_server_ice_adv(h, i, j);
+            const str = api.netrunner_server_ice_strength(h, i, j);
             const ice_name = api_name(&ice_buf, ice_len);
             const old_len = line.len;
-            const ice_suffix = if (!rezzed and adv > 0) fmt("?(A:{d})", .{adv}) else if (!rezzed) "?" else if (adv > 0) fmt("(A:{d})", .{adv}) else "";
+            const str_str = if (rezzed and str >= 0) fmt("S:{d}", .{str}) else "";
+            const adv_str = if (adv > 0) fmt("A:{d}", .{adv}) else "";
+            const ice_suffix = if (!rezzed and adv > 0)
+                fmt("?(A:{d})", .{adv})
+            else if (!rezzed)
+                "?"
+            else if (str_str.len > 0 and adv_str.len > 0)
+                fmt("({s} {s})", .{ str_str, adv_str })
+            else if (str_str.len > 0)
+                fmt("({s})", .{str_str})
+            else if (adv_str.len > 0)
+                fmt("({s})", .{adv_str})
+            else
+                "";
             line = fmt("{s} [{s}{s}]", .{ line, ice_name, ice_suffix });
 
             // Register hover region for this ICE
@@ -757,9 +771,9 @@ fn render_rig(win: Window, h: ?*anyopaque, start_row: u16) u16 {
         return row +| 1;
     }
 
-    if (prog > 0) row = render_rig_zone(win, h, "Prg", prog, api.netrunner_rig_program_name, api.netrunner_rig_program_code, api.netrunner_rig_program_virus, null, row);
-    if (hw > 0) row = render_rig_zone(win, h, "Hw", hw, api.netrunner_rig_hardware_name, api.netrunner_rig_hardware_code, null, null, row);
-    if (res > 0) row = render_rig_zone(win, h, "Res", res, api.netrunner_rig_resource_name, api.netrunner_rig_resource_code, null, api.netrunner_rig_resource_credits, row);
+    if (prog > 0) row = render_rig_zone(win, h, "Prg", prog, api.netrunner_rig_program_name, api.netrunner_rig_program_code, api.netrunner_rig_program_strength, api.netrunner_rig_program_virus, null, row);
+    if (hw > 0) row = render_rig_zone(win, h, "Hw", hw, api.netrunner_rig_hardware_name, api.netrunner_rig_hardware_code, null, null, null, row);
+    if (res > 0) row = render_rig_zone(win, h, "Res", res, api.netrunner_rig_resource_name, api.netrunner_rig_resource_code, null, null, api.netrunner_rig_resource_credits, row);
     return row;
 }
 
@@ -770,6 +784,7 @@ fn render_rig_zone(
     count: c_int,
     name_fn: *const fn (?*anyopaque, c_int, [*c]u8, c_int) callconv(.c) c_int,
     code_fn: *const fn (?*anyopaque, c_int) callconv(.c) c_int,
+    strength_fn: ?*const fn (?*anyopaque, c_int) callconv(.c) c_int,
     virus_fn: ?*const fn (?*anyopaque, c_int) callconv(.c) c_int,
     credit_fn: ?*const fn (?*anyopaque, c_int) callconv(.c) c_int,
     start_row: u16,
@@ -780,9 +795,28 @@ fn render_rig_zone(
         var buf: [128]u8 = undefined;
         const len = name_fn(h, i, &buf, buf.len);
         const name = api_name(&buf, len);
+        const str: c_int = if (strength_fn) |sf| sf(h, i) else -1;
         const vc: c_int = if (virus_fn) |vf| vf(h, i) else 0;
         const cc: c_int = if (credit_fn) |cf| cf(h, i) else 0;
-        const counter_str = if (vc > 0 and cc > 0) fmt("(V:{d} $:{d})", .{ vc, cc }) else if (vc > 0) fmt("(V:{d})", .{vc}) else if (cc > 0) fmt("(${d})", .{cc}) else "";
+        const str_str = if (str >= 0) fmt("S:{d}", .{str}) else "";
+        const virus_str = if (vc > 0) fmt("V:{d}", .{vc}) else "";
+        const credit_str = if (cc > 0) fmt("${d}", .{cc}) else "";
+        const counter_str = if (str_str.len > 0 and virus_str.len > 0 and credit_str.len > 0)
+            fmt("({s} {s} {s})", .{ str_str, virus_str, credit_str })
+        else if (str_str.len > 0 and virus_str.len > 0)
+            fmt("({s} {s})", .{ str_str, virus_str })
+        else if (str_str.len > 0 and credit_str.len > 0)
+            fmt("({s} {s})", .{ str_str, credit_str })
+        else if (virus_str.len > 0 and credit_str.len > 0)
+            fmt("({s} {s})", .{ virus_str, credit_str })
+        else if (str_str.len > 0)
+            fmt("({s})", .{str_str})
+        else if (virus_str.len > 0)
+            fmt("({s})", .{virus_str})
+        else if (credit_str.len > 0)
+            fmt("({s})", .{credit_str})
+        else
+            "";
         const sep = if (i > 0) ", " else " ";
         const old_len = line.len;
         line = fmt("{s}{s}{s}{s}", .{ line, sep, name, counter_str });
