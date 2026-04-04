@@ -162,6 +162,8 @@ pub const AbilitySpec = struct {
     allow_opponent_use: bool = false,
     once_per_turn: bool = false,
     is_play: bool = false, // play-from-hand ability (operation/event effect)
+    flashback_extra_clicks: u8 = 0, // flashback: extra click cost to play from archives
+    flashback_gain_clicks: u8 = 0, // flashback: clicks gained after resolve
     // Encounter parameters (used by shared break/pump/bioroid handlers):
     credit_cost: u16 = 0,
     break_count: u8 = 1,
