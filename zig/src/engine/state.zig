@@ -535,7 +535,6 @@ pub const LegalAction = struct {
     card_index: ?u8 = null,
     card_title: ?[]const u8 = null,
     basic_action: ?BasicAction = null,
-    installed_ability: ?InstalledAbilityKind = null,
     ability_ref: ?AbilityRef = null,
     label: ?[]const u8 = null,
 };

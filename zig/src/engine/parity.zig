@@ -2182,10 +2182,6 @@ fn expectLiveActions(expected: []const state.LegalAction, actual: []const state.
                 std.debug.print("ACTION MISMATCH at element {d}: basic_action\n", .{elem_idx});
                 return e;
             };
-            std.testing.expectEqual(lhs.installed_ability, rhs.installed_ability) catch |e| {
-                std.debug.print("ACTION MISMATCH at element {d}: installed_ability\n", .{elem_idx});
-                return e;
-            };
             expectOptionalString(lhs.label, rhs.label) catch |e| {
                 std.debug.print("ACTION MISMATCH at element {d}: label\n", .{elem_idx});
                 return e;
@@ -2232,9 +2228,9 @@ fn legalActionLessThan(_: void, lhs: state.LegalAction, rhs: state.LegalAction) 
     const rhs_basic_action: i16 = if (rhs.basic_action) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
     if (lhs_basic_action != rhs_basic_action) return lhs_basic_action < rhs_basic_action;
 
-    const lhs_installed_ability: i16 = if (lhs.installed_ability) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
-    const rhs_installed_ability: i16 = if (rhs.installed_ability) |value| @as(i16, @intCast(@intFromEnum(value))) else 999;
-    if (lhs_installed_ability != rhs_installed_ability) return lhs_installed_ability < rhs_installed_ability;
+    const lhs_ability_idx: i16 = if (lhs.ability_ref) |ref| @as(i16, ref.ability_index) else 999;
+    const rhs_ability_idx: i16 = if (rhs.ability_ref) |ref| @as(i16, ref.ability_index) else 999;
+    if (lhs_ability_idx != rhs_ability_idx) return lhs_ability_idx < rhs_ability_idx;
 
     if (!optionalStringsEqual(lhs.label, rhs.label)) return optionalStringLessThan(lhs.label, rhs.label);
     return false;
@@ -2302,7 +2298,7 @@ fn filterOracleComparableActions(
             // (e.g., Clojure corp install/play-op/remove-tag abilities, or
             // icebreaker pump/break abilities exported as use_ability with wrong basic_action)
             .use_ability => {
-                if (action.basic_action == null and action.installed_ability == null) continue;
+                if (action.basic_action == null and action.ability_ref == null) continue;
                 // Filter advance/score basic actions — Zig now uses direct .advance/.score action kinds
                 if (action.basic_action != null) {
                     const ba = action.basic_action.?;
@@ -2918,7 +2914,7 @@ test "e2e beginner game plays to completion with oracle parity" {
             std.debug.print("\n=== ACTION ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
-            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            if (action.ability_ref) |ref| std.debug.print(" ability_idx={d}", .{ref.ability_index});
             if (action.label) |l| std.debug.print(" label={s}", .{l});
             if (action.card_index) |ci| std.debug.print(" idx={d}", .{ci});
             std.debug.print("\n", .{});
@@ -3034,8 +3030,8 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
 fn findEncounterBreakAction(actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind == .use_installed_ability and a.side == .runner) {
-            if (a.installed_ability) |ia| {
-                if (ia == .break_subroutine) return a;
+            if (a.ability_ref) |ref| {
+                if (ref.ability_index == 0 and a.label != null and std.mem.startsWith(u8, a.label.?, "Break")) return a;
             }
         }
     }
@@ -3045,8 +3041,8 @@ fn findEncounterBreakAction(actions: []const state.LegalAction) ?state.LegalActi
 fn findEncounterPumpAction(actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind == .use_installed_ability and a.side == .runner) {
-            if (a.installed_ability) |ia| {
-                if (ia == .pump_strength) return a;
+            if (a.ability_ref) |ref| {
+                if (ref.ability_index == 1) return a;
             }
         }
     }
@@ -3056,8 +3052,8 @@ fn findEncounterPumpAction(actions: []const state.LegalAction) ?state.LegalActio
 fn findEncounterLeechAction(actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind == .use_installed_ability and a.side == .runner) {
-            if (a.installed_ability) |ia| {
-                if (ia == .none and a.card_title != null) return a;
+            if (a.label) |label| {
+                if (std.mem.startsWith(u8, label, "Give -")) return a;
             }
         }
     }
@@ -3221,13 +3217,7 @@ fn findRunActionAny(actions: []const state.LegalAction) ?state.LegalAction {
 }
 
 fn isSafeInstalledAbility(action: state.LegalAction) bool {
-    // New-style AbilitySpec actions: always safe (they have ability_ref but no installed_ability)
-    if (action.ability_ref != null and action.installed_ability == null) return true;
-    const ability = action.installed_ability orelse return false;
-    return switch (ability) {
-        .take_credits, .place_credits, .run_central, .run_rd, .start_of_turn_credits, .trash_for_virus_credits, .trash_for_damage, .remove_from_game_shuffle, .click_trash_for_credits => true,
-        .break_subroutine, .pump_strength, .none => false,
-    };
+    return action.ability_ref != null;
 }
 
 fn findPromptText(actions: []const state.LegalAction, text: []const u8) ?state.LegalAction {
@@ -4726,7 +4716,7 @@ test "e2e complete game plays to completion with oracle parity" {
             std.debug.print("\n=== ACTION ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
-            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            if (action.ability_ref) |ref| std.debug.print(" ability_idx={d}", .{ref.ability_index});
             if (action.label) |l| std.debug.print(" label={s}", .{l});
             if (action.card_index) |ci| std.debug.print(" idx={d}", .{ci});
             std.debug.print("\n", .{});
@@ -4814,7 +4804,7 @@ test "e2e intermediate game plays to completion with oracle parity" {
             std.debug.print("\n=== ACTION ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
-            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            if (action.ability_ref) |ref| std.debug.print(" ability_idx={d}", .{ref.ability_index});
             if (action.label) |l| std.debug.print(" label={s}", .{l});
             if (action.card_index) |ci| std.debug.print(" idx={d}", .{ci});
             std.debug.print("\n", .{});
@@ -4904,7 +4894,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
                     if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     if (a.label) |l| std.debug.print(" label={s}", .{l});
                     if (a.basic_action) |ba| std.debug.print(" ba={s}", .{@tagName(ba)});
-                    if (a.installed_ability) |ia| std.debug.print(" ia={s}", .{@tagName(ia)});
+                    if (a.ability_ref) |ref| std.debug.print(" aidx={d}", .{ref.ability_index});
                     std.debug.print("\n", .{});
                 }
                 std.debug.print("  filtered zig ({d}):\n", .{dbg_fa.len});
@@ -4916,7 +4906,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
                     if (a.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     if (a.label) |l| std.debug.print(" label={s}", .{l});
                     if (a.basic_action) |ba| std.debug.print(" ba={s}", .{@tagName(ba)});
-                    if (a.installed_ability) |ia| std.debug.print(" ia={s}", .{@tagName(ia)});
+                    if (a.ability_ref) |ref| std.debug.print(" aidx={d}", .{ref.ability_index});
                     std.debug.print("\n", .{});
                 }
                 std.debug.print("  last 30 actions:\n", .{});
@@ -5654,7 +5644,7 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
             std.debug.print("\n=== ELEVATION NEUTRAL ERROR at step {d} turn {d} ===\n", .{ step, generated.turn });
             std.debug.print("  kind={s} side={s}", .{ @tagName(action.kind), @tagName(action.side) });
             if (action.card_title) |t| std.debug.print(" title={s}", .{t});
-            if (action.installed_ability) |ia| std.debug.print(" ability={s}", .{@tagName(ia)});
+            if (action.ability_ref) |ref| std.debug.print(" ability_idx={d}", .{ref.ability_index});
             std.debug.print("\n", .{});
             return err;
         };

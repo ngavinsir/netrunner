@@ -10335,15 +10335,14 @@ fn encounterActionsForState(
         if (!is_broken) unbroken_count += 1;
     }
 
-    // Count icebreaker break actions (one per qualified icebreaker that can afford one activation)
+    // Count icebreaker break actions (one per qualified icebreaker with abilities[0] = break)
     var breaker_count: usize = 0;
     if (unbroken_count > 0) {
         for (generated.runner_rig_program.items) |card| {
             if (!isIcebreaker(card)) continue;
-            if (card.installed_ability.kind != .break_subroutine) continue;
+            if (card.abilities.len < 1) continue; // abilities[0] = break
             if (!canBreakIceType(card, ice)) continue;
             if (effectiveStrength(card) < ice_str) continue;
-            // Check affordability: one activation cost (Marjanah discount if ran this turn)
             var break_cost = card.installed_ability.credit_cost;
             break_cost = applyCostModifier(break_cost, sumStaticEffects(generated, .runner, .break_cost, &card));
             if (generated.runner_credit < break_cost) continue;
@@ -10351,20 +10350,18 @@ fn encounterActionsForState(
         }
     }
 
-    // Only offer pump/leech/bioroid if there are unbroken subroutines remaining
+    // Only offer pump/leech/bioroid/botulus if there are unbroken subroutines remaining
     var bioroid_ability_count: usize = 0;
     var pump_count: usize = 0;
     var leech_count: usize = 0;
     var botulus_count: usize = 0;
     if (unbroken_count > 0) {
-        for (ice.runner_abilities) |ability| {
-            if (ability.kind == .bioroid_break and generated.runner_click >= ability.click_cost) {
-                bioroid_ability_count += 1;
-            }
-        }
+        // Bioroid: count opponent-usable abilities on ICE
+        bioroid_ability_count = countCardAbilityActions(generated, .runner, ice);
+        // Pump: icebreakers with abilities[1] = pump
         for (generated.runner_rig_program.items) |card| {
             if (!isIcebreaker(card)) continue;
-            if (card.pump_ability.kind != .pump_strength) continue;
+            if (card.abilities.len < 2) continue; // abilities[1] = pump
             if (!canBreakIceType(card, ice)) continue;
             if (card.pump_ability.can_use) |can_use| {
                 if (!can_use(effectContextConst(generated), &card)) continue;
@@ -10373,17 +10370,16 @@ fn encounterActionsForState(
             if (generated.runner_credit < pump_cost) continue;
             pump_count += 1;
         }
+        // Leech: programs with virus_ice_strength_reduction and virus counters
         for (generated.runner_rig_program.items) |card| {
             if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
                 leech_count += 1;
             }
         }
-        // Botulus: check hosted cards on the current ICE
-        if (ice.hosted.len > 0) {
-            for (ice.hosted) |hosted| {
-                if (hosted.installed_ability.trojan_break_any and hosted.virus_counter > 0) {
-                    botulus_count += 1;
-                }
+        // Botulus: hosted cards on ICE with abilities
+        for (ice.hosted) |hosted| {
+            if (hosted.abilities.len > 0 and hosted.virus_counter > 0) {
+                botulus_count += 1;
             }
         }
     }
@@ -10401,11 +10397,11 @@ fn encounterActionsForState(
 
     var next: usize = 1;
 
-    // Break-all actions: one per qualified icebreaker
+    // Break actions: one per qualified icebreaker with abilities[0] = break
     if (unbroken_count > 0) {
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
             if (!isIcebreaker(card)) continue;
-            if (card.installed_ability.kind != .break_subroutine) continue;
+            if (card.abilities.len < 1) continue;
             if (!canBreakIceType(card, ice)) continue;
             if (effectiveStrength(card) < ice_str) continue;
             const break_count = @max(@as(u16, 1), @as(u16, card.installed_ability.break_subroutine_count));
@@ -10419,32 +10415,23 @@ fn encounterActionsForState(
                 .side = .runner,
                 .card_index = @intCast(combined_idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = .break_subroutine,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try std.fmt.allocPrint(allocator, "Break subroutines with {s}", .{card.title}),
             };
             next += 1;
         }
 
-        // Bioroid break actions
-        for (ice.runner_abilities) |ability| {
-            if (ability.kind == .bioroid_break and generated.runner_click >= ability.click_cost) {
-                actions[next] = .{
-                    .kind = .use_runner_ability,
-                    .side = .runner,
-                    .card_title = try allocator.dupe(u8, ice.title),
-                    .ability_ref = .{ .source_instance_id = ice.instance_id, .ability_index = 0 },
-                    .label = try std.fmt.allocPrint(allocator, "Lose {d} click(s) to break {d} subroutine(s)", .{ ability.click_cost, ability.break_quantity }),
-                };
-                next += 1;
-            }
-        }
+        // Bioroid break: emit from ICE abilities with allow_opponent_use
+        next = try emitCardAbilityActions(allocator, generated, .runner, ice, actions, next);
 
-        // Pump strength actions
+        // Pump actions: icebreakers with abilities[1] = pump
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
             if (!isIcebreaker(card)) continue;
-            if (card.pump_ability.kind != .pump_strength) continue;
+            if (card.abilities.len < 2) continue;
             if (!canBreakIceType(card, ice)) continue;
+            if (card.pump_ability.can_use) |can_use| {
+                if (!can_use(effectContextConst(generated), &card)) continue;
+            }
             if (generated.runner_credit < card.pump_ability.credit_cost) continue;
 
             const combined_idx = generated.runner_rig_resources.items.len + card_idx;
@@ -10453,14 +10440,13 @@ fn encounterActionsForState(
                 .side = .runner,
                 .card_index = @intCast(combined_idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = .pump_strength,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 1 },
                 .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ card.pump_ability.pump_strength_amount, card.title }),
             };
             next += 1;
         }
 
-        // Leech-like virus ICE strength reduction actions
+        // Leech: virus ICE strength reduction
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
             if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
                 const combined_idx = generated.runner_rig_resources.items.len + card_idx;
@@ -10469,7 +10455,6 @@ fn encounterActionsForState(
                     .side = .runner,
                     .card_index = @intCast(combined_idx),
                     .card_title = try allocator.dupe(u8, card.title),
-                    .installed_ability = .none,
                     .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                     .label = try std.fmt.allocPrint(allocator, "Give -{d} strength to {s}", .{ card.installed_ability.virus_ice_strength_reduction, ice.title }),
                 };
@@ -10477,14 +10462,13 @@ fn encounterActionsForState(
             }
         }
 
-        // Botulus: trojan hosted on current ICE with virus counters can break any sub
+        // Botulus: hosted cards on ICE with abilities
         for (ice.hosted) |hosted| {
-            if (!hosted.installed_ability.trojan_break_any or hosted.virus_counter == 0) continue;
+            if (hosted.abilities.len == 0 or hosted.virus_counter == 0) continue;
             actions[next] = .{
                 .kind = .use_installed_ability,
                 .side = .runner,
                 .card_title = try allocator.dupe(u8, hosted.title),
-                .installed_ability = .break_subroutine,
                 .ability_ref = .{ .source_instance_id = hosted.instance_id, .ability_index = 0 },
                 .label = try std.fmt.allocPrint(allocator, "Break 1 subroutine with {s}", .{hosted.title}),
             };
@@ -10577,8 +10561,7 @@ fn corpOpeningActionsForState(
                     .server = display_name,
                     .card_index = @intCast(content_index),
                     .card_title = try allocator.dupe(u8, card.title),
-                    .installed_ability = card.installed_ability.kind,
-                    .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
+                        .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                     .label = try installedAbilityLabel(allocator, card),
                 };
                 next += 1;
@@ -10597,7 +10580,6 @@ fn corpOpeningActionsForState(
                 .side = .corp,
                 .card_index = @intCast(idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = card.installed_ability.kind,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try installedAbilityLabel(allocator, card),
             };
@@ -10612,7 +10594,6 @@ fn corpOpeningActionsForState(
                 .side = .corp,
                 .card_index = @intCast(opp_res_len + idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = card.installed_ability.kind,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try installedAbilityLabel(allocator, card),
             };
@@ -10627,7 +10608,6 @@ fn corpOpeningActionsForState(
                 .side = .corp,
                 .card_index = @intCast(opp_res_len + opp_prog_len + idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = card.installed_ability.kind,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try installedAbilityLabel(allocator, card),
             };
@@ -10841,7 +10821,6 @@ fn runnerOpeningActionsForState(
                 .side = .runner,
                 .card_index = @intCast(idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = card.installed_ability.kind,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try installedAbilityLabel(allocator, card),
             };
@@ -10856,7 +10835,6 @@ fn runnerOpeningActionsForState(
                 .side = .runner,
                 .card_index = @intCast(res_len + idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = card.installed_ability.kind,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try installedAbilityLabel(allocator, card),
             };
@@ -10871,7 +10849,6 @@ fn runnerOpeningActionsForState(
                 .side = .runner,
                 .card_index = @intCast(res_len + prog_len + idx),
                 .card_title = try allocator.dupe(u8, card.title),
-                .installed_ability = card.installed_ability.kind,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try installedAbilityLabel(allocator, card),
             };

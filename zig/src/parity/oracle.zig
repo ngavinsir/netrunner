@@ -1089,10 +1089,7 @@ fn writeRetributionLocator(writer: anytype, choice_text: []const u8, leading_com
 
 fn oracleAbilityIndex(action: state.LegalAction) ?u8 {
     if (action.kind == .use_installed_ability) {
-        // Icebreaker pump_strength is the 2nd ability (index 1) in Clojure card defs
-        if (action.installed_ability) |ia| {
-            if (ia == .pump_strength) return 1;
-        }
+        if (action.ability_ref) |ref| return ref.ability_index;
         return 0;
     }
     if (action.kind == .use_runner_ability) {
@@ -1570,7 +1567,6 @@ fn parseLegalAction(
             if (ability_index) |idx| parseBasicAction(side, idx) else null
         else
             null,
-        .installed_ability = if (kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .take_credits else null,
         .label = try dupeOptionalString(allocator, try getOptional(.string, object, "label")),
     };
 }
