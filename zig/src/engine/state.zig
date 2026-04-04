@@ -267,7 +267,7 @@ pub const CardInstance = struct {
     abilities: []const AbilitySpec = &.{},
     static_abilities: []const StaticAbility = &.{},
     event_abilities: []const EventAbility = &.{},
-    // Installed ability data (flattened from InstalledAbilitySpec)
+    // Installed ability data
     initial_credit_counters: u16 = 0,
     take_credits_amount: u16 = 0,
     trash_on_empty: bool = false,

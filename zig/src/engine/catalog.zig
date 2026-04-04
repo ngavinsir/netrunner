@@ -954,9 +954,8 @@ pub const CardSpec = struct {
     advanceable: bool = false,
     advancement_strength_threshold: u8 = 0,
     advancement_strength_bonus: u8 = 0,
-    flashback_gain_clicks: u8 = 0,
     installs_agendas_faceup: bool = false,
-    // Encounter/access/trojan mechanics (moved from InstalledAbilitySpec)
+    // Encounter/access/trojan mechanics
     virus_ice_strength_reduction: u8 = 0,
     tags_on_agenda_steal_from_server: u8 = 0,
     trash_access_hand_cost: u8 = 0,
@@ -3676,7 +3675,6 @@ pub const all_cards = [_]CardSpec{
             }.use,
             .label = "Play",
         }},
-        .flashback_gain_clicks = 1,
     },
     // --- Elevation Runner Events ---
     .{
