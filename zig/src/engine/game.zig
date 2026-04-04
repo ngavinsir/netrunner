@@ -54,8 +54,6 @@ pub const CardSpec = struct {
     on_rez_msg: ?[]const u8 = null, // logged after on_rez fires
     on_play_msg: ?[]const u8 = null, // logged after on_play fires (effect description, not "plays X")
     on_score_msg: ?[]const u8 = null, // logged after on_score_fn fires
-    flashback_click_cost: u8 = 0, // Petty Cash: extra click to play from Archives
-    flashback_gain_clicks: u8 = 0, // Petty Cash: gain 1 click after flashback resolves
     // For prompt-based abilities: auto-log choice text as "{Side} uses {title} to {choice}."
     log_prompt_choice: bool = false,
     installs_agendas_faceup: bool = false, // BANGUN: installed agendas enter faceup
@@ -3341,8 +3339,8 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Transaction"},
         .cost = 3,
         .corp_play = .{ .kind = .gain_credits, .gain_credits = 5 },
-        .flashback_click_cost = 1,
-        .flashback_gain_clicks = 1,
+        // Flashback: play from Archives for 1 extra click, gain 1 click after
+        // Params now inline in applyCorpFlashback/isCorpFlashbackPlayable
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // "Play only if you have not finished an action yet this turn."
@@ -7768,17 +7766,19 @@ fn playCorpOperation(
 fn applyCorpFlashback(generated: *Game, card_index: u8) !void {
     if (card_index >= generated.corp_discard.items.len) return error.InvalidCardIndex;
     const card = generated.corp_discard.items[card_index];
-    const spec = lookupCardSpec(card) orelse return error.UnsupportedOperation;
-    if (spec.flashback_click_cost == 0) return error.UnsupportedOperation;
     if (!isCorpFlashbackPlayable(generated, card)) return error.UnsupportedOperation;
 
+    // Petty Cash flashback: 1 extra click cost, gain 1 click after resolve
+    const flashback_click_cost: u8 = 1;
+    const flashback_gain_clicks: u8 = 1;
+
     _ = generated.corp_discard.orderedRemove(card_index);
-    try spendClicks(generated, .corp, spec.flashback_click_cost);
+    try spendClicks(generated, .corp, flashback_click_cost);
     try spendCredits(generated, .corp, card.cost orelse 0);
     try logCorpOperationPlay(generated, card, true);
     try resolveCorpOperation(generated, card);
-    if (spec.flashback_gain_clicks > 0) {
-        generated.corp_click += spec.flashback_gain_clicks;
+    if (flashback_gain_clicks > 0) {
+        generated.corp_click += flashback_gain_clicks;
         generated.decision_side = .corp;
         generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
     }
@@ -11817,9 +11817,10 @@ fn isCorpCardPlayableFromHand(
 fn isCorpFlashbackPlayable(g: *const Game, card: state.CardInstance) bool {
     const card_type = card.card_type orelse return false;
     if (!std.mem.eql(u8, card_type, "Operation")) return false;
-    const spec = lookupCardSpec(card) orelse return false;
-    if (spec.flashback_click_cost == 0) return false;
-    if (g.corp_click < 1 + spec.flashback_click_cost) return false;
+    // Only Petty Cash (35081) has flashback
+    if (card.code == null or card.code.? != 35081) return false;
+    const spec = lookupCardSpecByCode(card.code.?) orelse return false;
+    if (g.corp_click < 2) return false; // 1 for play + 1 extra flashback click
     if (g.corp_credit < (card.cost orelse 0)) return false;
     if (spec.can_play) |can_play| {
         if (!can_play(g)) return false;
