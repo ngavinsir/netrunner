@@ -2451,12 +2451,10 @@ fn findRunnerEventByCategory(gen: *const generator.Game, actions: []const state.
         const code = card.code orelse 0;
         const is_run = isRunSubtype(card);
         const is_econ = runnerEventGain(code) > 0;
-        const has_prompt = if (generator.lookupCardSpecByCode(code)) |spec| spec.on_prompt_choice != null else false;
         switch (category) {
             .run => if (is_run) return a,
             .economy => if (is_econ) return a,
-            .utility => if (!is_run and !is_econ and !has_prompt) return a,
-            .custom => if (!is_run and !is_econ and has_prompt) return a,
+            .utility, .custom => if (!is_run and !is_econ) return a,
         }
     }
     return null;

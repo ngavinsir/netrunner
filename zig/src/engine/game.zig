@@ -67,7 +67,6 @@ pub const CardSpec = struct {
     advanceable: bool = false, // Pharos, Clearinghouse: explicitly advanceable
     advancement_strength_threshold: u8 = 0, // Pharos: str bonus at N+ counters
     advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
-    on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_access: ?*const fn (*Game, state.CardInstance) anyerror!bool = null,
     on_approach: ?*const fn (*Game, *const state.CardInstance) anyerror!bool = null,
@@ -77,7 +76,6 @@ pub const CardSpec = struct {
     on_play_msg: ?[]const u8 = null, // logged after on_play fires (effect description, not "plays X")
     on_score_msg: ?[]const u8 = null, // logged after on_score_fn fires
     // For prompt-based abilities: auto-log choice text as "{Side} uses {title} to {choice}."
-    log_prompt_choice: bool = false,
     installs_agendas_faceup: bool = false, // BANGUN: installed agendas enter faceup
 };
 
@@ -195,6 +193,101 @@ fn runnerRunEventPlayAbility(comptime target_kind: state.RunTargetKind, comptime
     }.play };
 }
 
+// Peer Review on_choice handler — handles peer-review-private, peer-review-install, peer-review-server
+const peer_review_on_choice: *const fn (*state.EffectContext, []const u8) anyerror!void = &struct {
+    fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+        const cg = gameFromEffectContext(cctx);
+        const c_allocator = cg.arena.allocator();
+        const prompt = cg.corp_prompt_state orelse return error.NoPromptState;
+        if (std.mem.eql(u8, prompt.prompt_type, "peer-review-private")) {
+            try beginPeerReviewInstallPrompt(cg, prompt.source_card orelse return error.NoPromptState, peer_review_on_choice);
+            return;
+        } else if (std.mem.eql(u8, prompt.prompt_type, "peer-review-install")) {
+            for (prompt.choices) |ch| {
+                if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                    if (ch.card) |card_ref| {
+                        var server_choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer server_choices.deinit(c_allocator);
+                        for (cg.corp_servers.items, 0..) |_, si| {
+                            if (si < 4) continue;
+                            const name = try std.fmt.allocPrint(c_allocator, "Server {d}", .{si - 3});
+                            try server_choices.append(c_allocator, stringChoice(name));
+                        }
+                        try server_choices.append(c_allocator, stringChoice("New remote"));
+                        cg.corp_prompt_state = .{
+                            .prompt_type = try c_allocator.dupe(u8, "peer-review-server"),
+                            .choices = try server_choices.toOwnedSlice(c_allocator),
+                            .source_card = prompt.source_card,
+                            .min_choices = card_ref.index orelse 0,
+                            .on_choice = peer_review_on_choice,
+                        };
+                        cg.decision_side = .corp;
+                        cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                        return;
+                    }
+                }
+            }
+            return error.UnsupportedChoice;
+        } else if (std.mem.eql(u8, prompt.prompt_type, "peer-review-server")) {
+            const card_index = prompt.min_choices;
+            if (card_index >= cg.corp_hand.items.len) return error.InvalidCardIndex;
+            const card_to_install = cg.corp_hand.items[card_index];
+            try installCorpCardFromHand(cg, card_index, choice_text);
+            cg.systemMsg(.corp, 35055, "Corp uses Peer Review to install {s}.", .{card_to_install.title});
+            cg.corp_prompt_state = null;
+            cg.decision_side = .corp;
+            cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+        } else return error.UnsupportedChoice;
+    }
+}.choice;
+
+// Scrounge on_choice handler — shared between the scrounge-install prompt and the
+// runner-discard-to-deck pending effect prompt (both handled by the same function)
+const scrounge_on_choice: *const fn (*state.EffectContext, []const u8) anyerror!void = &struct {
+    fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+        const cg = gameFromEffectContext(cctx);
+        const prompt = cg.runner_prompt_state orelse return error.NoPromptState;
+        if (std.mem.eql(u8, prompt.prompt_type, "scrounge-install")) {
+            const source_card = prompt.source_card orelse return error.MissingSourceCard;
+            cg.runner_prompt_state = null;
+            try cg.pending_effects.append(cg.backing_allocator, .{ .runner_discard_to_deck_prompt = source_card });
+            if (std.mem.eql(u8, choice_text, "No action")) {
+                if (try resumePendingEffects(cg)) return;
+                try restorePriorityAfterPrompt(cg);
+                return;
+            }
+            for (cg.runner_discard.items, 0..) |c, idx| {
+                if (!std.mem.eql(u8, c.title, choice_text)) continue;
+                const c_card = cg.runner_discard.orderedRemove(idx);
+                try cg.runner_hand.append(cg.backing_allocator, c_card);
+                const hand_index: u8 = @intCast(cg.runner_hand.items.len - 1);
+                try beginRunnerInstallFromHand(cg, hand_index, false);
+                cg.systemMsg(.runner, 35004, "Runner uses Scrounge to install {s} from the heap.", .{c_card.title});
+                if (hasActivePrompt(cg) or cg.pending_install != null) return;
+                if (try resumePendingEffects(cg)) return;
+                try restorePriorityAfterPrompt(cg);
+                return;
+            }
+            return error.UnsupportedChoice;
+        }
+        if (std.mem.eql(u8, prompt.prompt_type, "runner-discard-to-deck")) {
+            cg.runner_prompt_state = null;
+            if (!std.mem.eql(u8, choice_text, "No action")) {
+                for (cg.runner_discard.items, 0..) |c_card, idx| {
+                    if (!std.mem.eql(u8, c_card.title, choice_text)) continue;
+                    const bottomed = cg.runner_discard.orderedRemove(idx);
+                    try cg.runner_deck.append(cg.backing_allocator, bottomed);
+                    cg.systemMsg(.runner, 35004, "Runner uses Scrounge to put {s} on the bottom of the stack.", .{c_card.title});
+                    break;
+                }
+            }
+            try restorePriorityAfterPrompt(cg);
+            return;
+        }
+        return error.UnsupportedChoice;
+    }
+}.choice;
+
 /// Find the play ability in a card's abilities array
 fn findPlayAbility(abilities: []const state.AbilitySpec) ?*const state.AbilitySpec {
     for (abilities) |*ability| {
@@ -259,7 +352,6 @@ pub const all_cards = [_]CardSpec{
         .side = .corp,
         .code = 30051,
         .card_type = "Identity",
-        .log_prompt_choice = true,
         .event_abilities = &.{.{
             .event = .runner_gain_tag,
             .handler = &struct {
@@ -275,6 +367,27 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "reality-plus"),
                         .choices = try choices.toOwnedSlice(allocator),
                         .source_card = g.corp_identity,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                cg.systemMsg(.corp, 30051, "Corp uses NBN: Reality Plus to {s}.", .{choice_text});
+                                if (std.mem.eql(u8, choice_text, "Gain 2 [Credits]")) {
+                                    cg.corp_credit += 2;
+                                } else if (std.mem.eql(u8, choice_text, "Draw 2 cards")) {
+                                    try drawCards(cg, .corp, 2);
+                                } else return error.UnsupportedChoice;
+                                cg.corp_prompt_state = null;
+                                cg.runner_prompt_state = null;
+                                if (cg.run != null) {
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try runnerOpeningActionsForState(cg.arena.allocator(), cg);
+                                } else {
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                                }
+                            }
+                        }.choice,
                     };
                     g.runner_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -286,24 +399,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Gain 2 [Credits]")) {
-                    g.corp_credit += 2;
-                } else if (std.mem.eql(u8, choice_text, "Draw 2 cards")) {
-                    try drawCards(g, .corp, 2);
-                } else return error.UnsupportedChoice;
-                g.corp_prompt_state = null;
-                g.runner_prompt_state = null;
-                if (g.run != null) {
-                    g.decision_side = .runner;
-                    g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
-                } else {
-                    g.decision_side = .corp;
-                    g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-                }
-            }
-        }.choice,
     },
     .{
         .title = "Weyland Consortium: Built to Last",
@@ -397,24 +492,26 @@ pub const all_cards = [_]CardSpec{
                         .choices = choices,
                         .source_card = g.runner_identity,
                         .min_choices = @intCast(accessed), // stash accessed count for resolution
+                    
+                        .on_choice = &struct {
+                            fn handle(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "Yes")) {
+                                    const c_accessed = cg.runner_prompt_state.?.min_choices;
+                                    cg.runner_credit += c_accessed;
+                                    cg.systemMsg(.runner, 30010, "Runner uses Zahya to gain {d} [credit{s}].", .{ c_accessed, if (c_accessed != 1) "s" else "" });
+                                }
+                                cg.runner_prompt_state = null;
+                                cg.decision_side = .runner;
+                                cg.legal_actions = try runnerOpeningActionsForState(cg.arena.allocator(), cg);
+                            }
+                        }.handle,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn handle(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Yes")) {
-                    const accessed = g.runner_prompt_state.?.min_choices;
-                    g.runner_credit += accessed;
-                    g.systemMsg(.runner, 30010, "Runner uses Zahya to gain {d} [credit{s}].", .{ accessed, if (accessed != 1) "s" else "" });
-                }
-                g.runner_prompt_state = null;
-                g.decision_side = .runner;
-                g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.handle,
     },
     .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
     .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
@@ -499,20 +596,22 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "seamless-advance"),
                     .choices = choices,
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            const advanced_card = try addAdvancementCounter(cg, choice_text, 2);
+                            cg.systemMsg(.corp, 30040, "Corp uses Seamless Launch to advance {s} 2 times.", .{advanced_card.title});
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const advanced_card = try addAdvancementCounter(g, choice_text, 2);
-                g.systemMsg(.corp, 30040, "Corp uses Seamless Launch to advance {s} 2 times.", .{advanced_card.title});
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Predictive Planogram",
@@ -521,7 +620,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .cost = 0,
 
-        .log_prompt_choice = true,
         .abilities = &.{.{ .is_play = true, .on_use = &struct {
             fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
@@ -530,6 +628,25 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try predictive_planogram_choices(allocator, g.runner_tag),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            cg.systemMsg(.corp, 30056, "Corp uses Predictive Planogram to {s}.", .{choice_text});
+                            if (std.mem.eql(u8, choice_text, "Gain 3 [Credits]")) {
+                                cg.corp_credit += 3;
+                            } else if (std.mem.eql(u8, choice_text, "Draw 3 cards")) {
+                                try drawCards(cg, .corp, 3);
+                            } else if (std.mem.eql(u8, choice_text, "Gain 3 [Credits] and draw 3 cards")) {
+                                cg.corp_credit += 3;
+                                try drawCards(cg, .corp, 3);
+                            } else return error.UnsupportedChoice;
+                            cg.corp_prompt_state = null;
+                            cg.runner_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -540,22 +657,6 @@ pub const all_cards = [_]CardSpec{
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Gain 3 [Credits]")) {
-                    g.corp_credit += 3;
-                } else if (std.mem.eql(u8, choice_text, "Draw 3 cards")) {
-                    try drawCards(g, .corp, 3);
-                } else if (std.mem.eql(u8, choice_text, "Gain 3 [Credits] and draw 3 cards")) {
-                    g.corp_credit += 3;
-                    try drawCards(g, .corp, 3);
-                } else return error.UnsupportedChoice;
-                g.corp_prompt_state = null;
-                g.runner_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Public Trail",
@@ -564,7 +665,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .cost = 4,
 
-        .log_prompt_choice = true,
         .abilities = &.{.{ .is_play = true, .req = &struct {
             fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
                 const g = gameFromConstEffectContext(ctx);
@@ -588,24 +688,27 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try public_trail_choices(allocator, g.runner_credit),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            cg.systemMsg(.runner, 30057, "Runner uses Public Trail to {s}.", .{choice_text});
+                            if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
+                                if (try addRunnerTag(cg, 1)) return; // Event handler opened prompt
+                            } else if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
+                                try spendCredits(cg, .runner, 8);
+                            } else return error.UnsupportedChoice;
+                            cg.runner_prompt_state = null;
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
-                    if (try addRunnerTag(g, 1)) return; // Event handler opened prompt
-                } else if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
-                    try spendCredits(g, .runner, 8);
-                } else return error.UnsupportedChoice;
-                g.runner_prompt_state = null;
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Retribution",
@@ -639,38 +742,40 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "retribution-trash"),
                     .choices = choices,
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            var pieces = std.mem.splitScalar(u8, choice_text, '|');
+                            const zone = pieces.next() orelse return error.UnsupportedChoice;
+                            const index_text = pieces.next() orelse return error.UnsupportedChoice;
+                            const index = try std.fmt.parseInt(usize, index_text, 10);
+                            if (std.mem.eql(u8, zone, "h")) {
+                                if (index >= cg.runner_rig_hardware.items.len) return error.UnsupportedChoice;
+                                const trashed = cg.runner_rig_hardware.orderedRemove(index);
+                                cg.systemMsg(.corp, 30065, "Corp uses Retribution to trash {s}.", .{trashed.title});
+                                try cg.runner_discard.append(cg.backing_allocator, trashed);
+                            } else if (std.mem.eql(u8, zone, "p")) {
+                                if (index >= cg.runner_rig_program.items.len) return error.UnsupportedChoice;
+                                const trashed = cg.runner_rig_program.orderedRemove(index);
+                                cg.systemMsg(.corp, 30065, "Corp uses Retribution to trash {s}.", .{trashed.title});
+                                try cg.runner_discard.append(cg.backing_allocator, trashed);
+                                if (cg.runner_memory) |*mem| {
+                                    const mu = trashed.runner_install.mu_cost;
+                                    if (mem.used >= mu) mem.used -= mu else mem.used = 0;
+                                    mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
+                                }
+                            } else return error.UnsupportedChoice;
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                var pieces = std.mem.splitScalar(u8, choice_text, '|');
-                const zone = pieces.next() orelse return error.UnsupportedChoice;
-                const index_text = pieces.next() orelse return error.UnsupportedChoice;
-                const index = try std.fmt.parseInt(usize, index_text, 10);
-                if (std.mem.eql(u8, zone, "h")) {
-                    if (index >= g.runner_rig_hardware.items.len) return error.UnsupportedChoice;
-                    const trashed = g.runner_rig_hardware.orderedRemove(index);
-                    g.systemMsg(.corp, 30065, "Corp uses Retribution to trash {s}.", .{trashed.title});
-                    try g.runner_discard.append(g.backing_allocator, trashed);
-                } else if (std.mem.eql(u8, zone, "p")) {
-                    if (index >= g.runner_rig_program.items.len) return error.UnsupportedChoice;
-                    const trashed = g.runner_rig_program.orderedRemove(index);
-                    g.systemMsg(.corp, 30065, "Corp uses Retribution to trash {s}.", .{trashed.title});
-                    try g.runner_discard.append(g.backing_allocator, trashed);
-                    if (g.runner_memory) |*mem| {
-                        const mu = trashed.runner_install.mu_cost;
-                        if (mem.used >= mu) mem.used -= mu else mem.used = 0;
-                        mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
-                    }
-                } else return error.UnsupportedChoice;
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Manegarm Skunkworks",
@@ -696,43 +801,45 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "manegarm-tax"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            cg.systemMsg(.runner, 30042, "Runner uses Manegarm Skunkworks to {s}.", .{choice_text});
+                            const c_allocator = cg.arena.allocator();
+                            var run = &cg.run.?;
+                            if (std.mem.eql(u8, choice_text, "Spend [Click][Click]")) {
+                                cg.runner_click -= 2;
+                            } else if (std.mem.eql(u8, choice_text, "Pay 5 [Credits]")) {
+                                cg.runner_credit -= 5;
+                            } else if (std.mem.eql(u8, choice_text, "End the run")) {
+                                try completeUnsuccessfulRun(cg);
+                                return;
+                            } else return error.UnsupportedChoice;
+                            cg.runner_prompt_state = null;
+                            try applySuccessfulRunEffects(cg);
+                            if (try prepareNextAccess(cg)) {
+                                // Clojure's approach-server event resolves directly into breach —
+                                // no corp priority window between Manegarm payment and access.
+                                run.phase = try c_allocator.dupe(u8, "success");
+                                if (cg.runner_prompt_state) |ps| {
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .runner, ps);
+                                } else {
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try continueActionsForRun(c_allocator, .runner, run.*);
+                                }
+                                return;
+                            }
+                            try completeSuccessfulRunWithCorpPriority(cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 return true;
             }
         }.approach,
-        .log_prompt_choice = true,
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                var run = &g.run.?;
-                if (std.mem.eql(u8, choice_text, "Spend [Click][Click]")) {
-                    g.runner_click -= 2;
-                } else if (std.mem.eql(u8, choice_text, "Pay 5 [Credits]")) {
-                    g.runner_credit -= 5;
-                } else if (std.mem.eql(u8, choice_text, "End the run")) {
-                    try completeUnsuccessfulRun(g);
-                    return;
-                } else return error.UnsupportedChoice;
-                g.runner_prompt_state = null;
-                try applySuccessfulRunEffects(g);
-                if (try prepareNextAccess(g)) {
-                    // Clojure's approach-server event resolves directly into breach —
-                    // no corp priority window between Manegarm payment and access.
-                    run.phase = try allocator.dupe(u8, "success");
-                    if (g.runner_prompt_state) |ps| {
-                        g.decision_side = .runner;
-                        g.legal_actions = try promptChoiceActions(allocator, .runner, ps);
-                    } else {
-                        g.decision_side = .runner;
-                        g.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
-                    }
-                    return;
-                }
-                try completeSuccessfulRunWithCorpPriority(g);
-            }
-        }.choice,
     },
     .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .tags_on_agenda_steal_from_server = 2 },
     .{
@@ -750,11 +857,6 @@ pub const all_cards = [_]CardSpec{
             .{ .kind = .end_the_run },
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                try applyBranInstallIceChoice(g, choice_text);
-            }
-        }.choice,
     },
     .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .remote_strength_bonus = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .end_the_run },
@@ -783,7 +885,6 @@ pub const all_cards = [_]CardSpec{
         .cost = 5,
         .strength = 4,
         .install = .{ .kind = .corp_server_choice },
-        .log_prompt_choice = true,
         .subroutines = &.{
             .{ .kind = .give_tag_or_pay_credits, .amount = 4 },
         },
@@ -799,32 +900,35 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "funhouse-encounter"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = null,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            cg.systemMsg(.runner, 30054, "Runner uses Funhouse to {s}.", .{choice_text});
+                            if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
+                                if (try addRunnerTag(cg, 1)) return; // Event handler opened prompt
+                                cg.runner_prompt_state = null;
+                                // Continue encounter normally
+                                const run = cg.run orelse return error.NoRunInProgress;
+                                const ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
+                                const target_server = try findServerByRunPath(cg.corp_servers.items, run.server);
+                                const server = target_server.slot;
+                                const ice_count = server.ices.items.len;
+                                const actual_ice_idx = ice_count - 1 - ice_idx;
+                                const c_ice = server.ices.items[actual_ice_idx];
+                                cg.decision_side = .runner;
+                                cg.legal_actions = try encounterActionsForState(cg.arena.allocator(), cg, c_ice);
+                            } else if (std.mem.eql(u8, choice_text, "End the run")) {
+                                cg.runner_prompt_state = null;
+                                try completeUnsuccessfulRun(cg);
+                            } else return error.UnsupportedChoice;
+                        }
+                    }.choice,
                 };
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
         }.encounter,
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
-                    if (try addRunnerTag(g, 1)) return; // Event handler opened prompt
-                    g.runner_prompt_state = null;
-                    // Continue encounter normally
-                    const run = g.run orelse return error.NoRunInProgress;
-                    const ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
-                    const target_server = try findServerByRunPath(g.corp_servers.items, run.server);
-                    const server = target_server.slot;
-                    const ice_count = server.ices.items.len;
-                    const actual_ice_idx = ice_count - 1 - ice_idx;
-                    const ice = server.ices.items[actual_ice_idx];
-                    g.decision_side = .runner;
-                    g.legal_actions = try encounterActionsForState(g.arena.allocator(), g, ice);
-                } else if (std.mem.eql(u8, choice_text, "End the run")) {
-                    g.runner_prompt_state = null;
-                    try completeUnsuccessfulRun(g);
-                } else return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(5, 0, 1)} },
     .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .abilities = &.{runnerRunEventPlayAbility(.hq_and_rnd_only, 0)}, .run_target_kind = .hq_and_rnd_only, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 1, .successful_run_access_bonus = 1 },
@@ -871,7 +975,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .cost = 2,
 
-        .log_prompt_choice = true,
         .abilities = &.{.{ .is_play = true, .on_use = &struct {
             fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
@@ -885,27 +988,30 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try wildcat_strike_choices(allocator),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            cg.systemMsg(.corp, 30002, "Corp uses Wildcat Strike to {s}.", .{choice_text});
+                            if (std.mem.eql(u8, choice_text, "Runner gains 6 [Credits]")) {
+                                cg.runner_credit += 6;
+                            } else if (std.mem.eql(u8, choice_text, "Runner draws 4 cards")) {
+                                try drawCards(cg, .runner, 4);
+                            } else return error.UnsupportedChoice;
+                            cg.corp_prompt_state = null;
+                            cg.runner_prompt_state = null;
+                            cg.decision_side = .runner;
+                            cg.legal_actions = try runnerOpeningActionsForState(
+                                cg.arena.allocator(),
+                                cg,
+                            );
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Runner gains 6 [Credits]")) {
-                    g.runner_credit += 6;
-                } else if (std.mem.eql(u8, choice_text, "Runner draws 4 cards")) {
-                    try drawCards(g, .runner, 4);
-                } else return error.UnsupportedChoice;
-                g.corp_prompt_state = null;
-                g.runner_prompt_state = null;
-                g.decision_side = .runner;
-                g.legal_actions = try runnerOpeningActionsForState(
-                    g.arena.allocator(),
-                    g,
-                );
-            }
-        }.choice,
     },
     .{ .title = "VRcation", .side = .runner, .code = 30021, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(0, 4, 1)} },
     .{ .title = "Docklands Pass", .side = .runner, .code = 30013, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .hq_access, .value = 1 }} },
@@ -1169,59 +1275,61 @@ pub const all_cards = [_]CardSpec{
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = src_card.*,
                     .min_choices = 2,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            // Mark the card as selected (don't move yet — batch like Clojure)
+                            // Track selected card titles in pending_sprint_selections
+                            try cg.pending_sprint_selections.append(cg.backing_allocator, choice_text);
+                            // Check if we need to pick one more
+                            if (cg.corp_prompt_state) |*ps| {
+                                if (ps.min_choices > 1) {
+                                    ps.min_choices -= 1;
+                                    // Rebuild choices excluding already-selected cards
+                                    const c_allocator = cg.arena.allocator();
+                                    var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                    defer c_choices.deinit(c_allocator);
+                                    for (cg.corp_hand.items, 0..) |card, idx| {
+                                        var already_selected = false;
+                                        for (cg.pending_sprint_selections.items) |sel| {
+                                            if (std.mem.eql(u8, card.title, sel)) {
+                                                already_selected = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!already_selected) {
+                                            try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                        }
+                                    }
+                                    ps.choices = try c_choices.toOwnedSlice(c_allocator);
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                    return;
+                                }
+                            }
+                            // All selected — now move all selected cards from hand to deck
+                            for (cg.pending_sprint_selections.items) |sel_title| {
+                                for (cg.corp_hand.items, 0..) |card, idx| {
+                                    if (std.mem.eql(u8, card.title, sel_title)) {
+                                        const removed = cg.corp_hand.orderedRemove(idx);
+                                        try cg.corp_deck.append(cg.backing_allocator, removed);
+                                        break;
+                                    }
+                                }
+                            }
+                            cg.pending_sprint_selections.clearRetainingCapacity();
+                            // Done — shuffle R&D and return to corp actions
+                            try shuffleDeck(cg, .corp);
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                // Mark the card as selected (don't move yet — batch like Clojure)
-                // Track selected card titles in pending_sprint_selections
-                try g.pending_sprint_selections.append(g.backing_allocator, choice_text);
-                // Check if we need to pick one more
-                if (g.corp_prompt_state) |*ps| {
-                    if (ps.min_choices > 1) {
-                        ps.min_choices -= 1;
-                        // Rebuild choices excluding already-selected cards
-                        const allocator = g.arena.allocator();
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        for (g.corp_hand.items, 0..) |card, idx| {
-                            var already_selected = false;
-                            for (g.pending_sprint_selections.items) |sel| {
-                                if (std.mem.eql(u8, card.title, sel)) {
-                                    already_selected = true;
-                                    break;
-                                }
-                            }
-                            if (!already_selected) {
-                                try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
-                            }
-                        }
-                        ps.choices = try choices.toOwnedSlice(allocator);
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                        return;
-                    }
-                }
-                // All selected — now move all selected cards from hand to deck
-                for (g.pending_sprint_selections.items) |sel_title| {
-                    for (g.corp_hand.items, 0..) |card, idx| {
-                        if (std.mem.eql(u8, card.title, sel_title)) {
-                            const removed = g.corp_hand.orderedRemove(idx);
-                            try g.corp_deck.append(g.backing_allocator, removed);
-                            break;
-                        }
-                    }
-                }
-                g.pending_sprint_selections.clearRetainingCapacity();
-                // Done — shuffle R&D and return to corp actions
-                try shuffleDeck(g, .corp);
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Hansei Review",
@@ -1252,25 +1360,27 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "hansei-trash"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            for (cg.corp_hand.items, 0..) |c_card, idx| {
+                                if (std.mem.eql(u8, c_card.title, choice_text)) {
+                                    const removed = cg.corp_hand.orderedRemove(idx);
+                                    try cg.corp_discard.append(cg.backing_allocator, removed);
+                                    break;
+                                }
+                            }
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                for (g.corp_hand.items, 0..) |card, idx| {
-                    if (std.mem.eql(u8, card.title, choice_text)) {
-                        const removed = g.corp_hand.orderedRemove(idx);
-                        try g.corp_discard.append(g.backing_allocator, removed);
-                        break;
-                    }
-                }
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Above the Law",
@@ -1295,26 +1405,28 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "above-the-law-trash"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = null,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            var pieces = std.mem.splitScalar(u8, choice_text, '|');
+                            const zone = pieces.next() orelse return error.UnsupportedChoice;
+                            if (!std.mem.eql(u8, zone, "r")) return error.UnsupportedChoice;
+                            const index_text = pieces.next() orelse return error.UnsupportedChoice;
+                            const index = try std.fmt.parseInt(usize, index_text, 10);
+                            if (index >= cg.runner_rig_resources.items.len) return error.UnsupportedChoice;
+                            const trashed = cg.runner_rig_resources.orderedRemove(index);
+                            try cg.runner_discard.append(cg.backing_allocator, trashed);
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.score,
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                var pieces = std.mem.splitScalar(u8, choice_text, '|');
-                const zone = pieces.next() orelse return error.UnsupportedChoice;
-                if (!std.mem.eql(u8, zone, "r")) return error.UnsupportedChoice;
-                const index_text = pieces.next() orelse return error.UnsupportedChoice;
-                const index = try std.fmt.parseInt(usize, index_text, 10);
-                if (index >= g.runner_rig_resources.items.len) return error.UnsupportedChoice;
-                const trashed = g.runner_rig_resources.orderedRemove(index);
-                try g.runner_discard.append(g.backing_allocator, trashed);
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     // --- Phase 1: Pharos, Fermenter, Neurospike, Luminal Transubstantiation, Cookbook ---
     .{ .title = "Pharos", .side = .corp, .code = 30063, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 7, .strength = 5, .advanceable = true, .advancement_strength_threshold = 3, .advancement_strength_bonus = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
@@ -1445,113 +1557,121 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "longevity-serum-trash"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = null,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            const c_allocator = cg.arena.allocator();
+                            const prompt = cg.corp_prompt_state orelse return error.MissingPrompt;
+                            if (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-trash")) {
+                                if (std.mem.eql(u8, choice_text, "Done")) {
+                                    // Move to shuffle phase: choose up to 3 cards from Archives
+                                    if (cg.corp_discard.items.len == 0) {
+                                        cg.corp_prompt_state = null;
+                                        cg.decision_side = .corp;
+                                        cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                        return;
+                                    }
+                                    var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                    defer c_choices.deinit(c_allocator);
+                                    for (cg.corp_discard.items, 0..) |card, idx| {
+                                        try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                    }
+                                    try c_choices.append(c_allocator, stringChoice("Done"));
+                                    cg.corp_prompt_state = .{
+                                        .prompt_type = try c_allocator.dupe(u8, "longevity-serum-shuffle"),
+                                        .choices = try c_choices.toOwnedSlice(c_allocator),
+                                        .source_card = null,
+                                        .min_choices = 0,
+
+                                        .on_choice = &@This().choice,
+                                    };
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                    return;
+                                }
+                                // Trash chosen card from hand
+                                for (cg.corp_hand.items, 0..) |card, idx| {
+                                    if (std.mem.eql(u8, card.title, choice_text)) {
+                                        const removed = cg.corp_hand.orderedRemove(idx);
+                                        try cg.corp_discard.append(cg.backing_allocator, removed);
+                                        break;
+                                    }
+                                }
+                                // Rebuild trash c_choices
+                                var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                defer c_choices.deinit(c_allocator);
+                                for (cg.corp_hand.items, 0..) |card, idx| {
+                                    try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                }
+                                try c_choices.append(c_allocator, stringChoice("Done"));
+                                cg.corp_prompt_state = .{
+                                    .prompt_type = try c_allocator.dupe(u8, "longevity-serum-trash"),
+                                    .choices = try c_choices.toOwnedSlice(c_allocator),
+                                    .source_card = null,
+
+                                    .on_choice = &@This().choice,
+                                };
+                                cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                return;
+                            }
+                            if (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-shuffle")) {
+                                if (std.mem.eql(u8, choice_text, "Done")) {
+                                    try shuffleDeck(cg, .corp);
+                                    cg.corp_prompt_state = null;
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                    return;
+                                }
+                                // Move chosen card from Archives to R&D
+                                for (cg.corp_discard.items, 0..) |card, idx| {
+                                    if (std.mem.eql(u8, card.title, choice_text)) {
+                                        const removed = cg.corp_discard.orderedRemove(idx);
+                                        try cg.corp_deck.append(cg.backing_allocator, removed);
+                                        break;
+                                    }
+                                }
+                                // Check if we've hit 3 shuffles
+                                if (prompt.min_choices >= 2) {
+                                    // Already shuffled 3, done
+                                    try shuffleDeck(cg, .corp);
+                                    cg.corp_prompt_state = null;
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                    return;
+                                }
+                                if (cg.corp_discard.items.len == 0) {
+                                    try shuffleDeck(cg, .corp);
+                                    cg.corp_prompt_state = null;
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                    return;
+                                }
+                                // Rebuild shuffle c_choices
+                                var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                defer c_choices.deinit(c_allocator);
+                                for (cg.corp_discard.items, 0..) |card, idx| {
+                                    try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                }
+                                try c_choices.append(c_allocator, stringChoice("Done"));
+                                cg.corp_prompt_state = .{
+                                    .prompt_type = try c_allocator.dupe(u8, "longevity-serum-shuffle"),
+                                    .choices = try c_choices.toOwnedSlice(c_allocator),
+                                    .source_card = null,
+                                    .min_choices = prompt.min_choices + 1,
+
+                                    .on_choice = &@This().choice,
+                                };
+                                cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                return;
+                            }
+                            return error.UnsupportedPrompt;
+                        }
+                    }.choice,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.score,
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.corp_prompt_state orelse return error.MissingPrompt;
-                if (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-trash")) {
-                    if (std.mem.eql(u8, choice_text, "Done")) {
-                        // Move to shuffle phase: choose up to 3 cards from Archives
-                        if (g.corp_discard.items.len == 0) {
-                            g.corp_prompt_state = null;
-                            g.decision_side = .corp;
-                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                            return;
-                        }
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        for (g.corp_discard.items, 0..) |card, idx| {
-                            try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
-                        }
-                        try choices.append(allocator, stringChoice("Done"));
-                        g.corp_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "longevity-serum-shuffle"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = null,
-                            .min_choices = 0,
-                        };
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                        return;
-                    }
-                    // Trash chosen card from hand
-                    for (g.corp_hand.items, 0..) |card, idx| {
-                        if (std.mem.eql(u8, card.title, choice_text)) {
-                            const removed = g.corp_hand.orderedRemove(idx);
-                            try g.corp_discard.append(g.backing_allocator, removed);
-                            break;
-                        }
-                    }
-                    // Rebuild trash choices
-                    var choices: std.ArrayList(state.PromptChoice) = .empty;
-                    defer choices.deinit(allocator);
-                    for (g.corp_hand.items, 0..) |card, idx| {
-                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
-                    }
-                    try choices.append(allocator, stringChoice("Done"));
-                    g.corp_prompt_state = .{
-                        .prompt_type = try allocator.dupe(u8, "longevity-serum-trash"),
-                        .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = null,
-                    };
-                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                    return;
-                }
-                if (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-shuffle")) {
-                    if (std.mem.eql(u8, choice_text, "Done")) {
-                        try shuffleDeck(g, .corp);
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                        return;
-                    }
-                    // Move chosen card from Archives to R&D
-                    for (g.corp_discard.items, 0..) |card, idx| {
-                        if (std.mem.eql(u8, card.title, choice_text)) {
-                            const removed = g.corp_discard.orderedRemove(idx);
-                            try g.corp_deck.append(g.backing_allocator, removed);
-                            break;
-                        }
-                    }
-                    // Check if we've hit 3 shuffles
-                    if (prompt.min_choices >= 2) {
-                        // Already shuffled 3, done
-                        try shuffleDeck(g, .corp);
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                        return;
-                    }
-                    if (g.corp_discard.items.len == 0) {
-                        try shuffleDeck(g, .corp);
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                        return;
-                    }
-                    // Rebuild shuffle choices
-                    var choices: std.ArrayList(state.PromptChoice) = .empty;
-                    defer choices.deinit(allocator);
-                    for (g.corp_discard.items, 0..) |card, idx| {
-                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
-                    }
-                    try choices.append(allocator, stringChoice("Done"));
-                    g.corp_prompt_state = .{
-                        .prompt_type = try allocator.dupe(u8, "longevity-serum-shuffle"),
-                        .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = null,
-                        .min_choices = prompt.min_choices + 1,
-                    };
-                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                    return;
-                }
-                return error.UnsupportedPrompt;
-            }
-        }.choice,
     },
     .{
         .title = "Malapert Data Vault",
@@ -1594,32 +1714,34 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "malapert-search"),
                         .choices = try choices.toOwnedSlice(allocator),
                         .source_card = null,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "Done")) {
+                                    // Declined or cancelled — shuffle R&D
+                                    try shuffleDeck(cg, .corp);
+                                    return;
+                                }
+                                // Clojure: reveal → shuffle R&D → move card to HQ
+                                // Shuffle first (before removing), then find and move
+                                try shuffleDeck(cg, .corp);
+                                const c_allocator = cg.arena.allocator();
+                                for (cg.corp_deck.items, 0..) |card, idx| {
+                                    if (std.mem.eql(u8, card.title, choice_text)) {
+                                        const removed = cg.corp_deck.orderedRemove(idx);
+                                        try cg.corp_hand.append(c_allocator, removed);
+                                        break;
+                                    }
+                                }
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Done")) {
-                    // Declined or cancelled — shuffle R&D
-                    try shuffleDeck(g, .corp);
-                    return;
-                }
-                // Clojure: reveal → shuffle R&D → move card to HQ
-                // Shuffle first (before removing), then find and move
-                try shuffleDeck(g, .corp);
-                const allocator = g.arena.allocator();
-                for (g.corp_deck.items, 0..) |card, idx| {
-                    if (std.mem.eql(u8, card.title, choice_text)) {
-                        const removed = g.corp_deck.orderedRemove(idx);
-                        try g.corp_hand.append(allocator, removed);
-                        break;
-                    }
-                }
-            }
-        }.choice,
     },
     .{
         .title = "Spin Doctor",
@@ -1651,8 +1773,48 @@ pub const all_cards = [_]CardSpec{
         .static_abilities = &.{.{ .kind = .mu, .value = 1 }},
         .event_abilities = blk: {
             const H = struct {
+                const pantograph_on_choice = &struct {
+                    fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                        const g = gameFromEffectContext(cctx);
+                        const prompt = g.runner_prompt_state orelse return error.NoPromptState;
+                        if (std.mem.eql(u8, prompt.prompt_type, "runner-bonus-install-confirm")) {
+                            g.runner_prompt_state = null;
+                            if (std.mem.eql(u8, choice_text, "Yes")) {
+                                g.runner_credit += 1;
+                                g.systemMsg(.runner, 30023, "Runner uses Pantograph to gain 1 [credit].", .{});
+                                try beginRunnerOptionalInstallPrompt(g, prompt.source_card orelse return error.MissingSourceCard, &@This().choice);
+                                if (!hasActivePrompt(g)) {
+                                    if (try resumePendingEffects(g)) return;
+                                }
+                                return;
+                            }
+                            if (std.mem.eql(u8, choice_text, "No")) {
+                                if (try resumePendingEffects(g)) return;
+                                return;
+                            }
+                            return error.UnsupportedChoice;
+                        }
+                        if (std.mem.eql(u8, choice_text, "No action")) {
+                            g.runner_prompt_state = null;
+                            if (try resumePendingEffects(g)) return;
+                            return;
+                        }
+                        for (prompt.choices) |prompt_choice| {
+                            if (prompt_choice.text == null or !std.mem.eql(u8, prompt_choice.text.?, choice_text)) continue;
+                            const card_ref = prompt_choice.card orelse continue;
+                            const card_index = card_ref.index orelse continue;
+                            g.runner_prompt_state = null;
+                            try beginRunnerInstallFromHand(g, card_index, false);
+                            if (!hasActivePrompt(g)) {
+                                if (try resumePendingEffects(g)) return;
+                            }
+                            return;
+                        }
+                        return error.UnsupportedChoice;
+                    }
+                }.choice;
                 fn trigger(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                    try beginRunnerOptionalInstallConfirmPrompt(gameFromEffectContext(ctx), self_card.*);
+                    try beginRunnerOptionalInstallConfirmPrompt(gameFromEffectContext(ctx), self_card.*, pantograph_on_choice);
                 }
             };
             break :blk &.{
@@ -1660,45 +1822,6 @@ pub const all_cards = [_]CardSpec{
                 .{ .event = .agenda_stolen, .handler = &H.trigger },
             };
         },
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "runner-bonus-install-confirm")) {
-                    g.runner_prompt_state = null;
-                    if (std.mem.eql(u8, choice_text, "Yes")) {
-                        g.runner_credit += 1;
-                        g.systemMsg(.runner, 30023, "Runner uses Pantograph to gain 1 [credit].", .{});
-                        try beginRunnerOptionalInstallPrompt(g, prompt.source_card orelse return error.MissingSourceCard);
-                        if (!hasActivePrompt(g)) {
-                            if (try resumePendingEffects(g)) return;
-                        }
-                        return;
-                    }
-                    if (std.mem.eql(u8, choice_text, "No")) {
-                        if (try resumePendingEffects(g)) return;
-                        return;
-                    }
-                    return error.UnsupportedChoice;
-                }
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.runner_prompt_state = null;
-                    if (try resumePendingEffects(g)) return;
-                    return;
-                }
-                for (prompt.choices) |prompt_choice| {
-                    if (prompt_choice.text == null or !std.mem.eql(u8, prompt_choice.text.?, choice_text)) continue;
-                    const card_ref = prompt_choice.card orelse continue;
-                    const card_index = card_ref.index orelse continue;
-                    g.runner_prompt_state = null;
-                    try beginRunnerInstallFromHand(g, card_index, false);
-                    if (!hasActivePrompt(g)) {
-                        if (try resumePendingEffects(g)) return;
-                    }
-                    return;
-                }
-                return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     // --- Phase 4: Trojans ---
     .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program },
@@ -1788,6 +1911,59 @@ pub const all_cards = [_]CardSpec{
                             .{ .kind = .string, .text = "No action" },
                         },
                         .source_card = card.*,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "Use Anoetic Void")) {
+                                    // Corp pays 2 credits
+                                    if (cg.corp_credit < 2) return error.InsufficientCredits;
+                                    cg.corp_credit -= 2;
+                                    // Trash 2 cards from HQ (first 2 available)
+                                    var trashed: u8 = 0;
+                                    while (trashed < 2 and cg.corp_hand.items.len > 0) {
+                                        const c_card = cg.corp_hand.orderedRemove(0);
+                                        try cg.corp_discard.append(cg.backing_allocator, c_card);
+                                        trashed += 1;
+                                    }
+                                    // Trash Anoetic Void itself (find it in the server)
+                                    if (cg.run) |run| {
+                                        const target = findServerByRunPath(cg.corp_servers.items, run.server) catch null;
+                                        if (target) |t| {
+                                            const server = &cg.corp_servers.items[t.index];
+                                            for (server.content.items, 0..) |c, idx| {
+                                                if (c.code != null and c.code.? == 30050) {
+                                                    const removed = server.content.orderedRemove(idx);
+                                                    try cg.corp_discard.append(cg.backing_allocator, removed);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // End the run
+                                    try completeUnsuccessfulRun(cg);
+                                } else {
+                                    // "No action" — proceed to access
+                                    cg.corp_prompt_state = null;
+                                    const run = &cg.run.?;
+                                    const c_allocator = cg.arena.allocator();
+                                    // Check Manegarm next
+                                    if (try checkServerApproachAbilities(cg)) return;
+                                    if (try prepareNextAccess(cg)) {
+                                        run.phase = try c_allocator.dupe(u8, "success");
+                                        if (cg.runner_prompt_state) |ps| {
+                                            cg.decision_side = .runner;
+                                            cg.legal_actions = try promptChoiceActions(c_allocator, .runner, ps);
+                                        } else {
+                                            cg.decision_side = .runner;
+                                            cg.legal_actions = try continueActionsForRun(c_allocator, .runner, run.*);
+                                        }
+                                        return;
+                                    }
+                                    try completeSuccessfulRunWithCorpPriority(cg);
+                                }
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
@@ -1796,57 +1972,6 @@ pub const all_cards = [_]CardSpec{
                 return false;
             }
         }.approach,
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Use Anoetic Void")) {
-                    // Corp pays 2 credits
-                    if (g.corp_credit < 2) return error.InsufficientCredits;
-                    g.corp_credit -= 2;
-                    // Trash 2 cards from HQ (first 2 available)
-                    var trashed: u8 = 0;
-                    while (trashed < 2 and g.corp_hand.items.len > 0) {
-                        const card = g.corp_hand.orderedRemove(0);
-                        try g.corp_discard.append(g.backing_allocator, card);
-                        trashed += 1;
-                    }
-                    // Trash Anoetic Void itself (find it in the server)
-                    if (g.run) |run| {
-                        const target = findServerByRunPath(g.corp_servers.items, run.server) catch null;
-                        if (target) |t| {
-                            const server = &g.corp_servers.items[t.index];
-                            for (server.content.items, 0..) |c, idx| {
-                                if (c.code != null and c.code.? == 30050) {
-                                    const removed = server.content.orderedRemove(idx);
-                                    try g.corp_discard.append(g.backing_allocator, removed);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    // End the run
-                    try completeUnsuccessfulRun(g);
-                } else {
-                    // "No action" — proceed to access
-                    g.corp_prompt_state = null;
-                    const run = &g.run.?;
-                    const allocator = g.arena.allocator();
-                    // Check Manegarm next
-                    if (try checkServerApproachAbilities(g)) return;
-                    if (try prepareNextAccess(g)) {
-                        run.phase = try allocator.dupe(u8, "success");
-                        if (g.runner_prompt_state) |ps| {
-                            g.decision_side = .runner;
-                            g.legal_actions = try promptChoiceActions(allocator, .runner, ps);
-                        } else {
-                            g.decision_side = .runner;
-                            g.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
-                        }
-                        return;
-                    }
-                    try completeSuccessfulRunWithCorpPriority(g);
-                }
-            }
-        }.choice,
     },
     // ====================================================================
     // ELEVATION PACK (35001–35082)
@@ -1913,43 +2038,45 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "topan-install"),
                         .choices = try choices.toOwnedSlice(allocator),
                         .source_card = g.runner_identity,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.runner_prompt_state = null;
+                                    const c_allocator = cg.arena.allocator();
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try runnerOpeningActionsForState(c_allocator, cg);
+                                    return;
+                                }
+                                // Find card in hand and install paying 2cr less
+                                for (cg.runner_hand.items, 0..) |c_card, idx| {
+                                    if (std.mem.eql(u8, c_card.title, choice_text)) {
+                                        const base_cost: u16 = c_card.cost orelse 0;
+                                        const adjusted_cost = if (base_cost >= 2) base_cost - 2 else 0;
+                                        cg.runner_prompt_state = null;
+                                        try completeRunnerInstall(cg, @intCast(idx), c_card, adjusted_cost, true);
+                                        // Suffer 1 meat damage (trash top c_card of hand)
+                                        if (cg.runner_hand.items.len > 0) {
+                                            const trashed = cg.runner_hand.orderedRemove(0);
+                                            try appendDiscardCard(cg, .runner, trashed);
+                                        }
+                                        updateTerminalState(cg);
+                                        if (cg.game_over) return;
+                                        const c_allocator = cg.arena.allocator();
+                                        cg.decision_side = .runner;
+                                        cg.legal_actions = try runnerOpeningActionsForState(c_allocator, cg);
+                                        return;
+                                    }
+                                }
+                            }
+                        }.choice,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.runner_prompt_state = null;
-                    const allocator = g.arena.allocator();
-                    g.decision_side = .runner;
-                    g.legal_actions = try runnerOpeningActionsForState(allocator, g);
-                    return;
-                }
-                // Find card in hand and install paying 2cr less
-                for (g.runner_hand.items, 0..) |card, idx| {
-                    if (std.mem.eql(u8, card.title, choice_text)) {
-                        const base_cost: u16 = card.cost orelse 0;
-                        const adjusted_cost = if (base_cost >= 2) base_cost - 2 else 0;
-                        g.runner_prompt_state = null;
-                        try completeRunnerInstall(g, @intCast(idx), card, adjusted_cost, true);
-                        // Suffer 1 meat damage (trash top card of hand)
-                        if (g.runner_hand.items.len > 0) {
-                            const trashed = g.runner_hand.orderedRemove(0);
-                            try appendDiscardCard(g, .runner, trashed);
-                        }
-                        updateTerminalState(g);
-                        if (g.game_over) return;
-                        const allocator = g.arena.allocator();
-                        g.decision_side = .runner;
-                        g.legal_actions = try runnerOpeningActionsForState(allocator, g);
-                        return;
-                    }
-                }
-            }
-        }.choice,
     },
     .{
         .title = "Barry \xe2\x80\x9cBaz\xe2\x80\x9d Wong: Tri-Maf Veteran",
@@ -1984,6 +2111,42 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "barry-install"),
                         .choices = try choices_list.toOwnedSlice(allocator),
                         .source_card = g.runner_identity,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.runner_prompt_state = null;
+                                    cg.corp_prompt_state = null;
+                                    // Return to approach actions
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try continueActionsForRunWithRez(c_allocator, .corp, cg.run, cg);
+                                    return;
+                                }
+                                // Find and install the chosen card
+                                const prompt = cg.runner_prompt_state orelse return error.NoPromptState;
+                                for (prompt.choices) |ch| {
+                                    if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                                        if (ch.card) |card_ref| {
+                                            const card_idx = card_ref.index orelse continue;
+                                            if (card_idx >= cg.runner_hand.items.len) continue;
+                                            const card = cg.runner_hand.items[card_idx];
+                                            const install_cost = card.cost orelse 0;
+                                            try spendCredits(cg, .runner, install_cost);
+                                            _ = try removeCardFromHand(cg, .runner, card_idx);
+                                            try appendRunnerInstalledCard(cg, card);
+                                            cg.systemMsg(.runner, 35012, "Runner uses Barry to install {s}.", .{card.title});
+                                            break;
+                                        }
+                                    }
+                                }
+                                cg.runner_prompt_state = null;
+                                cg.corp_prompt_state = null;
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try continueActionsForRunWithRez(c_allocator, .corp, cg.run, cg);
+                            }
+                        }.choice,
                     };
                     g.corp_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -1995,40 +2158,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.runner_prompt_state = null;
-                    g.corp_prompt_state = null;
-                    // Return to approach actions
-                    g.decision_side = .corp;
-                    g.legal_actions = try continueActionsForRunWithRez(allocator, .corp, g.run, g);
-                    return;
-                }
-                // Find and install the chosen card
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                for (prompt.choices) |ch| {
-                    if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
-                        if (ch.card) |card_ref| {
-                            const card_idx = card_ref.index orelse continue;
-                            if (card_idx >= g.runner_hand.items.len) continue;
-                            const card = g.runner_hand.items[card_idx];
-                            const install_cost = card.cost orelse 0;
-                            try spendCredits(g, .runner, install_cost);
-                            _ = try removeCardFromHand(g, .runner, card_idx);
-                            try appendRunnerInstalledCard(g, card);
-                            g.systemMsg(.runner, 35012, "Runner uses Barry to install {s}.", .{card.title});
-                            break;
-                        }
-                    }
-                }
-                g.runner_prompt_state = null;
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try continueActionsForRunWithRez(allocator, .corp, g.run, g);
-            }
-        }.choice,
     },
     .{
         .title = "MuslihaT: Multifarious Marketeer",
@@ -2072,6 +2201,22 @@ pub const all_cards = [_]CardSpec{
                             .prompt_type = try allocator.dupe(u8, "muslihat-reveal"),
                             .choices = choices,
                             .source_card = g.runner_identity,
+                        
+                            .on_choice = &struct {
+                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                    const cg = gameFromEffectContext(cctx);
+                                    if (std.mem.eql(u8, choice_text, "Yes")) {
+                                        if (cg.runner_deck.items.len > 0) {
+                                            const card = cg.runner_deck.pop().?;
+                                            try cg.runner_hand.append(cg.backing_allocator, card);
+                                            cg.systemMsg(.runner, 35013, "Runner uses MuslihaT to add {s} to the grip.", .{card.title});
+                                        }
+                                    }
+                                    cg.runner_prompt_state = null;
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try runnerOpeningActionsForState(cg.arena.allocator(), cg);
+                                }
+                            }.choice,
                         };
                         g.decision_side = .runner;
                         g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
@@ -2079,20 +2224,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Yes")) {
-                    if (g.runner_deck.items.len > 0) {
-                        const card = g.runner_deck.pop().?;
-                        try g.runner_hand.append(g.backing_allocator, card);
-                        g.systemMsg(.runner, 35013, "Runner uses MuslihaT to add {s} to the grip.", .{card.title});
-                    }
-                }
-                g.runner_prompt_state = null;
-                g.decision_side = .runner;
-                g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Dewi Subrotoputri: Pedagogical Dhalang",
@@ -2171,6 +2302,34 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "poetri-install"),
                         .choices = try choices_list.toOwnedSlice(allocator),
                         .source_card = g.corp_identity,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.corp_prompt_state = null;
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                    return;
+                                }
+                                // Find card in hand and install
+                                const prompt = cg.corp_prompt_state orelse return error.NoPromptState;
+                                for (prompt.choices) |ch| {
+                                    if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                                        if (ch.card) |card_ref| {
+                                            const card_idx = card_ref.index orelse continue;
+                                            try installCorpCardFromHand(cg, card_idx, "New remote");
+                                            cg.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card.", .{});
+                                            break;
+                                        }
+                                    }
+                                }
+                                cg.corp_prompt_state = null;
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
@@ -2181,32 +2340,6 @@ pub const all_cards = [_]CardSpec{
                 .{ .event = .agenda_stolen, .handler = &H.trigger },
             };
         },
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.corp_prompt_state = null;
-                    g.decision_side = .corp;
-                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                    return;
-                }
-                // Find card in hand and install
-                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
-                for (prompt.choices) |ch| {
-                    if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
-                        if (ch.card) |card_ref| {
-                            const card_idx = card_ref.index orelse continue;
-                            try installCorpCardFromHand(g, card_idx, "New remote");
-                            g.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card.", .{});
-                            break;
-                        }
-                    }
-                }
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(allocator, g);
-            }
-        }.choice,
     },
     .{
         .title = "AU Co.: The Gold Standard in Clones",
@@ -2254,27 +2387,29 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "pt-untaian-advance"),
                         .choices = try choices_list.toOwnedSlice(allocator),
                         .source_card = g.corp_identity,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.corp_prompt_state = null;
+                                    return;
+                                }
+                                // Pay 1 credit and place advancement counter
+                                try spendCredits(cg, .corp, 1);
+                                _ = try addAdvancementCounter(cg, choice_text, 1);
+                                cg.systemMsg(.corp, 35047, "Corp uses PT Untaian to place 1 advancement counter.", .{});
+                                cg.corp_prompt_state = null;
+                                _ = c_allocator;
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.corp_prompt_state = null;
-                    return;
-                }
-                // Pay 1 credit and place advancement counter
-                try spendCredits(g, .corp, 1);
-                _ = try addAdvancementCounter(g, choice_text, 1);
-                g.systemMsg(.corp, 35047, "Corp uses PT Untaian to place 1 advancement counter.", .{});
-                g.corp_prompt_state = null;
-                _ = allocator;
-            }
-        }.choice,
     },
     .{
         .title = "Nebula Talent Management: Making Stars",
@@ -2357,54 +2492,58 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "corp-free-install-card"),
                         .choices = try choices.toOwnedSlice(allocator),
                         .source_card = card.*,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                const prompt = cg.corp_prompt_state orelse return error.NoPromptState;
+                                if (std.mem.eql(u8, prompt.prompt_type, "corp-free-install-card")) {
+                                    if (std.mem.eql(u8, choice_text, "No action")) {
+                                        cg.corp_prompt_state = null;
+                                        try restorePriorityAfterPrompt(cg);
+                                        return;
+                                    }
+                                    for (prompt.choices) |card_choice| {
+                                        if (card_choice.text == null or !std.mem.eql(u8, card_choice.text.?, choice_text)) continue;
+                                        const card_ref = card_choice.card orelse continue;
+                                        const card_idx = card_ref.index orelse continue;
+                                        if (card_idx >= cg.corp_hand.items.len) return error.InvalidCardIndex;
+                                        const install_kind = cg.corp_hand.items[card_idx].install.kind;
+                                        const server_choices = try installChoicesForCard(c_allocator, install_kind, cg);
+                                        cg.corp_prompt_state = .{
+                                            .prompt_type = try c_allocator.dupe(u8, "corp-free-install-server"),
+                                            .choices = server_choices,
+                                            .source_card = prompt.source_card,
+                                            .min_choices = card_idx,
+
+                                            .on_choice = &@This().choice,
+                                        };
+                                        cg.decision_side = .corp;
+                                        cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                        return;
+                                    }
+                                    return error.UnsupportedChoice;
+                                }
+                                if (std.mem.eql(u8, prompt.prompt_type, "corp-free-install-server")) {
+                                    const card_idx = prompt.min_choices;
+                                    if (card_idx >= cg.corp_hand.items.len) return error.InvalidCardIndex;
+                                    const card_title = cg.corp_hand.items[card_idx].title;
+                                    try installCorpCardFromHand(cg, card_idx, choice_text);
+                                    cg.systemMsg(.corp, 35058, "Corp uses Synapse Global to reveal and install {s}.", .{card_title});
+                                    cg.corp_prompt_state = null;
+                                    try restorePriorityAfterPrompt(cg);
+                                    return;
+                                }
+                                return error.UnsupportedChoice;
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "corp-free-install-card")) {
-                    if (std.mem.eql(u8, choice_text, "No action")) {
-                        g.corp_prompt_state = null;
-                        try restorePriorityAfterPrompt(g);
-                        return;
-                    }
-                    for (prompt.choices) |card_choice| {
-                        if (card_choice.text == null or !std.mem.eql(u8, card_choice.text.?, choice_text)) continue;
-                        const card_ref = card_choice.card orelse continue;
-                        const card_idx = card_ref.index orelse continue;
-                        if (card_idx >= g.corp_hand.items.len) return error.InvalidCardIndex;
-                        const install_kind = g.corp_hand.items[card_idx].install.kind;
-                        const server_choices = try installChoicesForCard(allocator, install_kind, g);
-                        g.corp_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "corp-free-install-server"),
-                            .choices = server_choices,
-                            .source_card = prompt.source_card,
-                            .min_choices = card_idx,
-                        };
-                        g.decision_side = .corp;
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                        return;
-                    }
-                    return error.UnsupportedChoice;
-                }
-                if (std.mem.eql(u8, prompt.prompt_type, "corp-free-install-server")) {
-                    const card_idx = prompt.min_choices;
-                    if (card_idx >= g.corp_hand.items.len) return error.InvalidCardIndex;
-                    const card_title = g.corp_hand.items[card_idx].title;
-                    try installCorpCardFromHand(g, card_idx, choice_text);
-                    g.systemMsg(.corp, 35058, "Corp uses Synapse Global to reveal and install {s}.", .{card_title});
-                    g.corp_prompt_state = null;
-                    try restorePriorityAfterPrompt(g);
-                    return;
-                }
-                return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{
         .title = "BANGUN: When Disaster Strikes",
@@ -2453,6 +2592,20 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "zwicky-draw"),
                         .choices = choices,
                         .source_card = g.corp_identity,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "Yes")) {
+                                    try drawCards(cg, .corp, 1);
+                                    cg.systemMsg(.corp, 35069, "Corp uses The Zwicky Group to draw 1 card.", .{});
+                                }
+                                cg.corp_prompt_state = null;
+                                cg.runner_prompt_state = null;
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                            }
+                        }.choice,
                     };
                     g.runner_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -2464,18 +2617,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Yes")) {
-                    try drawCards(g, .corp, 1);
-                    g.systemMsg(.corp, 35069, "Corp uses The Zwicky Group to draw 1 card.", .{});
-                }
-                g.corp_prompt_state = null;
-                g.runner_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     // --- Elevation Agendas ---
     .{
@@ -2913,69 +3054,69 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
 
         .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            const top_down_on_choice = &struct {
+                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                    const g = gameFromEffectContext(cctx);
+                    const allocator = g.arena.allocator();
+                    const prompt = g.corp_prompt_state orelse return error.NoPromptState;
+                    if (std.mem.eql(u8, prompt.prompt_type, "top-down-card")) {
+                        if (std.mem.eql(u8, choice_text, "Done")) {
+                            g.corp_prompt_state = null;
+                            g.decision_side = .corp;
+                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                            return;
+                        }
+                        for (prompt.choices) |ch| {
+                            if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                                if (ch.card) |card_ref| {
+                                    const card_idx = card_ref.index orelse continue;
+                                    const install_kind: state.InstallKind = blk: {
+                                        if (card_idx < g.corp_hand.items.len) {
+                                            const ct = g.corp_hand.items[card_idx].card_type orelse break :blk .corp_remote_only;
+                                            if (std.mem.eql(u8, ct, "ICE")) break :blk .corp_server_choice;
+                                        }
+                                        break :blk .corp_remote_only;
+                                    };
+                                    const server_choices = try installChoicesForCard(allocator, install_kind, g);
+                                    g.corp_prompt_state = .{
+                                        .prompt_type = try allocator.dupe(u8, "top-down-server"),
+                                        .choices = server_choices,
+                                        .source_card = prompt.source_card,
+                                        .min_choices = @intCast((card_idx & 0xF) | (@as(u8, prompt.min_choices) << 4)),
+                                        .on_choice = &@This().choice,
+                                    };
+                                    g.decision_side = .corp;
+                                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                                    return;
+                                }
+                            }
+                        }
+                        return error.UnsupportedChoice;
+                    } else if (std.mem.eql(u8, prompt.prompt_type, "top-down-server")) {
+                        const pack_val = prompt.min_choices;
+                        const card_idx: u8 = pack_val & 0xF;
+                        const installs_done: u8 = pack_val >> 4;
+                        try installCorpCardFromHand(g, card_idx, choice_text);
+                        g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to install a card.", .{});
+                        if (installs_done + 1 >= 2) {
+                            g.corp_prompt_state = null;
+                            g.decision_side = .corp;
+                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        } else {
+                            try showTopDownInstallChoices(g, prompt.source_card orelse return error.NoPromptState, installs_done + 1, &@This().choice);
+                        }
+                    } else return error.UnsupportedChoice;
+                }
+            }.choice;
             fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
                 // "Draw 2 cards. Install up to 2 cards from HQ (one at a time)."
                 try drawCards(g, .corp, 2);
                 g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to draw 2 cards.", .{});
                 // Offer install prompt
-                try showTopDownInstallChoices(g, card.*, 0);
+                try showTopDownInstallChoices(g, card.*, 0, top_down_on_choice);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "top-down-card")) {
-                    if (std.mem.eql(u8, choice_text, "Done")) {
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                        return;
-                    }
-                    // Find the card in hand
-                    for (prompt.choices) |ch| {
-                        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
-                            if (ch.card) |card_ref| {
-                                const card_idx = card_ref.index orelse continue;
-                                // Show server choices
-                                const install_kind: state.InstallKind = blk: {
-                                    if (card_idx < g.corp_hand.items.len) {
-                                        const ct = g.corp_hand.items[card_idx].card_type orelse break :blk .corp_remote_only;
-                                        if (std.mem.eql(u8, ct, "ICE")) break :blk .corp_server_choice;
-                                    }
-                                    break :blk .corp_remote_only;
-                                };
-                                const server_choices = try installChoicesForCard(allocator, install_kind, g);
-                                g.corp_prompt_state = .{
-                                    .prompt_type = try allocator.dupe(u8, "top-down-server"),
-                                    .choices = server_choices,
-                                    .source_card = prompt.source_card,
-                                    .min_choices = @intCast((card_idx & 0xF) | (@as(u8, prompt.min_choices) << 4)),
-                                };
-                                g.decision_side = .corp;
-                                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                                return;
-                            }
-                        }
-                    }
-                    return error.UnsupportedChoice;
-                } else if (std.mem.eql(u8, prompt.prompt_type, "top-down-server")) {
-                    const pack_val = prompt.min_choices;
-                    const card_idx: u8 = pack_val & 0xF;
-                    const installs_done: u8 = pack_val >> 4;
-                    try installCorpCardFromHand(g, card_idx, choice_text);
-                    g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to install a card.", .{});
-                    if (installs_done + 1 >= 2) {
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                    } else {
-                        try showTopDownInstallChoices(g, prompt.source_card orelse return error.NoPromptState, installs_done + 1);
-                    }
-                } else return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{
         .title = "Peer Review",
@@ -3003,58 +3144,16 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "peer-review-private"),
                         .choices = try private_choices.toOwnedSlice(allocator),
                         .source_card = card.*,
+                    
+                        .on_choice = peer_review_on_choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                     return;
                 }
-                try beginPeerReviewInstallPrompt(g, card.*);
+                try beginPeerReviewInstallPrompt(g, card.*, peer_review_on_choice);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "peer-review-private")) {
-                    try beginPeerReviewInstallPrompt(g, prompt.source_card orelse return error.NoPromptState);
-                    return;
-                } else if (std.mem.eql(u8, prompt.prompt_type, "peer-review-install")) {
-                    for (prompt.choices) |ch| {
-                        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
-                            if (ch.card) |card_ref| {
-                                var server_choices: std.ArrayList(state.PromptChoice) = .empty;
-                                defer server_choices.deinit(allocator);
-                                for (g.corp_servers.items, 0..) |_, si| {
-                                    if (si < 4) continue; // skip HQ, R&D, Archives, placeholder
-                                    const name = try std.fmt.allocPrint(allocator, "Server {d}", .{si - 3});
-                                    try server_choices.append(allocator, stringChoice(name));
-                                }
-                                try server_choices.append(allocator, stringChoice("New remote"));
-                                g.corp_prompt_state = .{
-                                    .prompt_type = try allocator.dupe(u8, "peer-review-server"),
-                                    .choices = try server_choices.toOwnedSlice(allocator),
-                                    .source_card = prompt.source_card,
-                                    .min_choices = card_ref.index orelse 0,
-                                };
-                                g.decision_side = .corp;
-                                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                                return;
-                            }
-                        }
-                    }
-                    return error.UnsupportedChoice;
-                } else if (std.mem.eql(u8, prompt.prompt_type, "peer-review-server")) {
-                    const card_index = prompt.min_choices;
-                    if (card_index >= g.corp_hand.items.len) return error.InvalidCardIndex;
-                    const card_to_install = g.corp_hand.items[card_index];
-                    try installCorpCardFromHand(g, card_index, choice_text);
-                    g.systemMsg(.corp, 35055, "Corp uses Peer Review to install {s}.", .{card_to_install.title});
-                    g.corp_prompt_state = null;
-                    g.decision_side = .corp;
-                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                } else return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{
         .title = "Bigger Picture",
@@ -3083,6 +3182,56 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "bigger-picture"),
                     .choices = try choices_list.toOwnedSlice(allocator),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            const c_allocator = cg.arena.allocator();
+                            if (std.mem.eql(u8, choice_text, "Give the Runner 1 tag")) {
+                                _ = try addRunnerTag(cg, 1);
+                                cg.systemMsg(.corp, 35065, "Corp uses Bigger Picture to give the Runner 1 tag.", .{});
+                                cg.corp_prompt_state = null;
+                                cg.runner_prompt_state = null;
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                            } else if (std.mem.eql(u8, choice_text, "Remove tags and drain credits")) {
+                                // Prompt: how many tags to remove?
+                                const tag_count = if (cg.runner_tag) |t| t.base else 0;
+                                var num_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                defer num_choices.deinit(c_allocator);
+                                var i: u8 = 0;
+                                while (i <= tag_count) : (i += 1) {
+                                    const text = try std.fmt.allocPrint(c_allocator, "{d}", .{i});
+                                    try num_choices.append(c_allocator, .{ .kind = .number, .text = text, .number = i });
+                                }
+                                cg.corp_prompt_state = .{
+                                    .prompt_type = try c_allocator.dupe(u8, "bigger-picture-tags"),
+                                    .choices = try num_choices.toOwnedSlice(c_allocator),
+                                    .source_card = cg.corp_prompt_state.?.source_card,
+
+                                    .on_choice = &@This().choice,
+                                };
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                            } else {
+                                // Handle number choice for tag removal
+                                const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
+                                if (num_tags > 0) {
+                                    try removeRunnerTags(cg, num_tags);
+                                }
+                                const drain = @as(u16, num_tags) * 5;
+                                const actual_drain = @min(drain, cg.runner_credit);
+                                cg.runner_credit -= actual_drain;
+                                cg.corp_credit += actual_drain;
+                                cg.systemMsg(.corp, 35065, "Corp uses Bigger Picture to remove {d} tags; Runner loses {d} [credits], Corp gains {d} [credits].", .{ num_tags, actual_drain, actual_drain });
+                                cg.corp_prompt_state = null;
+                                cg.runner_prompt_state = null;
+                                if (try resumePendingEffects(cg)) return;
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                            }
+                        }
+                    }.choice,
                 };
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -3093,52 +3242,6 @@ pub const all_cards = [_]CardSpec{
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                if (std.mem.eql(u8, choice_text, "Give the Runner 1 tag")) {
-                    _ = try addRunnerTag(g, 1);
-                    g.systemMsg(.corp, 35065, "Corp uses Bigger Picture to give the Runner 1 tag.", .{});
-                    g.corp_prompt_state = null;
-                    g.runner_prompt_state = null;
-                    g.decision_side = .corp;
-                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                } else if (std.mem.eql(u8, choice_text, "Remove tags and drain credits")) {
-                    // Prompt: how many tags to remove?
-                    const tag_count = if (g.runner_tag) |t| t.base else 0;
-                    var num_choices: std.ArrayList(state.PromptChoice) = .empty;
-                    defer num_choices.deinit(allocator);
-                    var i: u8 = 0;
-                    while (i <= tag_count) : (i += 1) {
-                        const text = try std.fmt.allocPrint(allocator, "{d}", .{i});
-                        try num_choices.append(allocator, .{ .kind = .number, .text = text, .number = i });
-                    }
-                    g.corp_prompt_state = .{
-                        .prompt_type = try allocator.dupe(u8, "bigger-picture-tags"),
-                        .choices = try num_choices.toOwnedSlice(allocator),
-                        .source_card = g.corp_prompt_state.?.source_card,
-                    };
-                    g.decision_side = .corp;
-                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                } else {
-                    // Handle number choice for tag removal
-                    const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
-                    if (num_tags > 0) {
-                        try removeRunnerTags(g, num_tags);
-                    }
-                    const drain = @as(u16, num_tags) * 5;
-                    const actual_drain = @min(drain, g.runner_credit);
-                    g.runner_credit -= actual_drain;
-                    g.corp_credit += actual_drain;
-                    g.systemMsg(.corp, 35065, "Corp uses Bigger Picture to remove {d} tags; Runner loses {d} [credits], Corp gains {d} [credits].", .{ num_tags, actual_drain, actual_drain });
-                    g.corp_prompt_state = null;
-                    g.runner_prompt_state = null;
-                    if (try resumePendingEffects(g)) return;
-                    g.decision_side = .corp;
-                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                }
-            }
-        }.choice,
     },
     .{
         .title = "IP Enforcement",
@@ -3179,44 +3282,46 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "ip-enforcement-tags"),
                         .choices = try num_choices.toOwnedSlice(allocator),
                         .source_card = card.*,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
+                                // Remove tags and credits as additional cost
+                                try removeRunnerTags(cg, num_tags);
+                                try spendCredits(cg, .corp, num_tags);
+                                // Find and move matching agenda from runner score area to corp install
+                                for (cg.runner_scored.items, 0..) |a, idx| {
+                                    if (a.agenda_points != null and a.agenda_points.? == num_tags) {
+                                        var agenda = cg.runner_scored.orderedRemove(idx);
+                                        // Recalculate runner agenda points
+                                        cg.runner_agenda_point = 0;
+                                        for (cg.runner_scored.items) |sa| {
+                                            if (sa.agenda_points) |ap| cg.runner_agenda_point += ap;
+                                        }
+                                        // Place advancement counter if still tagged
+                                        if (is_runner_tagged(cg.runner_tag)) {
+                                            agenda.advancement_counter = 1;
+                                        }
+                                        // Install in new remote
+                                        try installCard(cg, agenda, "New remote");
+                                        cg.systemMsg(.corp, 35066, "Corp uses IP Enforcement to install {s} from Runner's score area.", .{agenda.title});
+                                        break;
+                                    }
+                                }
+                                cg.corp_prompt_state = null;
+                                if (try resumePendingEffects(cg)) return;
+                                cg.decision_side = .corp;
+                                cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
-                // Remove tags and credits as additional cost
-                try removeRunnerTags(g, num_tags);
-                try spendCredits(g, .corp, num_tags);
-                // Find and move matching agenda from runner score area to corp install
-                for (g.runner_scored.items, 0..) |a, idx| {
-                    if (a.agenda_points != null and a.agenda_points.? == num_tags) {
-                        var agenda = g.runner_scored.orderedRemove(idx);
-                        // Recalculate runner agenda points
-                        g.runner_agenda_point = 0;
-                        for (g.runner_scored.items) |sa| {
-                            if (sa.agenda_points) |ap| g.runner_agenda_point += ap;
-                        }
-                        // Place advancement counter if still tagged
-                        if (is_runner_tagged(g.runner_tag)) {
-                            agenda.advancement_counter = 1;
-                        }
-                        // Install in new remote
-                        try installCard(g, agenda, "New remote");
-                        g.systemMsg(.corp, 35066, "Corp uses IP Enforcement to install {s} from Runner's score area.", .{agenda.title});
-                        break;
-                    }
-                }
-                g.corp_prompt_state = null;
-                if (try resumePendingEffects(g)) return;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(allocator, g);
-            }
-        }.choice,
     },
     .{
         .title = "Touch-ups",
@@ -3239,27 +3344,29 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "touch-ups-advance"),
                         .choices = adv_choices,
                         .source_card = card.*,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                const prompt = cg.corp_prompt_state orelse return error.NoPromptState;
+                                if (std.mem.eql(u8, prompt.prompt_type, "touch-ups-advance")) {
+                                    _ = try addAdvancementCounter(cg, choice_text, 2);
+                                    cg.systemMsg(.corp, 35067, "Corp uses Touch-ups to place 2 advancement counters.", .{});
+                                    // Simplified: skip the reveal grip + shuffle part for now
+                                    // (complex interaction requiring runner hand reveal)
+                                    cg.corp_prompt_state = null;
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                } else return error.UnsupportedChoice;
+                            }
+                        }.choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "touch-ups-advance")) {
-                    _ = try addAdvancementCounter(g, choice_text, 2);
-                    g.systemMsg(.corp, 35067, "Corp uses Touch-ups to place 2 advancement counters.", .{});
-                    // Simplified: skip the reveal grip + shuffle part for now
-                    // (complex interaction requiring runner hand reveal)
-                    g.corp_prompt_state = null;
-                    g.decision_side = .corp;
-                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                } else return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{
         .title = "Key Performance Indicators",
@@ -3270,156 +3377,156 @@ pub const all_cards = [_]CardSpec{
         .cost = 1,
 
         .abilities = &.{.{ .is_play = true, .on_use = &struct {
-            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                const g = gameFromEffectContext(ctx);
-                // "Resolve 2 of: Gain 2cr, Install ice ignoring costs, Place 1 advancement, Draw 1 + shuffle 1"
-                try showKpiChoices(g, card.*, 0);
-            }
-        }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.corp_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "kpi-choose")) {
-                    const choices_made = prompt.min_choices;
-                    if (std.mem.eql(u8, choice_text, "Gain 2 [Credits]")) {
-                        g.corp_credit += 2;
-                        g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to gain 2 [credits].", .{});
-                    } else if (std.mem.eql(u8, choice_text, "Draw 1 card and shuffle 1 card from HQ into R&D")) {
-                        try drawCards(g, .corp, 1);
-                        var hand_choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer hand_choices.deinit(allocator);
-                        for (g.corp_hand.items, 0..) |corp_card, idx| {
-                            try hand_choices.append(allocator, .{
-                                .kind = .card,
-                                .text = try allocator.dupe(u8, corp_card.title),
-                                .card = .{ .title = corp_card.title, .printed_title = corp_card.printed_title, .code = corp_card.code, .side = .corp, .index = @intCast(idx) },
-                            });
-                        }
-                        g.corp_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "kpi-shuffle"),
-                            .choices = try hand_choices.toOwnedSlice(allocator),
-                            .source_card = prompt.source_card,
-                            .min_choices = choices_made + 1,
-                        };
-                        g.decision_side = .corp;
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
-                        return;
-                    } else if (std.mem.eql(u8, choice_text, "Done")) {
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                        return;
-                    } else if (std.mem.eql(u8, choice_text, "Place 1 advancement counter")) {
-                        // Need advance prompt
-                        const adv_choices = try installedCardChoices(allocator, g.corp_servers.items);
-                        if (adv_choices.len > 0) {
+            const kpi_on_choice = &struct {
+                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                    const g = gameFromEffectContext(cctx);
+                    const allocator = g.arena.allocator();
+                    const prompt = g.corp_prompt_state orelse return error.NoPromptState;
+                    if (std.mem.eql(u8, prompt.prompt_type, "kpi-choose")) {
+                        const choices_made = prompt.min_choices;
+                        if (std.mem.eql(u8, choice_text, "Gain 2 [Credits]")) {
+                            g.corp_credit += 2;
+                            g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to gain 2 [credits].", .{});
+                        } else if (std.mem.eql(u8, choice_text, "Draw 1 card and shuffle 1 card from HQ into R&D")) {
+                            try drawCards(g, .corp, 1);
+                            var hand_choices: std.ArrayList(state.PromptChoice) = .empty;
+                            defer hand_choices.deinit(allocator);
+                            for (g.corp_hand.items, 0..) |corp_card, idx| {
+                                try hand_choices.append(allocator, .{
+                                    .kind = .card,
+                                    .text = try allocator.dupe(u8, corp_card.title),
+                                    .card = .{ .title = corp_card.title, .printed_title = corp_card.printed_title, .code = corp_card.code, .side = .corp, .index = @intCast(idx) },
+                                });
+                            }
                             g.corp_prompt_state = .{
-                                .prompt_type = try allocator.dupe(u8, "kpi-advance"),
-                                .choices = adv_choices,
+                                .prompt_type = try allocator.dupe(u8, "kpi-shuffle"),
+                                .choices = try hand_choices.toOwnedSlice(allocator),
                                 .source_card = prompt.source_card,
                                 .min_choices = choices_made + 1,
+                                .on_choice = &@This().choice,
                             };
                             g.decision_side = .corp;
                             g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                             return;
-                        }
-                    } else if (std.mem.eql(u8, choice_text, "Install 1 piece of ice from HQ")) {
-                        // Need ice install prompt
-                        var ice_choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer ice_choices.deinit(allocator);
-                        for (g.corp_hand.items, 0..) |c, idx| {
-                            const ct = c.card_type orelse continue;
-                            if (!std.mem.eql(u8, ct, "ICE")) continue;
-                            try ice_choices.append(allocator, .{
-                                .kind = .card,
-                                .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
-                                .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
-                            });
-                        }
-                        if (ice_choices.items.len > 0) {
-                            g.corp_prompt_state = .{
-                                .prompt_type = try allocator.dupe(u8, "kpi-ice-choose"),
-                                .choices = try ice_choices.toOwnedSlice(allocator),
-                                .source_card = prompt.source_card,
-                                .min_choices = choices_made + 1,
-                            };
+                        } else if (std.mem.eql(u8, choice_text, "Done")) {
+                            g.corp_prompt_state = null;
                             g.decision_side = .corp;
-                            g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
                             return;
-                        }
-                    } else return error.UnsupportedChoice;
-                    // Move to next choice or finish
-                    if (choices_made + 1 >= 2) {
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                    } else {
-                        try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_made + 1);
-                    }
-                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-advance")) {
-                    _ = try addAdvancementCounter(g, choice_text, 1);
-                    g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to place 1 advancement counter.", .{});
-                    if (prompt.min_choices >= 2) {
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                    } else {
-                        try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices);
-                    }
-                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-choose")) {
-                    // Find ice in hand by title
-                    for (prompt.choices) |ch| {
-                        if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
-                            if (ch.card) |card_ref| {
-                                // Show server choices for ice install
-                                const server_choices = try installChoicesForCard(allocator, .corp_server_choice, g);
+                        } else if (std.mem.eql(u8, choice_text, "Place 1 advancement counter")) {
+                            const adv_choices = try installedCardChoices(allocator, g.corp_servers.items);
+                            if (adv_choices.len > 0) {
                                 g.corp_prompt_state = .{
-                                    .prompt_type = try allocator.dupe(u8, "kpi-ice-server"),
-                                    .choices = server_choices,
+                                    .prompt_type = try allocator.dupe(u8, "kpi-advance"),
+                                    .choices = adv_choices,
                                     .source_card = prompt.source_card,
-                                    .min_choices = @intCast((card_ref.index orelse 0) | (@as(u8, prompt.min_choices) << 4)),
+                                    .min_choices = choices_made + 1,
+                                    .on_choice = &@This().choice,
                                 };
                                 g.decision_side = .corp;
                                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                                 return;
                             }
+                        } else if (std.mem.eql(u8, choice_text, "Install 1 piece of ice from HQ")) {
+                            var ice_choices: std.ArrayList(state.PromptChoice) = .empty;
+                            defer ice_choices.deinit(allocator);
+                            for (g.corp_hand.items, 0..) |c, idx| {
+                                const ct = c.card_type orelse continue;
+                                if (!std.mem.eql(u8, ct, "ICE")) continue;
+                                try ice_choices.append(allocator, .{
+                                    .kind = .card,
+                                    .text = try std.fmt.allocPrint(allocator, "{s}", .{c.title}),
+                                    .card = .{ .title = c.title, .code = c.code, .side = .corp, .index = @intCast(idx) },
+                                });
+                            }
+                            if (ice_choices.items.len > 0) {
+                                g.corp_prompt_state = .{
+                                    .prompt_type = try allocator.dupe(u8, "kpi-ice-choose"),
+                                    .choices = try ice_choices.toOwnedSlice(allocator),
+                                    .source_card = prompt.source_card,
+                                    .min_choices = choices_made + 1,
+                                    .on_choice = &@This().choice,
+                                };
+                                g.decision_side = .corp;
+                                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                                return;
+                            }
+                        } else return error.UnsupportedChoice;
+                        if (choices_made + 1 >= 2) {
+                            g.corp_prompt_state = null;
+                            g.decision_side = .corp;
+                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        } else {
+                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_made + 1, &@This().choice);
                         }
-                    }
-                    return error.UnsupportedChoice;
-                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-server")) {
-                    const pack_val = prompt.min_choices;
-                    const card_idx: u8 = pack_val & 0xF;
-                    const choices_done: u8 = pack_val >> 4;
-                    try installCorpCardFromHand(g, card_idx, choice_text);
-                    g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to install a piece of ice.", .{});
-                    if (choices_done >= 2) {
-                        g.corp_prompt_state = null;
-                        g.decision_side = .corp;
-                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
-                    } else {
-                        try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_done);
-                    }
-                } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-shuffle")) {
-                    for (prompt.choices) |card_choice| {
-                        if (card_choice.text == null or !std.mem.eql(u8, card_choice.text.?, choice_text)) continue;
-                        const card_ref = card_choice.card orelse continue;
-                        const card_idx = card_ref.index orelse continue;
-                        try moveCorpHandCardToDeckAndShuffle(g, card_idx);
-                        g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to draw 1 card and shuffle 1 card from HQ into R&D.", .{});
+                    } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-advance")) {
+                        _ = try addAdvancementCounter(g, choice_text, 1);
+                        g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to place 1 advancement counter.", .{});
                         if (prompt.min_choices >= 2) {
                             g.corp_prompt_state = null;
                             g.decision_side = .corp;
                             g.legal_actions = try corpOpeningActionsForState(allocator, g);
                         } else {
-                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices);
+                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices, &@This().choice);
                         }
-                        return;
-                    }
-                    return error.UnsupportedChoice;
-                } else return error.UnsupportedChoice;
+                    } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-choose")) {
+                        for (prompt.choices) |ch| {
+                            if (ch.text != null and std.mem.eql(u8, ch.text.?, choice_text)) {
+                                if (ch.card) |card_ref| {
+                                    const server_choices = try installChoicesForCard(allocator, .corp_server_choice, g);
+                                    g.corp_prompt_state = .{
+                                        .prompt_type = try allocator.dupe(u8, "kpi-ice-server"),
+                                        .choices = server_choices,
+                                        .source_card = prompt.source_card,
+                                        .min_choices = @intCast((card_ref.index orelse 0) | (@as(u8, prompt.min_choices) << 4)),
+                                        .on_choice = &@This().choice,
+                                    };
+                                    g.decision_side = .corp;
+                                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                                    return;
+                                }
+                            }
+                        }
+                        return error.UnsupportedChoice;
+                    } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-server")) {
+                        const pack_val = prompt.min_choices;
+                        const card_idx: u8 = pack_val & 0xF;
+                        const choices_done: u8 = pack_val >> 4;
+                        try installCorpCardFromHand(g, card_idx, choice_text);
+                        g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to install a piece of ice.", .{});
+                        if (choices_done >= 2) {
+                            g.corp_prompt_state = null;
+                            g.decision_side = .corp;
+                            g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        } else {
+                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_done, &@This().choice);
+                        }
+                    } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-shuffle")) {
+                        for (prompt.choices) |card_choice| {
+                            if (card_choice.text == null or !std.mem.eql(u8, card_choice.text.?, choice_text)) continue;
+                            const card_ref = card_choice.card orelse continue;
+                            const card_idx = card_ref.index orelse continue;
+                            try moveCorpHandCardToDeckAndShuffle(g, card_idx);
+                            g.systemMsg(.corp, 35077, "Corp uses Key Performance Indicators to draw 1 card and shuffle 1 card from HQ into R&D.", .{});
+                            if (prompt.min_choices >= 2) {
+                                g.corp_prompt_state = null;
+                                g.decision_side = .corp;
+                                g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                            } else {
+                                try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices, &@This().choice);
+                            }
+                            return;
+                        }
+                        return error.UnsupportedChoice;
+                    } else return error.UnsupportedChoice;
+                }
+            }.choice;
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                // "Resolve 2 of: Gain 2cr, Install ice ignoring costs, Place 1 advancement, Draw 1 + shuffle 1"
+                try showKpiChoices(g, card.*, 0, kpi_on_choice);
             }
-        }.choice,
+        }.play }},
     },
     .{
         .title = "Measured Response",
@@ -3451,6 +3558,24 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try choices_list.toOwnedSlice(allocator),
                     .source_card = card.*,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
+                                try spendCredits(cg, .runner, 8);
+                                cg.systemMsg(.runner, 35078, "Runner pays 8 [credits] to prevent meat damage.", .{});
+                            } else if (std.mem.eql(u8, choice_text, "Suffer 4 meat damage")) {
+                                try trashRandomRunnerHandCards(cg, 4);
+                                cg.systemMsg(.corp, 35078, "Corp uses Measured Response to do 4 meat damage.", .{});
+                                updateTerminalState(cg);
+                            } else return error.UnsupportedChoice;
+                            cg.runner_prompt_state = null;
+                            cg.corp_prompt_state = null;
+                            cg.decision_side = .corp;
+                            cg.legal_actions = try corpOpeningActionsForState(cg.arena.allocator(), cg);
+                        }
+                    }.choice,
                 };
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -3461,22 +3586,6 @@ pub const all_cards = [_]CardSpec{
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
-                    try spendCredits(g, .runner, 8);
-                    g.systemMsg(.runner, 35078, "Runner pays 8 [credits] to prevent meat damage.", .{});
-                } else if (std.mem.eql(u8, choice_text, "Suffer 4 meat damage")) {
-                    try trashRandomRunnerHandCards(g, 4);
-                    g.systemMsg(.corp, 35078, "Corp uses Measured Response to do 4 meat damage.", .{});
-                    updateTerminalState(g);
-                } else return error.UnsupportedChoice;
-                g.runner_prompt_state = null;
-                g.corp_prompt_state = null;
-                g.decision_side = .corp;
-                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
-            }
-        }.choice,
     },
     .{
         .title = "Petty Cash",
@@ -3538,6 +3647,8 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "scrounge-install"),
                         .choices = try choices_list.toOwnedSlice(allocator),
                         .source_card = card.*,
+                    
+                        .on_choice = scrounge_on_choice,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
@@ -3549,49 +3660,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "scrounge-install")) {
-                    const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                    g.runner_prompt_state = null;
-                    try g.pending_effects.append(g.backing_allocator, .{ .runner_discard_to_deck_prompt = source_card });
-                    if (std.mem.eql(u8, choice_text, "No action")) {
-                        if (try resumePendingEffects(g)) return;
-                        try restorePriorityAfterPrompt(g);
-                        return;
-                    }
-                    for (g.runner_discard.items, 0..) |c, idx| {
-                        if (!std.mem.eql(u8, c.title, choice_text)) continue;
-                        const card = g.runner_discard.orderedRemove(idx);
-                        try g.runner_hand.append(g.backing_allocator, card);
-                        const hand_index: u8 = @intCast(g.runner_hand.items.len - 1);
-                        try beginRunnerInstallFromHand(g, hand_index, false);
-                        g.systemMsg(.runner, 35004, "Runner uses Scrounge to install {s} from the heap.", .{card.title});
-                        if (hasActivePrompt(g) or g.pending_install != null) return;
-                        if (try resumePendingEffects(g)) return;
-                        try restorePriorityAfterPrompt(g);
-                        return;
-                    }
-                    return error.UnsupportedChoice;
-                }
-                if (std.mem.eql(u8, prompt.prompt_type, "runner-discard-to-deck")) {
-                    g.runner_prompt_state = null;
-                    if (!std.mem.eql(u8, choice_text, "No action")) {
-                        for (g.runner_discard.items, 0..) |card, idx| {
-                            if (!std.mem.eql(u8, card.title, choice_text)) continue;
-                            const bottomed = g.runner_discard.orderedRemove(idx);
-                            try g.runner_deck.append(g.backing_allocator, bottomed);
-                            g.systemMsg(.runner, 35004, "Runner uses Scrounge to put {s} on the bottom of the stack.", .{card.title});
-                            break;
-                        }
-                    }
-                    try restorePriorityAfterPrompt(g);
-                    return;
-                }
-                return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{
         .title = "Shred",
@@ -3628,54 +3696,58 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "lie-low"),
                     .choices = try choices_list.toOwnedSlice(allocator),
                     .source_card = null,
+                
+                    .on_choice = &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            const c_allocator = cg.arena.allocator();
+                            const prompt = cg.runner_prompt_state orelse return error.NoPromptState;
+                            if (std.mem.eql(u8, prompt.prompt_type, "lie-low")) {
+                                if (std.mem.eql(u8, choice_text, "Draw 4 cards")) {
+                                    try drawCards(cg, .runner, 4);
+                                    cg.systemMsg(.runner, 35015, "Runner uses Lie Low to draw 4 cards.", .{});
+                                    cg.runner_prompt_state = null;
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try runnerOpeningActionsForState(c_allocator, cg);
+                                } else if (std.mem.eql(u8, choice_text, "Remove up to 2 tags")) {
+                                    // Show tag count choices
+                                    const tag_count = if (cg.runner_tag) |t| t.total else 0;
+                                    const max_remove: u8 = @min(2, tag_count);
+                                    var num_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                    defer num_choices.deinit(c_allocator);
+                                    var i: u8 = 0;
+                                    while (i <= max_remove) : (i += 1) {
+                                        const text = try std.fmt.allocPrint(c_allocator, "{d}", .{i});
+                                        try num_choices.append(c_allocator, .{ .kind = .number, .text = text, .number = i });
+                                    }
+                                    cg.runner_prompt_state = .{
+                                        .prompt_type = try c_allocator.dupe(u8, "lie-low-tags"),
+                                        .choices = try num_choices.toOwnedSlice(c_allocator),
+                                        .source_card = null,
+
+                                        .on_choice = &@This().choice,
+                                    };
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .runner, cg.runner_prompt_state.?);
+                                } else return error.UnsupportedChoice;
+                            } else if (std.mem.eql(u8, prompt.prompt_type, "lie-low-tags")) {
+                                const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
+                                if (num_tags > 0) {
+                                    try removeRunnerTags(cg, num_tags);
+                                    cg.systemMsg(.runner, 35015, "Runner uses Lie Low to remove {d} tag{s}.", .{ num_tags, if (num_tags != 1) "s" else "" });
+                                }
+                                cg.runner_prompt_state = null;
+                                if (try resumePendingEffects(cg)) return;
+                                cg.decision_side = .runner;
+                                cg.legal_actions = try runnerOpeningActionsForState(c_allocator, cg);
+                            } else return error.UnsupportedChoice;
+                        }
+                    }.choice,
                 };
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
         }.play }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                if (std.mem.eql(u8, prompt.prompt_type, "lie-low")) {
-                    if (std.mem.eql(u8, choice_text, "Draw 4 cards")) {
-                        try drawCards(g, .runner, 4);
-                        g.systemMsg(.runner, 35015, "Runner uses Lie Low to draw 4 cards.", .{});
-                        g.runner_prompt_state = null;
-                        g.decision_side = .runner;
-                        g.legal_actions = try runnerOpeningActionsForState(allocator, g);
-                    } else if (std.mem.eql(u8, choice_text, "Remove up to 2 tags")) {
-                        // Show tag count choices
-                        const tag_count = if (g.runner_tag) |t| t.total else 0;
-                        const max_remove: u8 = @min(2, tag_count);
-                        var num_choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer num_choices.deinit(allocator);
-                        var i: u8 = 0;
-                        while (i <= max_remove) : (i += 1) {
-                            const text = try std.fmt.allocPrint(allocator, "{d}", .{i});
-                            try num_choices.append(allocator, .{ .kind = .number, .text = text, .number = i });
-                        }
-                        g.runner_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "lie-low-tags"),
-                            .choices = try num_choices.toOwnedSlice(allocator),
-                            .source_card = null,
-                        };
-                        g.decision_side = .runner;
-                        g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
-                    } else return error.UnsupportedChoice;
-                } else if (std.mem.eql(u8, prompt.prompt_type, "lie-low-tags")) {
-                    const num_tags = std.fmt.parseInt(u8, choice_text, 10) catch return error.UnsupportedChoice;
-                    if (num_tags > 0) {
-                        try removeRunnerTags(g, num_tags);
-                        g.systemMsg(.runner, 35015, "Runner uses Lie Low to remove {d} tag{s}.", .{ num_tags, if (num_tags != 1) "s" else "" });
-                    }
-                    g.runner_prompt_state = null;
-                    if (try resumePendingEffects(g)) return;
-                    g.decision_side = .runner;
-                    g.legal_actions = try runnerOpeningActionsForState(allocator, g);
-                } else return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     .{
         .title = "Maintenance Access",
@@ -3751,9 +3823,35 @@ pub const all_cards = [_]CardSpec{
                 }
             }.check,
             .on_use = &struct {
+                const bling_on_choice = &struct {
+                    fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                        const g = gameFromEffectContext(cctx);
+                        const prompt = g.runner_prompt_state orelse return error.NoPromptState;
+                        if (!std.mem.eql(u8, prompt.prompt_type, "runner-hosted-card")) return error.UnsupportedChoice;
+                        if (std.mem.eql(u8, choice_text, "No action")) {
+                            g.runner_prompt_state = null;
+                            g.decision_side = .runner;
+                            g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
+                            return;
+                        }
+                        const source_card = prompt.source_card orelse return error.MissingSourceCard;
+                        const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
+                        const hosted_index = hostedChoiceIndex(prompt, choice_text) orelse return error.UnsupportedChoice;
+                        var chosen = try removeHostedCard(g.arena.allocator(), host, hosted_index);
+                        try g.runner_hand.append(g.backing_allocator, chosen);
+                        const hand_index: u8 = @intCast(g.runner_hand.items.len - 1);
+                        g.runner_prompt_state = null;
+                        chosen = g.runner_hand.items[hand_index];
+                        if (chosen.runner_install.kind != .none) {
+                            try applyInstallFromHand(g, .runner, hand_index);
+                        } else {
+                            try applyRunnerPlayFromHand(g, hand_index);
+                        }
+                    }
+                }.choice;
                 fn use(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
-                    try beginRunnerHostedCardPrompt(g, card.*);
+                    try beginRunnerHostedCardPrompt(g, card.*, bling_on_choice);
                 }
             }.use,
         }},
@@ -3765,31 +3863,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                if (!std.mem.eql(u8, prompt.prompt_type, "runner-hosted-card")) return error.UnsupportedChoice;
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.runner_prompt_state = null;
-                    g.decision_side = .runner;
-                    g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
-                    return;
-                }
-                const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
-                const hosted_index = hostedChoiceIndex(prompt, choice_text) orelse return error.UnsupportedChoice;
-                var chosen = try removeHostedCard(g.arena.allocator(), host, hosted_index);
-                try g.runner_hand.append(g.backing_allocator, chosen);
-                const hand_index: u8 = @intCast(g.runner_hand.items.len - 1);
-                g.runner_prompt_state = null;
-                chosen = g.runner_hand.items[hand_index];
-                if (chosen.runner_install.kind != .none) {
-                    try applyInstallFromHand(g, .runner, hand_index);
-                } else {
-                    try applyRunnerPlayFromHand(g, hand_index);
-                }
-            }
-        }.choice,
     },
     .{
         .title = "Detente",
@@ -3820,11 +3893,29 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{.{
             .event = .successful_run,
             .handler = &struct {
+                const detente_on_choice = &struct {
+                    fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                        const g = gameFromEffectContext(cctx);
+                        const prompt = g.runner_prompt_state orelse return error.NoPromptState;
+                        if (!std.mem.eql(u8, prompt.prompt_type, "runner-host-confirm")) return error.UnsupportedChoice;
+                        g.runner_prompt_state = null;
+                        g.corp_prompt_state = null;
+                        if (std.mem.eql(u8, choice_text, "Yes")) {
+                            const source_card = prompt.source_card orelse return error.MissingSourceCard;
+                            const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
+                            try hostRandomHqCard(g, host);
+                        } else if (!std.mem.eql(u8, choice_text, "No")) {
+                            return error.UnsupportedChoice;
+                        }
+                        if (try resumePendingEffects(g)) return;
+                        try restorePriorityAfterPrompt(g);
+                    }
+                }.choice;
                 fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     const run = g.run orelse return;
                     if (!std.mem.eql(u8, run.server[0], "hq") or g.runner_successful_run_this_turn or g.corp_hand.items.len == 0) return;
-                    try beginYesNoPrompt(g, .runner, "runner-host-confirm", card.*);
+                    try beginYesNoPrompt(g, .runner, "runner-host-confirm", card.*, detente_on_choice);
                     g.corp_prompt_state = .{
                         .prompt_type = try g.arena.allocator().dupe(u8, "waiting"),
                         .choices = &.{},
@@ -3833,23 +3924,6 @@ pub const all_cards = [_]CardSpec{
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                if (!std.mem.eql(u8, prompt.prompt_type, "runner-host-confirm")) return error.UnsupportedChoice;
-                g.runner_prompt_state = null;
-                g.corp_prompt_state = null;
-                if (std.mem.eql(u8, choice_text, "Yes")) {
-                    const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                    const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
-                    try hostRandomHqCard(g, host);
-                } else if (!std.mem.eql(u8, choice_text, "No")) {
-                    return error.UnsupportedChoice;
-                }
-                if (try resumePendingEffects(g)) return;
-                try restorePriorityAfterPrompt(g);
-            }
-        }.choice,
     },
     .{
         .title = "Maglectric Rapid (748 Mod)",
@@ -3899,48 +3973,50 @@ pub const all_cards = [_]CardSpec{
                     g.runner_prompt_state = .{
                         .prompt_type = allocator.dupe(u8, "maglectric-derez") catch return,
                         .choices = choices.toOwnedSlice(allocator) catch return,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.runner_prompt_state = null;
+                                    return;
+                                }
+                                // Self-trash Maglectric Rapid
+                                for (cg.runner_rig_hardware.items, 0..) |hw, idx| {
+                                    if (hw.code != null and hw.code.? == 35019) {
+                                        const trashed = cg.runner_rig_hardware.orderedRemove(idx);
+                                        try appendDiscardCard(cg, .runner, trashed);
+                                        break;
+                                    }
+                                }
+                                // Derez the selected corp card
+                                for (cg.corp_servers.items) |*srv| {
+                                    for (srv.ices.items) |*ice| {
+                                        if (ice.rezzed and std.mem.eql(u8, ice.title, choice_text)) {
+                                            ice.rezzed = false;
+                                            cg.systemMsg(.runner, 35019, "Runner uses Maglectric Rapid to derez {s}.", .{choice_text});
+                                            cg.runner_prompt_state = null;
+                                            return;
+                                        }
+                                    }
+                                    for (srv.content.items) |*c| {
+                                        if (c.rezzed and std.mem.eql(u8, c.title, choice_text)) {
+                                            c.rezzed = false;
+                                            cg.systemMsg(.runner, 35019, "Runner uses Maglectric Rapid to derez {s}.", .{choice_text});
+                                            cg.runner_prompt_state = null;
+                                            return;
+                                        }
+                                    }
+                                }
+                                cg.runner_prompt_state = null;
+                            }
+                        }.choice,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = promptChoiceActions(allocator, .runner, g.runner_prompt_state.?) catch return;
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.runner_prompt_state = null;
-                    return;
-                }
-                // Self-trash Maglectric Rapid
-                for (g.runner_rig_hardware.items, 0..) |hw, idx| {
-                    if (hw.code != null and hw.code.? == 35019) {
-                        const trashed = g.runner_rig_hardware.orderedRemove(idx);
-                        try appendDiscardCard(g, .runner, trashed);
-                        break;
-                    }
-                }
-                // Derez the selected corp card
-                for (g.corp_servers.items) |*srv| {
-                    for (srv.ices.items) |*ice| {
-                        if (ice.rezzed and std.mem.eql(u8, ice.title, choice_text)) {
-                            ice.rezzed = false;
-                            g.systemMsg(.runner, 35019, "Runner uses Maglectric Rapid to derez {s}.", .{choice_text});
-                            g.runner_prompt_state = null;
-                            return;
-                        }
-                    }
-                    for (srv.content.items) |*c| {
-                        if (c.rezzed and std.mem.eql(u8, c.title, choice_text)) {
-                            c.rezzed = false;
-                            g.systemMsg(.runner, 35019, "Runner uses Maglectric Rapid to derez {s}.", .{choice_text});
-                            g.runner_prompt_state = null;
-                            return;
-                        }
-                    }
-                }
-                g.runner_prompt_state = null;
-            }
-        }.choice,
     },
     .{
         .title = "GAMEDRAGON\xe2\x84\xa2 Pro",
@@ -4005,115 +4081,123 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = try allocator.dupe(u8, "runner-host-mode"),
                         .choices = try choices.toOwnedSlice(allocator),
                         .source_card = card.*,
+                    
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const c_allocator = cg.arena.allocator();
+                                const prompt = cg.runner_prompt_state orelse return error.NoPromptState;
+                                const source_card = prompt.source_card orelse return error.MissingSourceCard;
+                                const host = findRunnerHardwareByCode(cg, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
+                                if (std.mem.eql(u8, prompt.prompt_type, "runner-host-mode")) {
+                                    if (std.mem.eql(u8, choice_text, "Host programs from grip")) {
+                                        try spendClicks(cg, .runner, 1);
+                                        var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                        defer c_choices.deinit(c_allocator);
+                                        for (cg.runner_hand.items, 0..) |hand_card, idx| {
+                                            const card_type = hand_card.card_type orelse continue;
+                                            if (!std.mem.eql(u8, card_type, "Program")) continue;
+                                            try c_choices.append(c_allocator, .{
+                                                .kind = .card,
+                                                .text = try c_allocator.dupe(u8, hand_card.title),
+                                                .card = .{ .title = hand_card.title, .printed_title = hand_card.printed_title, .code = hand_card.code, .side = .runner, .index = @intCast(idx) },
+                                            });
+                                        }
+                                        try c_choices.append(c_allocator, stringChoice("Done"));
+                                        cg.runner_prompt_state = .{
+                                            .prompt_type = try c_allocator.dupe(u8, "runner-host-from-grip"),
+                                            .choices = try c_choices.toOwnedSlice(c_allocator),
+                                            .source_card = source_card,
+
+                                            .on_choice = &@This().choice,
+                                        };
+                                        cg.decision_side = .runner;
+                                        cg.legal_actions = try promptChoiceActions(c_allocator, .runner, cg.runner_prompt_state.?);
+                                        return;
+                                    }
+                                    if (std.mem.eql(u8, choice_text, "Install a hosted program")) {
+                                        var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                        defer c_choices.deinit(c_allocator);
+                                        for (host.hosted, 0..) |hosted_card, idx| {
+                                            if (!runnerHandInstallableByEffect(cg, hosted_card)) continue;
+                                            try c_choices.append(c_allocator, .{
+                                                .kind = .card,
+                                                .text = try c_allocator.dupe(u8, hosted_card.title),
+                                                .card = .{ .title = hosted_card.title, .printed_title = hosted_card.printed_title, .code = hosted_card.code, .side = .runner, .index = @intCast(idx) },
+                                            });
+                                        }
+                                        if (c_choices.items.len == 0) return error.UnsupportedChoice;
+                                        cg.runner_prompt_state = .{
+                                            .prompt_type = try c_allocator.dupe(u8, "runner-hosted-install"),
+                                            .choices = try c_choices.toOwnedSlice(c_allocator),
+                                            .source_card = source_card,
+
+                                            .on_choice = &@This().choice,
+                                        };
+                                        cg.decision_side = .runner;
+                                        cg.legal_actions = try promptChoiceActions(c_allocator, .runner, cg.runner_prompt_state.?);
+                                        return;
+                                    }
+                                    return error.UnsupportedChoice;
+                                }
+                                if (std.mem.eql(u8, prompt.prompt_type, "runner-host-from-grip")) {
+                                    if (std.mem.eql(u8, choice_text, "Done")) {
+                                        cg.runner_prompt_state = null;
+                                        try restorePriorityAfterPrompt(cg);
+                                        return;
+                                    }
+                                    for (cg.runner_hand.items, 0..) |hand_card, idx| {
+                                        if (!std.mem.eql(u8, hand_card.title, choice_text)) continue;
+                                        const hosted = cg.runner_hand.orderedRemove(idx);
+                                        try appendHostedCard(cg.arena.allocator(), host, hosted);
+                                        cg.systemMsg(.runner, 35028, "Runner uses Madani to host {s}.", .{hosted.title});
+                                        var c_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                        defer c_choices.deinit(c_allocator);
+                                        for (cg.runner_hand.items, 0..) |remaining_card, remaining_idx| {
+                                            const card_type = remaining_card.card_type orelse continue;
+                                            if (!std.mem.eql(u8, card_type, "Program")) continue;
+                                            try c_choices.append(c_allocator, .{
+                                                .kind = .card,
+                                                .text = try c_allocator.dupe(u8, remaining_card.title),
+                                                .card = .{ .title = remaining_card.title, .printed_title = remaining_card.printed_title, .code = remaining_card.code, .side = .runner, .index = @intCast(remaining_idx) },
+                                            });
+                                        }
+                                        try c_choices.append(c_allocator, stringChoice("Done"));
+                                        cg.runner_prompt_state = .{
+                                            .prompt_type = try c_allocator.dupe(u8, "runner-host-from-grip"),
+                                            .choices = try c_choices.toOwnedSlice(c_allocator),
+                                            .source_card = source_card,
+
+                                            .on_choice = &@This().choice,
+                                        };
+                                        cg.decision_side = .runner;
+                                        cg.legal_actions = try promptChoiceActions(c_allocator, .runner, cg.runner_prompt_state.?);
+                                        return;
+                                    }
+                                    return error.UnsupportedChoice;
+                                }
+                                if (std.mem.eql(u8, prompt.prompt_type, "runner-hosted-install")) {
+                                    const hosted_index = hostedChoiceIndex(prompt, choice_text) orelse return error.UnsupportedChoice;
+                                    const hosted = try removeHostedCard(cg.arena.allocator(), host, hosted_index);
+                                    try cg.runner_hand.append(cg.backing_allocator, hosted);
+                                    const hand_index: u8 = @intCast(cg.runner_hand.items.len - 1);
+                                    markAbilityUsedThisTurn(host, 1);
+                                    cg.runner_prompt_state = null;
+                                    try beginRunnerInstallFromHand(cg, hand_index, false);
+                                    cg.systemMsg(.runner, 35028, "Runner uses Madani to install {s}.", .{hosted.title});
+                                    if (hasActivePrompt(cg) or cg.pending_install != null) return;
+                                    try restorePriorityAfterPrompt(cg);
+                                    return;
+                                }
+                                return error.UnsupportedChoice;
+                            }
+                        }.choice,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 }
             }.use,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                const allocator = g.arena.allocator();
-                const prompt = g.runner_prompt_state orelse return error.NoPromptState;
-                const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
-                if (std.mem.eql(u8, prompt.prompt_type, "runner-host-mode")) {
-                    if (std.mem.eql(u8, choice_text, "Host programs from grip")) {
-                        try spendClicks(g, .runner, 1);
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        for (g.runner_hand.items, 0..) |hand_card, idx| {
-                            const card_type = hand_card.card_type orelse continue;
-                            if (!std.mem.eql(u8, card_type, "Program")) continue;
-                            try choices.append(allocator, .{
-                                .kind = .card,
-                                .text = try allocator.dupe(u8, hand_card.title),
-                                .card = .{ .title = hand_card.title, .printed_title = hand_card.printed_title, .code = hand_card.code, .side = .runner, .index = @intCast(idx) },
-                            });
-                        }
-                        try choices.append(allocator, stringChoice("Done"));
-                        g.runner_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "runner-host-from-grip"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = source_card,
-                        };
-                        g.decision_side = .runner;
-                        g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
-                        return;
-                    }
-                    if (std.mem.eql(u8, choice_text, "Install a hosted program")) {
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        for (host.hosted, 0..) |hosted_card, idx| {
-                            if (!runnerHandInstallableByEffect(g, hosted_card)) continue;
-                            try choices.append(allocator, .{
-                                .kind = .card,
-                                .text = try allocator.dupe(u8, hosted_card.title),
-                                .card = .{ .title = hosted_card.title, .printed_title = hosted_card.printed_title, .code = hosted_card.code, .side = .runner, .index = @intCast(idx) },
-                            });
-                        }
-                        if (choices.items.len == 0) return error.UnsupportedChoice;
-                        g.runner_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "runner-hosted-install"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = source_card,
-                        };
-                        g.decision_side = .runner;
-                        g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
-                        return;
-                    }
-                    return error.UnsupportedChoice;
-                }
-                if (std.mem.eql(u8, prompt.prompt_type, "runner-host-from-grip")) {
-                    if (std.mem.eql(u8, choice_text, "Done")) {
-                        g.runner_prompt_state = null;
-                        try restorePriorityAfterPrompt(g);
-                        return;
-                    }
-                    for (g.runner_hand.items, 0..) |hand_card, idx| {
-                        if (!std.mem.eql(u8, hand_card.title, choice_text)) continue;
-                        const hosted = g.runner_hand.orderedRemove(idx);
-                        try appendHostedCard(g.arena.allocator(), host, hosted);
-                        g.systemMsg(.runner, 35028, "Runner uses Madani to host {s}.", .{hosted.title});
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        for (g.runner_hand.items, 0..) |remaining_card, remaining_idx| {
-                            const card_type = remaining_card.card_type orelse continue;
-                            if (!std.mem.eql(u8, card_type, "Program")) continue;
-                            try choices.append(allocator, .{
-                                .kind = .card,
-                                .text = try allocator.dupe(u8, remaining_card.title),
-                                .card = .{ .title = remaining_card.title, .printed_title = remaining_card.printed_title, .code = remaining_card.code, .side = .runner, .index = @intCast(remaining_idx) },
-                            });
-                        }
-                        try choices.append(allocator, stringChoice("Done"));
-                        g.runner_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "runner-host-from-grip"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = source_card,
-                        };
-                        g.decision_side = .runner;
-                        g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
-                        return;
-                    }
-                    return error.UnsupportedChoice;
-                }
-                if (std.mem.eql(u8, prompt.prompt_type, "runner-hosted-install")) {
-                    const hosted_index = hostedChoiceIndex(prompt, choice_text) orelse return error.UnsupportedChoice;
-                    const hosted = try removeHostedCard(g.arena.allocator(), host, hosted_index);
-                    try g.runner_hand.append(g.backing_allocator, hosted);
-                    const hand_index: u8 = @intCast(g.runner_hand.items.len - 1);
-                    markAbilityUsedThisTurn(host, 1);
-                    g.runner_prompt_state = null;
-                    try beginRunnerInstallFromHand(g, hand_index, false);
-                    g.systemMsg(.runner, 35028, "Runner uses Madani to install {s}.", .{hosted.title});
-                    if (hasActivePrompt(g) or g.pending_install != null) return;
-                    try restorePriorityAfterPrompt(g);
-                    return;
-                }
-                return error.UnsupportedChoice;
-            }
-        }.choice,
     },
     // --- Elevation Runner Programs ---
     .{
@@ -4365,63 +4449,64 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = allocator.dupe(u8, "knickknack-trash") catch return,
                         .choices = choices.toOwnedSlice(allocator) catch return,
                         .source_card = card.*,
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.runner_prompt_state = null;
+                                    // Run is already in progress, return to run flow
+                                    return;
+                                }
+                                // Find and trash the selected installed card
+                                var gain: u16 = 0;
+                                // Check resources
+                                for (cg.runner_rig_resources.items, 0..) |c, idx| {
+                                    if (std.mem.eql(u8, c.title, choice_text)) {
+                                        gain = c.cost orelse 0;
+                                        const trashed = cg.runner_rig_resources.orderedRemove(idx);
+                                        try appendDiscardCard(cg, .runner, trashed);
+                                        break;
+                                    }
+                                }
+                                // Check programs
+                                if (gain == 0) {
+                                    for (cg.runner_rig_program.items, 0..) |c, idx| {
+                                        if (std.mem.eql(u8, c.title, choice_text)) {
+                                            gain = c.cost orelse 0;
+                                            const trashed = cg.runner_rig_program.orderedRemove(idx);
+                                            try appendDiscardCard(cg, .runner, trashed);
+                                            if (cg.runner_memory) |*mem| {
+                                                const mu = trashed.runner_install.mu_cost;
+                                                mem.used = if (mem.used >= mu) mem.used - mu else 0;
+                                                mem.available = mem.base - mem.used;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Check hardware
+                                if (gain == 0) {
+                                    for (cg.runner_rig_hardware.items, 0..) |c, idx| {
+                                        if (std.mem.eql(u8, c.title, choice_text)) {
+                                            gain = c.cost orelse 0;
+                                            const trashed = cg.runner_rig_hardware.orderedRemove(idx);
+                                            try appendDiscardCard(cg, .runner, trashed);
+                                            break;
+                                        }
+                                    }
+                                }
+                                cg.runner_credit += gain;
+                                try drawCards(cg, .runner, 1);
+                                cg.systemMsg(.runner, 35033, "Runner uses \"Knickknack\" O'Brian to trash {s}, gain {d} [credits], and draw 1 card.", .{ choice_text, gain });
+                                cg.runner_prompt_state = null;
+                            }
+                        }.choice,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = promptChoiceActions(allocator, .runner, g.runner_prompt_state.?) catch return;
                 }
             }.handle,
         }},
-        .on_prompt_choice = &struct {
-            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
-                if (std.mem.eql(u8, choice_text, "No action")) {
-                    g.runner_prompt_state = null;
-                    // Run is already in progress, return to run flow
-                    return;
-                }
-                // Find and trash the selected installed card
-                var gain: u16 = 0;
-                // Check resources
-                for (g.runner_rig_resources.items, 0..) |c, idx| {
-                    if (std.mem.eql(u8, c.title, choice_text)) {
-                        gain = c.cost orelse 0;
-                        const trashed = g.runner_rig_resources.orderedRemove(idx);
-                        try appendDiscardCard(g, .runner, trashed);
-                        break;
-                    }
-                }
-                // Check programs
-                if (gain == 0) {
-                    for (g.runner_rig_program.items, 0..) |c, idx| {
-                        if (std.mem.eql(u8, c.title, choice_text)) {
-                            gain = c.cost orelse 0;
-                            const trashed = g.runner_rig_program.orderedRemove(idx);
-                            try appendDiscardCard(g, .runner, trashed);
-                            if (g.runner_memory) |*mem| {
-                                const mu = trashed.runner_install.mu_cost;
-                                mem.used = if (mem.used >= mu) mem.used - mu else 0;
-                                mem.available = mem.base - mem.used;
-                            }
-                            break;
-                        }
-                    }
-                }
-                // Check hardware
-                if (gain == 0) {
-                    for (g.runner_rig_hardware.items, 0..) |c, idx| {
-                        if (std.mem.eql(u8, c.title, choice_text)) {
-                            gain = c.cost orelse 0;
-                            const trashed = g.runner_rig_hardware.orderedRemove(idx);
-                            try appendDiscardCard(g, .runner, trashed);
-                            break;
-                        }
-                    }
-                }
-                g.runner_credit += gain;
-                try drawCards(g, .runner, 1);
-                g.systemMsg(.runner, 35033, "Runner uses \"Knickknack\" O'Brian to trash {s}, gain {d} [credits], and draw 1 card.", .{ choice_text, gain });
-                g.runner_prompt_state = null;
-            }
-        }.choice,
     },
     .{
         .title = "Side Hustle",
@@ -6059,32 +6144,14 @@ fn applyPromptChoice(
         return;
     }
 
-    // Generic source-card-based prompt dispatch: if the prompt has a source card with
-    // on_prompt_choice, use it. Only for card-specific prompt types (not standard access/choice
-    // prompts which have their own handlers).
-    if (prompt.source_card) |sc| {
-        const is_standard_prompt = std.mem.eql(u8, prompt.prompt_type, prompt_access_choice) or
-            std.mem.eql(u8, prompt.prompt_type, "net-damage-on-access") or
-            std.mem.eql(u8, prompt.prompt_type, prompt_discard) or
-            std.mem.eql(u8, prompt.prompt_type, "mulligan") or
-            std.mem.eql(u8, prompt.prompt_type, prompt_install_destination);
-        if (!is_standard_prompt) {
-            if (sc.code) |code| {
-                if (lookupCardSpecByCode(code)) |spec| {
-                    if (spec.on_prompt_choice) |handler| {
-                        try handler(generated, choice_text);
-                        if (spec.log_prompt_choice) {
-                            generated.systemMsg(spec.side, spec.code, "{s} uses {s} to {s}.", .{ sideName(spec.side), spec.title, choice_text });
-                        }
-                        if (hasActivePrompt(generated)) return;
-                        if (try resumePendingEffects(generated)) return;
-                        // Handler is responsible for setting decision_side and legal_actions
-                        return;
-                    }
-                }
-            }
-        }
+    // Prompt-level on_choice handler: set directly when opening the prompt
+    if (prompt.on_choice) |handler| {
+        try handler(effectContext(generated), choice_text);
+        if (hasActivePrompt(generated)) return;
+        if (try resumePendingEffects(generated)) return;
+        return;
     }
+
 
     // HB: Precision Design: select card from Archives to add to HQ
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "precision-design-archive")) {
@@ -6110,45 +6177,6 @@ fn applyPromptChoice(
         return;
     }
 
-    // Malapert Data Vault: search R&D for non-agenda card
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "malapert-search")) {
-        if (lookupCardSpecByCode(30066)) |spec| {
-            if (spec.on_prompt_choice) |handler| {
-                try handler(generated, choice_text);
-                generated.corp_prompt_state = null;
-                // Resume pending effects chain (remaining on-score effects, other triggers)
-                if (try resumePendingEffects(generated)) return;
-                generated.decision_side = .corp;
-                generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
-                return;
-            }
-        }
-        return error.UnsupportedPrompt;
-    }
-
-    // Longevity Serum: trash from HQ / shuffle from Archives
-    if (side == .corp and (std.mem.eql(u8, prompt.prompt_type, "longevity-serum-trash") or std.mem.eql(u8, prompt.prompt_type, "longevity-serum-shuffle"))) {
-        if (lookupCardSpecByCode(30044)) |spec| {
-            if (spec.on_prompt_choice) |handler| {
-                try handler(generated, choice_text);
-                return;
-            }
-        }
-        return error.UnsupportedPrompt;
-    }
-
-    // Anoetic Void: corp chooses to use ability (pay 2cr + trash 2 from HQ → ETR)
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "anoetic-void")) {
-        if (prompt.source_card) |sc| {
-            if (lookupCardSpec(sc)) |spec| {
-                if (spec.on_prompt_choice) |handler| {
-                    try handler(generated, choice_text);
-                    return;
-                }
-            }
-        }
-        return error.UnsupportedPrompt;
-    }
 
     // Ansel 1.0: corp chooses a card from HQ/Archives to install
     if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "ansel-install")) {
@@ -6172,34 +6200,6 @@ fn applyPromptChoice(
         }
     }
 
-    // Funhouse on-encounter and other ICE on-encounter prompts
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "funhouse-encounter")) {
-        const spec = if (generated.run) |run| blk: {
-            const ice_idx = run.current_ice_index orelse break :blk @as(?CardSpec, null);
-            const target_server = findServerByRunPath(generated.corp_servers.items, run.server) catch break :blk @as(?CardSpec, null);
-            const ice_count = target_server.slot.ices.items.len;
-            const actual_ice_idx = ice_count - 1 - ice_idx;
-            const ice = target_server.slot.ices.items[actual_ice_idx];
-            break :blk lookupCardSpec(ice);
-        } else null;
-        if (spec) |s| {
-            if (s.on_prompt_choice) |handler| {
-                try handler(generated, choice_text);
-                return;
-            }
-        }
-        return error.UnsupportedPrompt;
-    }
-
-    // Generic card prompt resolution: look up on_prompt_choice from card spec
-    if (prompt.source_card) |sc| {
-        if (lookupCardSpec(sc)) |spec| {
-            if (spec.on_prompt_choice) |handler| {
-                try handler(generated, choice_text);
-                return;
-            }
-        }
-    }
 
     return error.UnsupportedPrompt;
 }
@@ -6910,7 +6910,9 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                 return true;
             },
             .runner_discard_to_deck_prompt => |source_card| {
-                if (try beginRunnerDiscardProgramToDeckPrompt(generated, source_card)) return true;
+                // Scrounge (35004) needs its on_choice handler propagated to the bottom-program prompt
+                const choice_handler: ?*const fn (*state.EffectContext, []const u8) anyerror!void = if (source_card.code != null and source_card.code.? == 35004) scrounge_on_choice else null;
+                if (try beginRunnerDiscardProgramToDeckPromptWithChoice(generated, source_card, choice_handler)) return true;
             },
             .finish_score => {
                 updateTerminalState(generated);
@@ -8023,18 +8025,19 @@ fn runnerHandInstallableByEffect(generated: *const Game, card: state.CardInstanc
     return true;
 }
 
-fn beginRunnerOptionalInstallConfirmPrompt(generated: *Game, source_card: state.CardInstance) !void {
+fn beginRunnerOptionalInstallConfirmPrompt(generated: *Game, source_card: state.CardInstance, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = generated.arena.allocator();
     generated.runner_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "runner-bonus-install-confirm"),
         .choices = try allocator.dupe(state.PromptChoice, &.{ stringChoice("Yes"), stringChoice("No") }),
         .source_card = source_card,
+        .on_choice = on_choice,
     };
     generated.decision_side = .runner;
     generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
 }
 
-fn beginRunnerOptionalInstallPrompt(generated: *Game, source_card: state.CardInstance) !void {
+fn beginRunnerOptionalInstallPrompt(generated: *Game, source_card: state.CardInstance, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = generated.arena.allocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
@@ -8055,6 +8058,7 @@ fn beginRunnerOptionalInstallPrompt(generated: *Game, source_card: state.CardIns
         .prompt_type = try allocator.dupe(u8, "runner-bonus-install"),
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = source_card,
+        .on_choice = on_choice,
     };
     generated.decision_side = .runner;
     generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
@@ -9203,6 +9207,12 @@ fn beginBranInstallIcePrompt(
     generated.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "other"),
         .choices = try choices.toOwnedSlice(allocator),
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                const g = gameFromEffectContext(cctx);
+                try applyBranInstallIceChoice(g, choice_text);
+            }
+        }.choice,
     };
 
     generated.decision_side = .corp;
@@ -10984,12 +10994,14 @@ fn beginYesNoPrompt(
     side: state.Side,
     prompt_type: []const u8,
     source_card: state.CardInstance,
+    on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
 ) !void {
     const allocator = generated.arena.allocator();
     const prompt_state: state.PromptState = .{
         .prompt_type = try allocator.dupe(u8, prompt_type),
         .choices = try allocator.dupe(state.PromptChoice, &.{ stringChoice("Yes"), stringChoice("No") }),
         .source_card = source_card,
+        .on_choice = on_choice,
     };
     switch (side) {
         .corp => generated.corp_prompt_state = prompt_state,
@@ -11236,7 +11248,7 @@ fn countPlayableHostedRunnerCards(generated: *const Game, host: state.CardInstan
     return count;
 }
 
-fn beginRunnerHostedCardPrompt(generated: *Game, source_card: state.CardInstance) !void {
+fn beginRunnerHostedCardPrompt(generated: *Game, source_card: state.CardInstance, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = generated.arena.allocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
@@ -11266,6 +11278,7 @@ fn beginRunnerHostedCardPrompt(generated: *Game, source_card: state.CardInstance
         .prompt_type = try allocator.dupe(u8, "runner-hosted-card"),
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = source_card,
+        .on_choice = on_choice,
     };
     generated.decision_side = .runner;
     generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
@@ -11737,6 +11750,14 @@ fn beginRunnerDiscardProgramToDeckPrompt(
     game: *Game,
     source_card: state.CardInstance,
 ) !bool {
+    return beginRunnerDiscardProgramToDeckPromptWithChoice(game, source_card, null);
+}
+
+fn beginRunnerDiscardProgramToDeckPromptWithChoice(
+    game: *Game,
+    source_card: state.CardInstance,
+    on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
+) !bool {
     const allocator = game.arena.allocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
@@ -11755,6 +11776,7 @@ fn beginRunnerDiscardProgramToDeckPrompt(
         .prompt_type = try allocator.dupe(u8, "runner-discard-to-deck"),
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = source_card,
+        .on_choice = on_choice,
     };
     game.decision_side = .runner;
     game.legal_actions = try promptChoiceActions(allocator, .runner, game.runner_prompt_state.?);
@@ -12245,7 +12267,7 @@ fn currentPendingAccessedServerCard(g: *Game) ?*state.CardInstance {
     return &server.content.items[pending.card_index];
 }
 
-fn showTopDownInstallChoices(g: *Game, card: ?state.CardInstance, installs_done: u8) !void {
+fn showTopDownInstallChoices(g: *Game, card: ?state.CardInstance, installs_done: u8, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = g.arena.allocator();
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
     defer choices_list.deinit(allocator);
@@ -12264,12 +12286,13 @@ fn showTopDownInstallChoices(g: *Game, card: ?state.CardInstance, installs_done:
         .choices = try choices_list.toOwnedSlice(allocator),
         .source_card = card,
         .min_choices = installs_done,
+        .on_choice = on_choice,
     };
     g.decision_side = .corp;
     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
 }
 
-fn beginPeerReviewInstallPrompt(g: *Game, card: state.CardInstance) !void {
+fn beginPeerReviewInstallPrompt(g: *Game, card: state.CardInstance, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = g.arena.allocator();
     g.corp_credit += 7;
     g.systemMsg(.corp, 35055, "Corp uses Peer Review to gain 7 [credits].", .{});
@@ -12294,12 +12317,13 @@ fn beginPeerReviewInstallPrompt(g: *Game, card: state.CardInstance) !void {
         .prompt_type = try allocator.dupe(u8, "peer-review-install"),
         .choices = try installable.toOwnedSlice(allocator),
         .source_card = card,
+        .on_choice = on_choice,
     };
     g.decision_side = .corp;
     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
 }
 
-fn showKpiChoices(g: *Game, card: ?state.CardInstance, choices_made: u8) !void {
+fn showKpiChoices(g: *Game, card: ?state.CardInstance, choices_made: u8, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = g.arena.allocator();
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
     defer choices_list.deinit(allocator);
@@ -12325,6 +12349,7 @@ fn showKpiChoices(g: *Game, card: ?state.CardInstance, choices_made: u8) !void {
         .choices = try choices_list.toOwnedSlice(allocator),
         .source_card = card,
         .min_choices = choices_made,
+        .on_choice = on_choice,
     };
     g.decision_side = .corp;
     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
