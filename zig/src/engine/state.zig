@@ -161,6 +161,7 @@ pub const AbilitySpec = struct {
     side: ?Side = null,
     allow_opponent_use: bool = false,
     once_per_turn: bool = false,
+    is_play: bool = false, // play-from-hand ability (operation/event effect)
     // Encounter parameters (used by shared break/pump/bioroid handlers):
     credit_cost: u16 = 0,
     break_count: u8 = 1,

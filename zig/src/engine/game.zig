@@ -67,8 +67,6 @@ pub const CardSpec = struct {
     advanceable: bool = false, // Pharos, Clearinghouse: explicitly advanceable
     advancement_strength_threshold: u8 = 0, // Pharos: str bonus at N+ counters
     advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
-    can_play: ?*const fn (*const Game) bool = null,
-    on_play: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_access: ?*const fn (*Game, state.CardInstance) anyerror!bool = null,
@@ -152,10 +150,11 @@ pub const MatchupSpec = struct {
     runner: SideSpec,
 };
 
-// Shared on_play generators for parameterized play effects
-fn corpGainCreditsOnPlay(comptime credits: u16, comptime draw: u8) *const fn (*Game, state.CardInstance) anyerror!void {
-    return &struct {
-        fn play(g: *Game, _: state.CardInstance) anyerror!void {
+// Shared play ability generators — return AbilitySpec entries for play-from-hand effects
+fn corpGainCreditsPlayAbility(comptime credits: u16, comptime draw: u8) state.AbilitySpec {
+    return .{ .is_play = true, .on_use = &struct {
+        fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+            const g = gameFromEffectContext(ctx);
             g.corp_credit += credits;
             if (draw > 0) try drawCards(g, .corp, draw);
             if (credits > 0) {
@@ -163,35 +162,45 @@ fn corpGainCreditsOnPlay(comptime credits: u16, comptime draw: u8) *const fn (*G
                 _ = try fireEvent(g, .operation_played);
             }
         }
-    }.play;
+    }.play };
 }
 
-fn runnerGainCreditsOnPlay(comptime credits: u16, comptime draw: u8, comptime lose_clicks: u8) *const fn (*Game, state.CardInstance) anyerror!void {
-    return &struct {
-        fn play(g: *Game, _: state.CardInstance) anyerror!void {
+fn runnerGainCreditsPlayAbility(comptime credits: u16, comptime draw: u8, comptime lose_clicks: u8) state.AbilitySpec {
+    return .{ .is_play = true, .on_use = &struct {
+        fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+            const g = gameFromEffectContext(ctx);
             if (lose_clicks > 0) try spendClicks(g, .runner, lose_clicks);
             g.runner_credit += credits;
             if (draw > 0) try drawCards(g, .runner, draw);
             g.decision_side = .runner;
             g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
         }
-    }.play;
+    }.play };
 }
 
-fn runnerRunEventOnPlay(comptime target_kind: state.RunTargetKind, comptime lose_clicks: u8) *const fn (*Game, state.CardInstance) anyerror!void {
-    return &struct {
-        fn play(g: *Game, card: state.CardInstance) anyerror!void {
+fn runnerRunEventPlayAbility(comptime target_kind: state.RunTargetKind, comptime lose_clicks: u8) state.AbilitySpec {
+    return .{ .is_play = true, .on_use = &struct {
+        fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+            const g = gameFromEffectContext(ctx);
             const allocator = g.arena.allocator();
             if (lose_clicks > 0) try spendClicks(g, .runner, lose_clicks);
             g.runner_prompt_state = .{
                 .prompt_type = try allocator.dupe(u8, "run-target"),
                 .choices = try runTargetChoicesFor(allocator, target_kind, g.corp_servers.items),
-                .source_card = card,
+                .source_card = card.*,
             };
             g.decision_side = .runner;
             g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
         }
-    }.play;
+    }.play };
+}
+
+/// Find the play ability in a card's abilities array
+fn findPlayAbility(abilities: []const state.AbilitySpec) ?*const state.AbilitySpec {
+    for (abilities) |*ability| {
+        if (ability.is_play) return ability;
+    }
+    return null;
 }
 
 pub const all_cards = [_]CardSpec{
@@ -468,16 +477,17 @@ pub const all_cards = [_]CardSpec{
             return try beginNetDamageOnAccessPrompt(g, accessed);
         }
     }.access },
-    .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .on_play = corpGainCreditsOnPlay(15, 0) },
-    .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .on_play = corpGainCreditsOnPlay(9, 0) },
+    .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .abilities = &.{corpGainCreditsPlayAbility(15, 0)} },
+    .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .abilities = &.{corpGainCreditsPlayAbility(9, 0)} },
     .{
         .title = "Seamless Launch",
         .side = .corp,
         .code = 30040,
         .card_type = "Operation",
         .cost = 1,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 const choices = try installedNotThisTurnChoices(allocator, g.corp_servers.items);
                 if (choices.len == 0) {
@@ -488,12 +498,12 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "seamless-advance"),
                     .choices = choices,
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const advanced_card = try addAdvancementCounter(g, choice_text, 2);
@@ -512,13 +522,14 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
 
         .log_prompt_choice = true,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try predictive_planogram_choices(allocator, g.runner_tag),
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -528,7 +539,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Gain 3 [Credits]")) {
@@ -554,13 +565,14 @@ pub const all_cards = [_]CardSpec{
         .cost = 4,
 
         .log_prompt_choice = true,
-        .can_play = &struct {
-            fn check(g: *const Game) bool {
+        .abilities = &.{.{ .is_play = true, .req = &struct {
+            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
                 return runner_had_successful_run_last_turn(g);
             }
-        }.check,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        }.req, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 if (!runner_had_successful_run_last_turn(g)) {
                     g.decision_side = .corp;
@@ -575,12 +587,12 @@ pub const all_cards = [_]CardSpec{
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try public_trail_choices(allocator, g.runner_credit),
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Take 1 tag")) {
@@ -602,14 +614,15 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .cost = 1,
 
-        .can_play = &struct {
-            fn check(g: *const Game) bool {
+        .abilities = &.{.{ .is_play = true, .req = &struct {
+            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
                 return is_runner_tagged(g.runner_tag) and
                     (g.runner_rig_hardware.items.len > 0 or g.runner_rig_program.items.len > 0);
             }
-        }.check,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        }.req, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 if (!is_runner_tagged(g.runner_tag)) {
                     g.decision_side = .corp;
@@ -625,12 +638,12 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "retribution-trash"),
                     .choices = choices,
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 var pieces = std.mem.splitScalar(u8, choice_text, '|');
@@ -813,11 +826,11 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .on_play = runnerGainCreditsOnPlay(5, 0, 1) },
-    .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .on_play = runnerRunEventOnPlay(.hq_and_rnd_only, 0), .run_target_kind = .hq_and_rnd_only, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 1, .successful_run_access_bonus = 1 },
-    .{ .title = "Overclock", .side = .runner, .code = 30029, .card_type = "Event", .cost = 1, .on_play = runnerRunEventOnPlay(.any_runnable, 0), .run_credits = 5 },
-    .{ .title = "Sure Gamble", .side = .runner, .code = 30030, .card_type = "Event", .cost = 5, .on_play = runnerGainCreditsOnPlay(9, 0, 0) },
-    .{ .title = "Tread Lightly", .side = .runner, .code = 30012, .card_type = "Event", .cost = 1, .on_play = runnerRunEventOnPlay(.any_runnable, 0), .run_rez_cost_bonus = 3 },
+    .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(5, 0, 1)} },
+    .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .abilities = &.{runnerRunEventPlayAbility(.hq_and_rnd_only, 0)}, .run_target_kind = .hq_and_rnd_only, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 1, .successful_run_access_bonus = 1 },
+    .{ .title = "Overclock", .side = .runner, .code = 30029, .card_type = "Event", .cost = 1, .abilities = &.{runnerRunEventPlayAbility(.any_runnable, 0)}, .run_credits = 5 },
+    .{ .title = "Sure Gamble", .side = .runner, .code = 30030, .card_type = "Event", .cost = 5, .abilities = &.{runnerGainCreditsPlayAbility(9, 0, 0)} },
+    .{ .title = "Tread Lightly", .side = .runner, .code = 30012, .card_type = "Event", .cost = 1, .abilities = &.{runnerRunEventPlayAbility(.any_runnable, 0)}, .run_rez_cost_bonus = 3 },
     .{
         .title = "Mutual Favor",
         .side = .runner,
@@ -826,8 +839,9 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
 
         .on_play_msg = "search stack for an icebreaker.",
-        .on_play = &struct {
-            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Search deck for first icebreaker, add to hand, shuffle deck
                 const deck = &g.runner_deck;
                 var target_index: ?usize = null;
@@ -848,7 +862,7 @@ pub const all_cards = [_]CardSpec{
                     g,
                 );
             }
-        }.play,
+        }.play }},
     },
     .{
         .title = "Wildcat Strike",
@@ -858,8 +872,9 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
 
         .log_prompt_choice = true,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -869,12 +884,12 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try wildcat_strike_choices(allocator),
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Runner gains 6 [Credits]")) {
@@ -892,7 +907,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "VRcation", .side = .runner, .code = 30021, .card_type = "Event", .cost = 1, .on_play = runnerGainCreditsOnPlay(0, 4, 1) },
+    .{ .title = "VRcation", .side = .runner, .code = 30021, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(0, 4, 1)} },
     .{ .title = "Docklands Pass", .side = .runner, .code = 30013, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .hq_access, .value = 1 }} },
     .{ .title = "Pennyshaver", .side = .runner, .code = 30014, .card_type = "Hardware", .cost = 3, .runner_install = .{ .kind = .hardware }, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
@@ -1138,8 +1153,9 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
 
         .on_play_msg = "draw 3 cards.",
-        .on_play = &struct {
-            fn play(g: *Game, src_card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, src_card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 try drawCards(g, .corp, 3);
                 // Present prompt to choose 2 cards to shuffle back
@@ -1151,13 +1167,13 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "sprint-shuffle"),
                     .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = src_card,
+                    .source_card = src_card.*,
                     .min_choices = 2,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 // Mark the card as selected (don't move yet — batch like Clojure)
@@ -1215,8 +1231,9 @@ pub const all_cards = [_]CardSpec{
         .cost = 5,
 
         .on_play_msg = "gain 10 [credits].",
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 g.corp_credit += 10;
                 if (g.corp_hand.items.len == 0) {
@@ -1234,12 +1251,12 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "hansei-trash"),
                     .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 for (g.corp_hand.items, 0..) |card, idx| {
@@ -1345,8 +1362,9 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .cost = 3,
 
-        .on_play = &struct {
-            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const damage = g.turn_events.agenda_points_scored_this_turn;
                 if (damage > 0) {
                     try trashRandomRunnerHandCards(g, damage);
@@ -1357,7 +1375,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .corp;
                 g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
             }
-        }.play,
+        }.play }},
     },
     .{
         .title = "Luminal Transubstantiation",
@@ -2881,11 +2899,12 @@ pub const all_cards = [_]CardSpec{
         .initial_credit_counters = 2,
     },
     // --- Elevation Operations ---
-    .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .on_play = &struct {
-        fn play(g: *Game, _: state.CardInstance) anyerror!void {
+    .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .abilities = &.{.{ .is_play = true, .on_use = &struct {
+        fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+            const g = gameFromEffectContext(ctx);
             g.corp_click += 2;
         }
-    }.play, .on_play_msg = "gain [Click][Click]." },
+    }.play }}, .on_play_msg = "gain [Click][Click]." },
     .{
         .title = "Top-Down Solutions",
         .side = .corp,
@@ -2893,15 +2912,16 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .cost = 2,
 
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "Draw 2 cards. Install up to 2 cards from HQ (one at a time)."
                 try drawCards(g, .corp, 2);
                 g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to draw 2 cards.", .{});
                 // Offer install prompt
-                try showTopDownInstallChoices(g, card, 0);
+                try showTopDownInstallChoices(g, card.*, 0);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -2965,8 +2985,9 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Transaction"},
         .cost = 4,
 
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 if (g.corp_hand.items.len >= 2) {
                     var private_choices: std.ArrayList(state.PromptChoice) = .empty;
@@ -2981,15 +3002,15 @@ pub const all_cards = [_]CardSpec{
                     g.corp_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "peer-review-private"),
                         .choices = try private_choices.toOwnedSlice(allocator),
-                        .source_card = card,
+                        .source_card = card.*,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                     return;
                 }
-                try beginPeerReviewInstallPrompt(g, card);
+                try beginPeerReviewInstallPrompt(g, card.*);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -3043,14 +3064,15 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Gray Ops"},
         .cost = 0,
 
-        .can_play = &struct {
-            fn check(g: *const Game) bool {
+        .abilities = &.{.{ .is_play = true, .req = &struct {
+            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
                 // "Play only if the Runner is tagged."
                 return if (g.runner_tag) |t| t.is_tagged else false;
             }
-        }.check,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        }.req, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "Choose: Give the Runner 1 tag OR Remove any number of tags. Runner loses 5cr per tag. Gain credits equal to credits lost."
                 const allocator = g.arena.allocator();
                 var choices_list: std.ArrayList(state.PromptChoice) = .empty;
@@ -3060,7 +3082,7 @@ pub const all_cards = [_]CardSpec{
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "bigger-picture"),
                     .choices = try choices_list.toOwnedSlice(allocator),
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -3070,7 +3092,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -3126,15 +3148,16 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Gray Ops"},
         .cost = 0,
 
-        .can_play = &struct {
-            fn check(g: *const Game) bool {
+        .abilities = &.{.{ .is_play = true, .req = &struct {
+            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
                 // Requires runner to be tagged and have stolen agendas
                 const tagged = if (g.runner_tag) |t| t.is_tagged else false;
                 return tagged and g.runner_scored.items.len > 0;
             }
-        }.check,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        }.req, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "As additional cost, remove X tags. Install 1 agenda from Runner's score area with X printed AP."
                 const allocator = g.arena.allocator();
                 const tag_count = if (g.runner_tag) |t| t.base else 0;
@@ -3155,13 +3178,13 @@ pub const all_cards = [_]CardSpec{
                     g.corp_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "ip-enforcement-tags"),
                         .choices = try num_choices.toOwnedSlice(allocator),
-                        .source_card = card,
+                        .source_card = card.*,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -3203,8 +3226,9 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Double"},
         .cost = 2,
 
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Additional cost: spend [click] (Double)
                 try spendClicks(g, .corp, 1);
                 // "Place 2 advancement counters on 1 installed card you can advance."
@@ -3214,13 +3238,13 @@ pub const all_cards = [_]CardSpec{
                     g.corp_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "touch-ups-advance"),
                         .choices = adv_choices,
-                        .source_card = card,
+                        .source_card = card.*,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -3245,12 +3269,13 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Transaction"},
         .cost = 1,
 
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "Resolve 2 of: Gain 2cr, Install ice ignoring costs, Place 1 advancement, Draw 1 + shuffle 1"
-                try showKpiChoices(g, card, 0);
+                try showKpiChoices(g, card.*, 0);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -3405,14 +3430,15 @@ pub const all_cards = [_]CardSpec{
         .cost = 5,
         .trash_cost = 3,
 
-        .can_play = &struct {
-            fn check(g: *const Game) bool {
+        .abilities = &.{.{ .is_play = true, .req = &struct {
+            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
                 // "Play only if the threat level is 4 or greater, and only if the Runner made a successful run during their last turn."
                 return threatLevel(g) >= 4 and runner_had_successful_run_last_turn(g);
             }
-        }.check,
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        }.req, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "Do 4 meat damage unless the Runner pays 8[credit]."
                 const allocator = g.arena.allocator();
                 var choices_list: std.ArrayList(state.PromptChoice) = .empty;
@@ -3424,7 +3450,7 @@ pub const all_cards = [_]CardSpec{
                 g.runner_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "other"),
                     .choices = try choices_list.toOwnedSlice(allocator),
-                    .source_card = card,
+                    .source_card = card.*,
                 };
                 g.corp_prompt_state = .{
                     .prompt_type = try allocator.dupe(u8, "waiting"),
@@ -3434,7 +3460,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Pay 8 [Credits]")) {
@@ -3459,15 +3485,15 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Transaction"},
         .cost = 3,
-        .on_play = corpGainCreditsOnPlay(5, 0),
-        // Flashback: play from Archives for 1 extra click, gain 1 click after
-        // Params now inline in applyCorpFlashback/isCorpFlashbackPlayable
-        .can_play = &struct {
-            fn check(g: *const Game) bool {
+        .abilities = &.{.{ .is_play = true, .req = &struct {
+            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
                 // "Play only if you have not finished an action yet this turn."
                 return g.corp_click == g.corp_click_per_turn;
             }
-        }.check,
+        }.req, .on_use = corpGainCreditsPlayAbility(5, 0).on_use.? }},
+        // Flashback: play from Archives for 1 extra click, gain 1 click after
+        // Params now inline in applyCorpFlashback/isCorpFlashbackPlayable
     },
     // --- Elevation Runner Events ---
     .{
@@ -3477,7 +3503,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .on_play = runnerRunEventOnPlay(.archives_only, 0),
+        .abilities = &.{runnerRunEventPlayAbility(.archives_only, 0)},
     },
     .{
         .title = "Scrounge",
@@ -3487,8 +3513,9 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Double"},
         .cost = 1,
 
-        .on_play = &struct {
-            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Additional cost: spend [click] (Double)
                 try spendClicks(g, .runner, 1);
                 // "Install 1 program from your heap."
@@ -3510,18 +3537,18 @@ pub const all_cards = [_]CardSpec{
                     g.runner_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "scrounge-install"),
                         .choices = try choices_list.toOwnedSlice(allocator),
-                        .source_card = card,
+                        .source_card = card.*,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 } else {
-                    try g.pending_effects.append(g.backing_allocator, .{ .runner_discard_to_deck_prompt = card });
+                    try g.pending_effects.append(g.backing_allocator, .{ .runner_discard_to_deck_prompt = card.* });
                     if (try resumePendingEffects(g)) return;
                     g.decision_side = .runner;
                     g.legal_actions = try runnerOpeningActionsForState(allocator, g);
                 }
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const prompt = g.runner_prompt_state orelse return error.NoPromptState;
@@ -3573,9 +3600,9 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 1,
-        .on_play = runnerRunEventOnPlay(.any_runnable, 0),
+        .abilities = &.{runnerRunEventPlayAbility(.any_runnable, 0)},
     },
-    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .on_play = runnerRunEventOnPlay(.any_runnable, 0), .successful_run_effect = .draw_cards },
+    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .abilities = &.{runnerRunEventPlayAbility(.any_runnable, 0)}, .successful_run_effect = .draw_cards },
     .{
         .title = "Lie Low",
         .side = .runner,
@@ -3584,8 +3611,9 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Double"},
         .cost = 1,
 
-        .on_play = &struct {
-            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Additional cost: spend [click] (Double)
                 try spendClicks(g, .runner, 1);
                 // "Draw 4 cards OR Remove up to 2 tags"
@@ -3604,7 +3632,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
-        }.play,
+        }.play }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -3656,7 +3684,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{ "Double", "Run" },
         .cost = 0,
-        .on_play = runnerRunEventOnPlay(.archives_only, 1),
+        .abilities = &.{runnerRunEventPlayAbility(.archives_only, 1)},
     },
     .{
         .title = "Transfer of Wealth",
@@ -3665,7 +3693,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .on_play = runnerRunEventOnPlay(.hq_only, 0),
+        .abilities = &.{runnerRunEventPlayAbility(.hq_only, 0)},
     },
     .{
         .title = "Illumination",
@@ -3674,7 +3702,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .on_play = runnerRunEventOnPlay(.rd_only, 0),
+        .abilities = &.{runnerRunEventPlayAbility(.rd_only, 0)},
     },
     .{
         .title = "Ritual",
@@ -3683,8 +3711,9 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .cost = 0,
 
-        .on_play = &struct {
-            fn play(g: *Game, _: state.CardInstance) anyerror!void {
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
+            fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "Draw 1 card for each [click] you have remaining."
                 const clicks_remaining: u8 = @intCast(g.runner_click);
                 if (clicks_remaining > 0) {
@@ -3693,7 +3722,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .runner;
                 g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
             }
-        }.play,
+        }.play }},
         .on_play_msg = "draw cards equal to remaining clicks.",
     },
     // --- Elevation Runner Hardware ---
@@ -5318,6 +5347,10 @@ const prompt_discard = "discard";
 const prompt_manegarm_tax = "manegarm-tax";
 
 fn effectContext(game: *Game) *state.EffectContext {
+    return @ptrCast(game);
+}
+
+fn constEffectContext(game: *const Game) *const state.EffectContext {
     return @ptrCast(game);
 }
 
@@ -7907,12 +7940,13 @@ fn logCorpOperationPlay(generated: *Game, card: state.CardInstance, from_archive
 
 fn resolveCorpOperation(generated: *Game, card: state.CardInstance) !void {
     const spec = lookupCardSpec(card) orelse return error.UnsupportedOperation;
-    const handler = spec.on_play orelse return error.UnsupportedOperation;
-    try handler(generated, card);
+    const play_ability = findPlayAbility(spec.abilities) orelse return error.UnsupportedOperation;
+    const handler = play_ability.on_use orelse return error.UnsupportedOperation;
+    var mutable_card = card;
+    try handler(effectContext(generated), &mutable_card);
     if (spec.on_play_msg) |msg| {
         generated.systemMsg(.corp, spec.code, "Corp uses {s} to {s}", .{ spec.title, msg });
     }
-    // If handler opened a prompt, don't override legal actions
     if (generated.corp_prompt_state != null or generated.runner_prompt_state != null) return;
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
@@ -7931,7 +7965,6 @@ fn applyRunnerPlayFromHand(
     if (!std.mem.eql(u8, card_type, "Event")) return error.UnsupportedCardType;
 
     const spec = lookupCardSpec(card) orelse return error.UnsupportedCardType;
-    const handler = spec.on_play orelse return error.UnsupportedCardType;
 
     // Common event play flow: spend click, pay cost, remove from hand, discard, log
     const ev_cost = card.cost orelse 0;
@@ -7946,7 +7979,10 @@ fn applyRunnerPlayFromHand(
     } else {
         generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] to play {s}.", .{card.title});
     }
-    try handler(generated, card);
+    const play_ability = findPlayAbility(spec.abilities) orelse return error.UnsupportedCardType;
+    const handler = play_ability.on_use orelse return error.UnsupportedCardType;
+    var mutable_card = card;
+    try handler(effectContext(generated), &mutable_card);
     if (spec.on_play_msg) |msg| {
         generated.systemMsg(.runner, spec.code, "Runner uses {s} to {s}", .{ spec.title, msg });
     }
@@ -11769,8 +11805,11 @@ fn isCorpCardPlayableFromHand(
         // Check card-specific preconditions (e.g., Public Trail requires runner ran last turn)
         if (card.code) |code| {
             if (lookupCardSpecByCode(code)) |spec| {
-                if (spec.can_play) |can_play| {
-                    if (!can_play(g)) return false;
+                if (findPlayAbility(spec.abilities)) |play_ability| {
+                    if (play_ability.req) |req| {
+                        var dummy_card = card;
+                        if (!req(constEffectContext(g), &dummy_card)) return false;
+                    }
                 }
             }
         }
@@ -11788,8 +11827,11 @@ fn isCorpFlashbackPlayable(g: *const Game, card: state.CardInstance) bool {
     const spec = lookupCardSpecByCode(card.code.?) orelse return false;
     if (g.corp_click < 2) return false; // 1 for play + 1 extra flashback click
     if (g.corp_credit < (card.cost orelse 0)) return false;
-    if (spec.can_play) |can_play| {
-        if (!can_play(g)) return false;
+    if (findPlayAbility(spec.abilities)) |play_ability| {
+        if (play_ability.req) |req| {
+            var dummy_card = card;
+            if (!req(constEffectContext(g), &dummy_card)) return false;
+        }
     }
     return true;
 }
