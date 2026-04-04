@@ -217,6 +217,7 @@ pub const GameEvent = enum(u8) {
     runner_lose_tag, // Synapse Global: corp installs on tag removal
     corp_install, // BANGUN: faceup install option
     runner_end_turn, // Bling: discard-phase cleanup and similar effects
+    ice_encountered, // Funhouse: on-encounter trigger
 };
 
 pub const EventAbility = struct {

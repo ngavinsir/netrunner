@@ -6,14 +6,6 @@ pub const DeckLine = struct {
     card_code: u32,
 };
 
-// Handler type for card-specific subroutine resolution
-// Allows cards like Brân 1.0 to have custom logic without bloating the SubroutineKind enum
-pub const CardSubroutineHandler = *const fn (
-    generated: *Game,
-    ice: *const state.CardInstance,
-    subroutine_index: u8,
-) anyerror!void;
-
 pub const CardSpec = struct {
     title: []const u8,
     side: state.Side,
@@ -59,23 +51,14 @@ pub const CardSpec = struct {
     subroutines: []const state.SubroutineSpec = &.{},
     on_score: state.AgendaEffectSpec = .{},
     on_steal: state.AgendaEffectSpec = .{},
-    // Card-specific subroutine handler - for complex subroutines that need custom logic
-    // Set this instead of/in addition to subroutines for cards like Brân 1.0
-    card_subroutine_handler: ?CardSubroutineHandler = null,
     trash_cost: ?u16 = null,
     tag_on_rez: u8 = 0, // Ping: give runner N tags when rezzed during a run
     advanceable: bool = false, // Pharos, Clearinghouse: explicitly advanceable
     advancement_strength_threshold: u8 = 0, // Pharos: str bonus at N+ counters
     advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
-    on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_access: ?*const fn (*Game, state.CardInstance) anyerror!bool = null,
     on_approach: ?*const fn (*Game, *const state.CardInstance) anyerror!bool = null,
-    on_encounter: ?*const fn (*Game, *const state.CardInstance) anyerror!void = null,
-    on_rez: ?*const fn (*Game) anyerror!void = null,
-    on_rez_msg: ?[]const u8 = null, // logged after on_rez fires
     on_play_msg: ?[]const u8 = null, // logged after on_play fires (effect description, not "plays X")
-    on_score_msg: ?[]const u8 = null, // logged after on_score_fn fires
-    // For prompt-based abilities: auto-log choice text as "{Side} uses {title} to {choice}."
     installs_agendas_faceup: bool = false, // BANGUN: installed agendas enter faceup
 };
 
@@ -111,7 +94,7 @@ pub const PendingEffect = union(enum) {
     on_score_give_runner_tag: u8,
     on_score_gain_clicks: u8,
     on_score_rez_ice_free: state.CardInstance, // the scored agenda
-    on_score_fn: state.CardInstance, // the scored agenda — look up spec and call on_score_fn
+    on_score_event_abilities: state.CardInstance, // the scored agenda — iterate event_abilities for .agenda_scored
     finish_score: void, // terminal: updateTerminalState + return to corp actions
     on_steal_rez_ice_free: state.CardInstance,
     on_steal_give_runner_tag: u8,
@@ -525,8 +508,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 4,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 if (is_runner_tagged(g.runner_tag)) {
                     try trashRandomRunnerHandCards(g, 4);
                     g.systemMsg(.corp, 30068, "Corp uses Orbital Superiority to do 4 meat damage.", .{});
@@ -536,7 +520,7 @@ pub const all_cards = [_]CardSpec{
                     g.systemMsg(.corp, 30068, "Corp uses Orbital Superiority to give Runner 1 tag.", .{});
                 }
             }
-        }.score,
+        }.handle }},
     },
     .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only },
         .auto_take_credits = true,
@@ -888,9 +872,9 @@ pub const all_cards = [_]CardSpec{
         .subroutines = &.{
             .{ .kind = .give_tag_or_pay_credits, .amount = 4 },
         },
-        .on_encounter = &struct {
-            fn encounter(g: *Game, ice: *const state.CardInstance) anyerror!void {
-                _ = ice;
+        .event_abilities = &.{.{ .event = .ice_encountered, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 const allocator = g.arena.allocator();
                 var choices: std.ArrayList(state.PromptChoice) = .empty;
                 defer choices.deinit(allocator);
@@ -900,7 +884,7 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "funhouse-encounter"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = null,
-                
+
                     .on_choice = &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
@@ -928,7 +912,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .runner;
                 g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
             }
-        }.encounter,
+        }.handle }},
     },
     .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(5, 0, 1)} },
     .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .abilities = &.{runnerRunEventPlayAbility(.hq_and_rnd_only, 0)}, .run_target_kind = .hq_and_rnd_only, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 1, .successful_run_access_bonus = 1 },
@@ -1391,8 +1375,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 3,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 if (g.runner_rig_resources.items.len == 0) return;
                 const allocator = g.arena.allocator();
                 var choices: std.ArrayList(state.PromptChoice) = .empty;
@@ -1405,7 +1390,7 @@ pub const all_cards = [_]CardSpec{
                     .prompt_type = try allocator.dupe(u8, "above-the-law-trash"),
                     .choices = try choices.toOwnedSlice(allocator),
                     .source_card = null,
-                
+
                     .on_choice = &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
@@ -1426,7 +1411,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.score,
+        }.handle }},
     },
     // --- Phase 1: Pharos, Fermenter, Neurospike, Luminal Transubstantiation, Cookbook ---
     .{ .title = "Pharos", .side = .corp, .code = 30063, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 7, .strength = 5, .advanceable = true, .advancement_strength_threshold = 3, .advancement_strength_bonus = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
@@ -1540,8 +1525,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 3,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Present prompt to trash cards from HQ, then shuffle up to 3 from Archives into R&D
                 const allocator = g.arena.allocator();
                 if (g.corp_hand.items.len == 0 and g.corp_discard.items.len == 0) return;
@@ -1671,7 +1657,7 @@ pub const all_cards = [_]CardSpec{
                 g.decision_side = .corp;
                 g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
             }
-        }.score,
+        }.handle }},
     },
     .{
         .title = "Malapert Data Vault",
@@ -1752,12 +1738,13 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
         .trash_cost = 2,
         .install = .{ .kind = .corp_remote_only },
-        .on_rez_msg = "draw 2 cards.",
-        .on_rez = &struct {
-            fn rez(g: *Game) anyerror!void {
+        .event_abilities = &.{.{ .event = .corp_rez_ice, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 try drawCards(g, .corp, 2);
+                g.systemMsg(.corp, 30053, "Corp uses Spin Doctor to draw 2 cards.", .{});
             }
-        }.rez,
+        }.handle }},
         // Spin Doctor ability not yet wired (was dead in legacy too)
     },
     // --- Phase 3: Consoles ---
@@ -2642,8 +2629,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 3,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Dividends 1: place 1 agenda counter per excess advancement
                 const req = card.advancement_requirement orelse 3;
                 const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
@@ -2654,7 +2642,7 @@ pub const all_cards = [_]CardSpec{
                     }
                 }
             }
-        }.score,
+        }.handle }},
     },
     .{
         .title = "Proprionegation",
@@ -2666,14 +2654,15 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 4,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "When you score this agenda, place 1 agenda counter on it."
                 if (g.corp_scored.items.len > 0) {
                     g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = 1;
                 }
             }
-        }.score,
+        }.handle }},
     },
     .{
         .title = "Sericulture Expansion",
@@ -2685,8 +2674,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 3,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Dividends 1: place 1 agenda counter per excess advancement
                 const req = card.advancement_requirement orelse 3;
                 const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
@@ -2694,7 +2684,7 @@ pub const all_cards = [_]CardSpec{
                     g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess;
                 }
             }
-        }.score,
+        }.handle }},
     },
     .{
         .title = "Embedded Reporting",
@@ -2706,8 +2696,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 3,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Dividends 2: place 2 agenda counters per excess advancement
                 const req = card.advancement_requirement orelse 3;
                 const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
@@ -2715,7 +2706,7 @@ pub const all_cards = [_]CardSpec{
                     g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess * 2;
                 }
             }
-        }.score,
+        }.handle }},
     },
     .{
         .title = "Next Big Thing",
@@ -2727,14 +2718,15 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 5,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, _: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "When scored or stolen, place 1 agenda counter on it."
                 if (g.corp_scored.items.len > 0) {
                     g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = 1;
                 }
             }
-        }.score,
+        }.handle }},
     },
     .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 2 } },
     .{
@@ -2747,8 +2739,9 @@ pub const all_cards = [_]CardSpec{
         .advancement_requirement = 3,
 
         .install = .{ .kind = .corp_remote_only },
-        .on_score_fn = &struct {
-            fn score(g: *Game, card: state.CardInstance) anyerror!void {
+        .event_abilities = &.{.{ .event = .agenda_scored, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // Dividends 1: place 1 agenda counter per excess advancement
                 const req = card.advancement_requirement orelse 3;
                 const excess = if (card.advancement_counter > req) card.advancement_counter - req else 0;
@@ -2756,7 +2749,7 @@ pub const all_cards = [_]CardSpec{
                     g.corp_scored.items[g.corp_scored.items.len - 1].agenda_counter = excess;
                 }
             }
-        }.score,
+        }.handle }},
     },
     // --- Elevation ICE ---
     .{
@@ -2774,8 +2767,9 @@ pub const all_cards = [_]CardSpec{
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
         // "When you rez this ice during a run against this server, you may trash 1 installed trojan program."
-        .on_rez = &struct {
-            fn rez(g: *Game) anyerror!void {
+        .event_abilities = &.{.{ .event = .corp_rez_ice, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 if (g.run == null) return;
                 // Find any installed trojan programs on any ICE
                 var has_trojan = false;
@@ -2818,7 +2812,7 @@ pub const all_cards = [_]CardSpec{
                     }
                 }
             }
-        }.rez,
+        }.handle }},
     },
     .{ .title = "Scatter Field", .side = .corp, .code = 35042, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 3, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
         .{ .kind = .corp_install_from_hq_archives },
@@ -2836,20 +2830,10 @@ pub const all_cards = [_]CardSpec{
         .subroutines = &.{
             // Sub 1: "Corp draws 1 card. Corp may add 1 card from HQ to top of R&D."
             // Draw is automatic; add-to-top is optional (auto-declined in oracle)
-            .{ .kind = .corp_gains_credits, .amount = 0 }, // Simplified: draw handled by card_subroutine_handler
+            .{ .kind = .corp_gains_credits, .amount = 0 }, // Sub 1: draw (simplified, handler removed)
             .{ .kind = .do_net_damage, .amount = 1 },
             .{ .kind = .do_net_damage, .amount = 2 },
         },
-        .card_subroutine_handler = &struct {
-            fn handle(g: *Game, _: *const state.CardInstance, sub_idx: u8) anyerror!void {
-                if (sub_idx == 0) {
-                    // Sub 1: Corp draws 1 card
-                    try drawCards(g, .corp, 1);
-                    g.systemMsg(.corp, 35052, "Corp uses Empiricist to draw 1 card.", .{});
-                    // Optional: add 1 from HQ to top of R&D (auto-declined)
-                }
-            }
-        }.handle,
     },
     .{
         .title = "Mycoweb",
@@ -2921,13 +2905,14 @@ pub const all_cards = [_]CardSpec{
         .subroutines = &.{
             .{ .kind = .end_the_run },
         },
-        .on_rez = &struct {
-            fn rez(g: *Game) anyerror!void {
+        .event_abilities = &.{.{ .event = .corp_rez_ice, .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
                 // "When you rez this ice during a run against this server, purge virus counters."
                 purgeVirusCounters(g);
                 g.systemMsg(.corp, 35079, "Corp uses Flyswatter to purge virus counters.", .{});
             }
-        }.rez,
+        }.handle }},
     },
     .{
         .title = "Lamplighter",
@@ -6391,9 +6376,12 @@ fn applyScoreAgendaChoice(
     const allocator = generated.backing_allocator;
 
     if (lookupCardSpec(scored_agenda)) |spec| {
-        // Queue on_score_fn (e.g. Orbital Superiority meat damage)
-        if (spec.on_score_fn != null) {
-            try generated.pending_effects.append(allocator, .{ .on_score_fn = scored_agenda });
+        // Queue on_score event_abilities (e.g. Orbital Superiority meat damage)
+        for (spec.event_abilities) |ea| {
+            if (ea.event == .agenda_scored) {
+                try generated.pending_effects.append(allocator, .{ .on_score_event_abilities = scored_agenda });
+                break;
+            }
         }
         // Queue on-score effects
         switch (spec.on_score.kind) {
@@ -6848,15 +6836,20 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
             .on_score_rez_ice_free => |scored_agenda| {
                 if (try beginRezIceFreePromptForScore(generated, scored_agenda)) return true;
             },
-            .on_score_fn => |scored_agenda| {
+            .on_score_event_abilities => |scored_agenda| {
                 if (lookupCardSpec(scored_agenda)) |spec| {
-                    if (spec.on_score_fn) |handler| {
-                        try handler(generated, scored_agenda);
-                        if (spec.on_score_msg) |msg| {
-                            generated.systemMsg(.corp, spec.code, "Corp uses {s} to {s}", .{ spec.title, msg });
+                    for (spec.event_abilities) |ea| {
+                        if (ea.event == .agenda_scored) {
+                            // Get a mutable pointer to the scored agenda in corp_scored
+                            var mutable_card: *state.CardInstance = undefined;
+                            if (generated.corp_scored.items.len > 0) {
+                                mutable_card = &generated.corp_scored.items[generated.corp_scored.items.len - 1];
+                            } else break;
+                            try ea.handler(effectContext(generated), mutable_card);
+                            if (generated.game_over) return true;
+                            if (hasActivePrompt(generated)) return true;
+                            break;
                         }
-                        if (generated.game_over) return true;
-                        if (hasActivePrompt(generated)) return true;
                     }
                 }
             },
@@ -8388,16 +8381,12 @@ fn applyRezApproachedIce(generated: *Game) !void {
     if (target.ice.tag_on_rez > 0) {
         if (try addRunnerTag(generated, target.ice.tag_on_rez)) return;
     }
-    // On-rez trigger
+    // On-rez trigger: iterate event_abilities for corp_rez_ice
     const ice = &generated.corp_servers.items[target.server_index].ices.items[target.ice_index];
-    if (ice.code) |code| {
-        if (lookupCardSpecByCode(code)) |spec| {
-            if (spec.on_rez) |handler| {
-                try handler(generated);
-                if (spec.on_rez_msg) |msg| {
-                    generated.systemMsg(.corp, spec.code, "Corp uses {s} to {s}", .{ spec.title, msg });
-                }
-            }
+    for (ice.event_abilities) |ea| {
+        if (ea.event == .corp_rez_ice) {
+            try ea.handler(effectContext(generated), ice);
+            break;
         }
     }
     // Fire corp_rez_ice event (Barry: install on rez)
@@ -8432,15 +8421,11 @@ fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !vo
         generated.systemMsg(.corp, card.code orelse 0, "Corp rezzes {s}.", .{card.title});
     }
 
-    // On-rez trigger (Spin Doctor: draw 2)
-    if (card.code) |code| {
-        if (lookupCardSpecByCode(code)) |spec| {
-            if (spec.on_rez) |handler| {
-                try handler(generated);
-                if (spec.on_rez_msg) |msg| {
-                    generated.systemMsg(.corp, spec.code, "Corp uses {s} to {s}", .{ spec.title, msg });
-                }
-            }
+    // On-rez trigger: iterate event_abilities for corp_rez_ice
+    for (card.event_abilities) |ea| {
+        if (ea.event == .corp_rez_ice) {
+            try ea.handler(effectContext(generated), card);
+            break;
         }
     }
 
@@ -8616,16 +8601,16 @@ fn advanceApproachIcePhase(generated: *Game) !void {
             }
 
             // Check for on-encounter abilities (e.g., Funhouse)
-            const ice = generated.corp_servers.items[target.server_index].ices.items[target.ice_index];
-            if (lookupCardSpec(ice)) |spec| {
-                if (spec.on_encounter) |handler| {
-                    try handler(generated, &ice);
+            const ice = &generated.corp_servers.items[target.server_index].ices.items[target.ice_index];
+            for (ice.event_abilities) |ea| {
+                if (ea.event == .ice_encountered) {
+                    try ea.handler(effectContext(generated), ice);
                     return;
                 }
             }
 
             generated.decision_side = .runner;
-            generated.legal_actions = try encounterActionsForState(allocator, generated, ice);
+            generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
             return;
         }
     }
