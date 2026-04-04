@@ -2415,6 +2415,15 @@ fn extraClickCost(code: u32) u8 {
     };
 }
 
+fn findCorpOperationByTitle(actions: []const state.LegalAction, title: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .play_from_hand or a.side != .corp) continue;
+        const card_title = a.card_title orelse continue;
+        if (std.mem.eql(u8, card_title, title)) return a;
+    }
+    return null;
+}
+
 /// Find a corp non-economy operation (advancement or utility)
 fn findCorpNonEconOperation(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
@@ -2430,8 +2439,8 @@ fn findCorpNonEconOperation(gen: *const generator.Game, actions: []const state.L
     return null;
 }
 
-/// Find runner event by category: run events, economy, or utility/custom
-fn findRunnerEventByCategory(gen: *const generator.Game, actions: []const state.LegalAction, category: enum { run, economy, other }) ?state.LegalAction {
+/// Find runner event by category
+fn findRunnerEventByCategory(gen: *const generator.Game, actions: []const state.LegalAction, category: enum { run, economy, utility, custom }) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind != .play_from_hand or a.side != .runner) continue;
         const title = a.card_title orelse continue;
@@ -2442,10 +2451,12 @@ fn findRunnerEventByCategory(gen: *const generator.Game, actions: []const state.
         const code = card.code orelse 0;
         const is_run = isRunSubtype(card);
         const is_econ = runnerEventGain(code) > 0;
+        const has_prompt = if (generator.lookupCardSpecByCode(code)) |spec| spec.on_prompt_choice != null else false;
         switch (category) {
             .run => if (is_run) return a,
             .economy => if (is_econ) return a,
-            .other => if (!is_run and !is_econ) return a,
+            .utility => if (!is_run and !is_econ and !has_prompt) return a,
+            .custom => if (!is_run and !is_econ and has_prompt) return a,
         }
     }
     return null;
@@ -3144,7 +3155,12 @@ fn pickCorpAction(gen: *generator.Game, actions: []const state.LegalAction) stat
         if (findBasicAction(actions, .corp, .advance_installed)) |a| return a;
     }
 
-    // Play non-economy operations (advancement, utility, custom)
+    // Play advancement operations (Seamless Launch)
+    if (hasAdvanceableCards(gen)) {
+        if (findCorpOperationByTitle(actions, "Seamless Launch")) |a| return a;
+    }
+
+    // Play custom operations (Predictive Planogram, Public Trail, Retribution, etc.)
     if (findCorpNonEconOperation(gen, actions)) |a| return a;
 
     // Draw cards if hand is small
@@ -3195,11 +3211,14 @@ fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) st
         if (findRunActionAny(actions)) |a| return a;
     }
 
-    // Play run events
+    // Play run events (Run subtype)
     if (findRunnerEventByCategory(gen, actions, .run)) |a| return a;
 
-    // Play utility/custom events (VRcation, Mutual Favor, Wildcat Strike, etc.)
-    if (findRunnerEventByCategory(gen, actions, .other)) |a| return a;
+    // Play draw/utility events (VRcation, Ritual, etc. — non-economy, non-run)
+    if (findRunnerEventByCategory(gen, actions, .utility)) |a| return a;
+
+    // Play custom events with prompts (Mutual Favor, Wildcat Strike, etc.)
+    if (findRunnerEventByCategory(gen, actions, .custom)) |a| return a;
 
     // Install remaining programs (utility — Conduit, Leech)
     if (credit >= 1) {
@@ -3230,8 +3249,10 @@ fn findRunnerInstallDripEconomy(gen: *const generator.Game, actions: []const sta
         if (a.kind != .play_from_hand or a.side != .runner) continue;
         const title = a.card_title orelse continue;
         const card = findCardInHand(gen, title, .runner) orelse continue;
-        // Drip economy: cards with credit counters (Telework Contract, Pennyshaver, etc.)
-        if (card.initial_credit_counters > 0 or card.abilities.len > 0) return a;
+        // Drip economy: resources/hardware with click-to-take abilities and credit counters
+        // (Telework Contract, Pennyshaver) — NOT passive resources like Side Hustle/Open Market
+        if (card.abilities.len > 0 and card.initial_credit_counters > 0) return a;
+        if (card.abilities.len > 0 and card.runner_install.kind == .hardware) return a;
     }
     return null;
 }
