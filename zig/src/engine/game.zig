@@ -34,9 +34,7 @@ pub const CardSpec = struct {
     static_abilities: []const state.StaticAbility = &.{},
     event_abilities: []const state.EventAbility = &.{},
     installed_ability: state.InstalledAbilitySpec = .{},
-    pump_ability: state.InstalledAbilitySpec = .{},
     subroutines: []const state.SubroutineSpec = &.{},
-    runner_abilities: []const state.RunnerAbilitySpec = &.{}, // Runner abilities printed on ICE cards
     on_score: state.AgendaEffectSpec = .{},
     on_steal: state.AgendaEffectSpec = .{},
     // Card-specific subroutine handler - for complex subroutines that need custom logic
@@ -618,9 +616,6 @@ pub const all_cards = [_]CardSpec{
             .{ .kind = .install_ice_from_hq_archives },
             .{ .kind = .end_the_run },
             .{ .kind = .end_the_run },
-        },
-        .runner_abilities = &.{
-            .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
         .on_prompt_choice = &struct {
@@ -1523,10 +1518,7 @@ pub const all_cards = [_]CardSpec{
                 try drawCards(g, .corp, 2);
             }
         }.rez,
-        .installed_ability = .{
-            .kind = .remove_from_game_shuffle,
-            .click_cost = 0, // no click cost — it's a paid ability usable anytime
-        },
+        // Spin Doctor ability not yet wired (was dead in legacy too)
     },
     // --- Phase 3: Consoles ---
     .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }}, .installed_ability = .{ .trash_access_hand_cost = 2 } },
@@ -1655,9 +1647,6 @@ pub const all_cards = [_]CardSpec{
             .{ .kind = .trash_program_or_etr }, // trash 1 installed Runner card
             .{ .kind = .corp_install_from_hq_archives }, // install a card from HQ or Archives
             .{ .kind = .prevent_steal_trash }, // prevent stealing/trashing for rest of run
-        },
-        .runner_abilities = &.{
-            .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
     },
@@ -2505,9 +2494,6 @@ pub const all_cards = [_]CardSpec{
             .{ .kind = .trash_program_or_etr },
             .{ .kind = .do_brain_damage, .amount = 1 },
         },
-        .runner_abilities = &.{
-            .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
-        },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
         // "When you rez this ice during a run against this server, you may trash 1 installed trojan program."
         .on_rez = &struct {
@@ -2688,8 +2674,19 @@ pub const all_cards = [_]CardSpec{
         .cost = 1,
         .trash_cost = 1,
         .install = .{ .kind = .corp_remote_only },
-        // "3 clicks + trash: Gain 9 credits." (corp click ability, handled by corp installed ability)
-        .installed_ability = .{ .kind = .click_trash_for_credits, .click_cost = 3, .credit_cost = 9 },
+        // "3 clicks + trash: Gain 9 credits."
+        .abilities = &.{.{
+            .cost = .{ .clicks = 3 },
+            .label = "Gain 9 [Credits]",
+            .on_use = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    g.corp_credit += 9;
+                    g.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to gain 9 [credits].", .{card.title});
+                    try trashCorpServerCardByInstanceId(g, card.instance_id);
+                }
+            }.handle,
+        }},
     },
     .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
         .kind = .start_of_turn_credits,
@@ -4291,10 +4288,9 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .runner_install = .{ .kind = .resource, .mu_cost = 0 },
         .installed_ability = .{
-            .initial_credit_counters = 1, // 1 credit on install
-            .credit_on_run_start = true, // place 1 credit when any run begins
-            .auto_trash_at_credits = 6, // auto-trash when 6+ credits
-            .draw_on_auto_trash = 1, // draw 1 on auto-trash
+            .initial_credit_counters = 1,
+            .auto_trash_at_credits = 6,
+            .draw_on_auto_trash = 1,
         },
         .event_abilities = &.{.{
             .event = .run_begins,
@@ -10125,24 +10121,24 @@ fn encounterPumpHandler(ctx: *state.EffectContext, card: *state.CardInstance) an
 
     var icebreaker = card;
 
-    const pump_ability = icebreaker.abilities[1];
-    if (pump_ability.pump_can_use) |can_use| {
+    const pump_spec = icebreaker.abilities[1];
+    if (pump_spec.pump_can_use) |can_use| {
         if (!can_use(effectContextConst(g), icebreaker)) return error.InsufficientCredits;
     }
     const pump_cost = applyCostModifier(
-        pump_ability.credit_cost,
+        pump_spec.credit_cost,
         sumStaticEffects(g, .runner, .pump_cost, icebreaker),
     );
     if (g.runner_credit < pump_cost) return error.InsufficientCredits;
     g.runner_credit -= pump_cost;
 
     const current = effectiveStrength(icebreaker.*);
-    const pump_amount_val = if (pump_ability.pump_amount_fn) |amount_fn|
+    const pump_amount_val = if (pump_spec.pump_amount_fn) |amount_fn|
         amount_fn(effectContextConst(g), icebreaker)
     else
-        pump_ability.pump_amount;
+        pump_spec.pump_amount;
     icebreaker.current_strength = current + pump_amount_val;
-    if (pump_ability.on_pump) |callback| {
+    if (pump_spec.on_pump) |callback| {
         try callback(effectContext(g), icebreaker);
     }
 
@@ -11392,9 +11388,7 @@ fn makeCardInstance(
         .static_abilities = spec.static_abilities,
         .event_abilities = spec.event_abilities,
         .installed_ability = spec.installed_ability,
-        .pump_ability = spec.pump_ability,
         .subroutines = spec.subroutines,
-        .runner_abilities = spec.runner_abilities,
         .advancement_counter = 0,
         .credit_counter = 0,
         .abilities_used_this_turn = 0,

@@ -165,17 +165,6 @@ pub const AgendaEffectSpec = struct {
     hand_size_bonus: u8 = 0, // Superconducting Hub: gain N hand size on score
 };
 
-// Runner abilities printed on ICE cards (e.g., bioroid break)
-pub const RunnerAbilityKind = enum(u8) {
-    none,
-    bioroid_break, // Lose X clicks to break Y subroutines (e.g., Brân 1.0)
-};
-
-pub const RunnerAbilitySpec = struct {
-    kind: RunnerAbilityKind = .none,
-    click_cost: u8 = 0, // Number of clicks to lose
-    break_quantity: u8 = 0, // Number of subroutines to break
-};
 
 pub const CorpPlaySpec = struct {
     kind: CorpPlayKind = .none,
@@ -270,47 +259,25 @@ pub const StaticAbility = struct {
 };
 
 pub const InstalledAbilityCallback = *const fn (*EffectContext, *CardInstance) anyerror!void;
-pub const InstalledAbilityConditionFn = *const fn (*const EffectContext, *const CardInstance) bool;
-pub const InstalledAbilityValueFn = *const fn (*const EffectContext, *const CardInstance) u8;
-pub const InstalledAbilityLabelFn = *const fn (std.mem.Allocator, CardInstance) anyerror![]const u8;
 
 pub const InstalledAbilitySpec = struct {
     kind: InstalledAbilityKind = .none,
-    click_cost: u8 = 0,
-    credit_cost: u16 = 0,
     initial_credit_counters: u16 = 0,
-    place_credits_amount: u16 = 0,
     take_credits_amount: u16 = 0,
-    break_subroutine_count: u8 = 0,
-    pump_strength_amount: u8 = 0,
     trash_on_empty: bool = false,
-    once_per_turn: bool = false,
     on_install: ?InstalledAbilityCallback = null,
     on_take: ?InstalledAbilityCallback = null,
     on_empty: ?InstalledAbilityCallback = null,
-    on_break: ?InstalledAbilityCallback = null,
-    on_pump: ?InstalledAbilityCallback = null,
-    on_use: ?InstalledAbilityCallback = null,
-    can_use: ?InstalledAbilityConditionFn = null,
-    amount_fn: ?InstalledAbilityValueFn = null,
-    label_fn: ?InstalledAbilityLabelFn = null,
-    allow_opponent_use: bool = false,
     click_draw_bonus: u8 = 0,
-    hq_access_bonus: u8 = 0,
-    virus_ice_strength_reduction: u8 = 0, // Leech: spend 1 virus for -N ICE strength
-    tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements: give N tags if agenda stolen from server
-    trash_for_virus_credits: u8 = 0, // Fermenter: gain N credits per virus counter on click+trash
-    trojan_break_any: bool = false, // Botulus: spend virus counter to break any subroutine
-    trojan_derez_threshold: u8 = 0, // Tranquilizer: derez host ICE at N+ virus counters
-    // Elevation pack fields
-    trojan_adds_all_subtypes: bool = false, // Chromatophores: host ICE gains all 3 subtypes
-    credit_on_run_start: bool = false, // Side Hustle: place 1 credit when any run starts
-    auto_trash_at_credits: u8 = 0, // Side Hustle: auto-trash + take all credits at N+ hosted credits
-    draw_on_auto_trash: u8 = 0, // Side Hustle: draw N cards when auto-trashed at threshold
-    // Access-time abilities (Carnivore, Gourmand)
-    trash_access_hand_cost: u8 = 0, // Carnivore: trash N cards from hand to trash accessed card
-    trash_access_self_trash: bool = false, // Gourmand: trash self to trash accessed non-agenda + draw
-    trash_access_draw: u8 = 0, // Gourmand: draw N cards after trashing accessed card
+    tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements
+    trojan_break_any: bool = false, // Botulus
+    trojan_derez_threshold: u8 = 0, // Tranquilizer
+    trojan_adds_all_subtypes: bool = false, // Chromatophores
+    auto_trash_at_credits: u8 = 0, // Side Hustle
+    draw_on_auto_trash: u8 = 0, // Side Hustle
+    trash_access_hand_cost: u8 = 0, // Carnivore
+    trash_access_self_trash: bool = false, // Gourmand
+    trash_access_draw: u8 = 0, // Gourmand
 };
 
 pub const GameEvent = enum(u8) {
@@ -385,9 +352,7 @@ pub const CardInstance = struct {
     static_abilities: []const StaticAbility = &.{},
     event_abilities: []const EventAbility = &.{},
     installed_ability: InstalledAbilitySpec = .{},
-    pump_ability: InstalledAbilitySpec = .{},
     subroutines: []const SubroutineSpec = &.{},
-    runner_abilities: []const RunnerAbilitySpec = &.{}, // Runner abilities printed on ICE cards
     rezzed: bool = false,
     current_strength: ?u8 = null, // Boosted strength during encounter
     advancement_counter: u8 = 0,
