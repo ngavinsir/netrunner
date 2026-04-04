@@ -219,6 +219,27 @@ pub const RunnerInstallSpec = struct {
 
 pub const EffectContext = anyopaque;
 
+pub const AbilityRef = struct {
+    source_instance_id: u32,
+    ability_index: u8 = 0,
+};
+
+pub const AbilityCost = struct {
+    clicks: u8 = 0,
+    credits: u16 = 0,
+};
+
+pub const AbilitySpec = struct {
+    req: ?*const fn (*const EffectContext, *const CardInstance) bool = null,
+    on_use: ?*const fn (*EffectContext, *CardInstance) anyerror!void = null,
+    choices_fn: ?*const fn (*EffectContext, *CardInstance) anyerror!void = null,
+    cost: ?AbilityCost = null,
+    label: ?[]const u8 = null,
+    side: ?Side = null,
+    allow_opponent_use: bool = false,
+    once_per_turn: bool = false,
+};
+
 pub const StaticAbilityKind = enum(u8) {
     mu,
     hand_size,
@@ -328,10 +349,13 @@ pub const PromptState = struct {
     prompt_type: []const u8,
     choices: []const PromptChoice,
     source_card: ?CardInstance = null,
+    ability_ref: ?AbilityRef = null,
+    on_choice: ?*const fn (*EffectContext, []const u8) anyerror!void = null,
     min_choices: u8 = 0,
 };
 
 pub const CardInstance = struct {
+    instance_id: u32 = 0,
     title: []const u8,
     printed_title: ?[]const u8 = null,
     code: ?u32 = null,
@@ -348,6 +372,7 @@ pub const CardInstance = struct {
     access: AccessSpec = .{},
     install: InstallSpec = .{},
     runner_install: RunnerInstallSpec = .{},
+    abilities: []const AbilitySpec = &.{},
     static_abilities: []const StaticAbility = &.{},
     event_abilities: []const EventAbility = &.{},
     installed_ability: InstalledAbilitySpec = .{},
@@ -361,7 +386,7 @@ pub const CardInstance = struct {
     virus_counter: u16 = 0,
     power_counter: u16 = 0,
     agenda_counter: u8 = 0,
-    ability_used_this_turn: bool = false,
+    abilities_used_this_turn: u16 = 0,
     installed_this_turn: bool = false, // Seamless Launch: cannot target cards installed this turn
     used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
@@ -511,6 +536,7 @@ pub const LegalAction = struct {
     card_title: ?[]const u8 = null,
     basic_action: ?BasicAction = null,
     installed_ability: ?InstalledAbilityKind = null,
+    ability_ref: ?AbilityRef = null,
     label: ?[]const u8 = null,
 };
 
