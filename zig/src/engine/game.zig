@@ -622,7 +622,7 @@ pub const all_cards = [_]CardSpec{
         .runner_abilities = &.{
             .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
         },
-        .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter }},
+        .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 try applyBranInstallIceChoice(g, choice_text);
@@ -892,29 +892,17 @@ pub const all_cards = [_]CardSpec{
         }.handle,
     }} },
     .{ .title = "Verbal Plasticity", .side = .runner, .code = 30034, .card_type = "Resource", .cost = 3, .runner_install = .{ .kind = .resource }, .installed_ability = .{ .click_draw_bonus = 1 } },
-    .{ .title = "Carmen", .side = .runner, .code = 30015, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer" }, .cost = 5, .strength = 2, .runner_install = .{ .kind = .program, .install_cost_reduction_if_successful_run = 2 }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 1,
-        .break_subroutine_count = 1,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 2, .pump_strength_amount = 3 }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    .{ .title = "Carmen", .side = .runner, .code = 30015, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer" }, .cost = 5, .strength = 2, .runner_install = .{ .kind = .program, .install_cost_reduction_if_successful_run = 2 }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 2, .pump_amount = 3 },
     } },
-    .{ .title = "Cleaver", .side = .runner, .code = 30006, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Fracter" }, .cost = 3, .strength = 3, .runner_install = .{ .kind = .program }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 1,
-        .break_subroutine_count = 2,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 2, .pump_strength_amount = 1 }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    .{ .title = "Cleaver", .side = .runner, .code = 30006, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Fracter" }, .cost = 3, .strength = 3, .runner_install = .{ .kind = .program }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 2 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 2, .pump_amount = 1 },
     } },
-    .{ .title = "Mayfly", .side = .runner, .code = 30032, .card_type = "Program", .subtypes = &.{ "Icebreaker", "AI" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 1,
-        .break_subroutine_count = 1,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 1, .pump_strength_amount = 1 }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    .{ .title = "Mayfly", .side = .runner, .code = 30032, .card_type = "Program", .subtypes = &.{ "Icebreaker", "AI" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program, .mu_cost = 2 }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 1, .pump_amount = 1 },
     }, .event_abilities = &.{.{
         .event = .run_ends,
         .handler = &struct {
@@ -934,21 +922,13 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Unity", .side = .runner, .code = 30026, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Decoder" }, .cost = 3, .strength = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 1,
-        .break_subroutine_count = 1,
-    }, .pump_ability = .{
-        .kind = .pump_strength,
-        .credit_cost = 1,
-        .amount_fn = &struct {
+    .{ .title = "Unity", .side = .runner, .code = 30026, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Decoder" }, .cost = 3, .strength = 1, .runner_install = .{ .kind = .program }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 1, .pump_amount_fn = &struct {
             fn amount(ctx: *const state.EffectContext, _: *const state.CardInstance) u8 {
                 return @intCast(countInstalledIcebreakers(gameFromConstEffectContext(ctx)));
             }
-        }.amount,
-    }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+        }.amount },
     } },
     .{ .title = "Conduit", .side = .runner, .code = 30024, .card_type = "Program", .cost = 4, .runner_install = .{ .kind = .program }, .static_abilities = &.{.{
         .kind = .rd_access,
@@ -989,10 +969,9 @@ pub const all_cards = [_]CardSpec{
                 card.virus_counter += 1;
             }
         }.handle,
-    }}, .installed_ability = .{
-        .virus_ice_strength_reduction = 1,
-    }, .abilities = &.{.{
+    }}, .abilities = &.{.{
         .on_use = &encounterLeechHandler,
+        .virus_strength_reduction = 1,
         .req = &struct {
             fn check(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
                 if (card.virus_counter == 0) return false;
@@ -1001,13 +980,9 @@ pub const all_cards = [_]CardSpec{
         }.check,
     }} },
     // --- System Gateway cards beyond beginner/intermediate ---
-    .{ .title = "Buzzsaw", .side = .runner, .code = 30005, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Decoder" }, .cost = 4, .strength = 3, .runner_install = .{ .kind = .program }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 1,
-        .break_subroutine_count = 2,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 3, .pump_strength_amount = 1 }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    .{ .title = "Buzzsaw", .side = .runner, .code = 30005, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Decoder" }, .cost = 4, .strength = 3, .runner_install = .{ .kind = .program }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 2 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 3, .pump_amount = 1 },
     } },
     .{ .title = "Echelon", .side = .runner, .code = 30025, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer" }, .cost = 3, .strength = 0, .runner_install = .{ .kind = .program }, .static_abilities = &.{.{
         .kind = .self_strength,
@@ -1017,13 +992,9 @@ pub const all_cards = [_]CardSpec{
                 return @intCast(countInstalledIcebreakers(gameFromConstEffectContext(ctx)));
             }
         }.req,
-    }}, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 1,
-        .break_subroutine_count = 1,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 3, .pump_strength_amount = 2 }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    }}, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 3, .pump_amount = 2 },
     } },
     .{ .title = "Marjanah", .side = .runner, .code = 30016, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Fracter" }, .cost = 0, .strength = 1, .runner_install = .{ .kind = .program }, .static_abilities = &.{.{
         .kind = .break_cost,
@@ -1036,13 +1007,9 @@ pub const all_cards = [_]CardSpec{
                 return if (modified.code.? == source.code.? and g.runner_successful_run_this_turn) 1 else 0;
             }
         }.req,
-    }}, .installed_ability = .{
-        .kind = .break_subroutine,
-        .credit_cost = 2,
-        .break_subroutine_count = 1,
-    }, .pump_ability = .{ .kind = .pump_strength, .credit_cost = 1, .pump_strength_amount = 1 }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    }}, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 2, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 1, .pump_amount = 1 },
     } },
     .{ .title = "T400 Memory Diamond", .side = .runner, .code = 30031, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{
         .{ .kind = .mu, .value = 1 },
@@ -1692,7 +1659,7 @@ pub const all_cards = [_]CardSpec{
         .runner_abilities = &.{
             .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
         },
-        .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter }},
+        .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
     },
     .{
         .title = "Anoetic Void",
@@ -2541,7 +2508,7 @@ pub const all_cards = [_]CardSpec{
         .runner_abilities = &.{
             .{ .kind = .bioroid_break, .click_cost = 1, .break_quantity = 1 },
         },
-        .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter }},
+        .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
         // "When you rez this ice during a run against this server, you may trash 1 installed trojan program."
         .on_rez = &struct {
             fn rez(g: *Game) anyerror!void {
@@ -4016,32 +3983,23 @@ pub const all_cards = [_]CardSpec{
         .installed_ability = .{ .trash_access_self_trash = true, .trash_access_draw = 1 },
     },
     .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .break_subroutine_count = 1,
-        .credit_cost = 1,
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 2;
             }
         }.handle,
-    }, .pump_ability = .{
-        .kind = .pump_strength,
-        .pump_strength_amount = 2,
-        .credit_cost = 0,
-        .can_use = &struct {
+    }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 0, .pump_amount = 2, .pump_can_use = &struct {
             fn canUse(_: *const state.EffectContext, card: *const state.CardInstance) bool {
                 return card.virus_counter > 0;
             }
-        }.canUse,
-        .on_pump = &struct {
+        }.canUse, .on_pump = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 if (card.virus_counter == 0) return error.InsufficientCredits;
                 card.virus_counter -= 1;
             }
-        }.handle,
-    }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+        }.handle },
     } },
     .{ .title = "Rising Tide", .side = .runner, .code = 35009, .card_type = "Program", .subtypes = &.{ "Fracter", "Icebreaker" }, .cost = 1, .strength = 1, .runner_install = .{ .kind = .program }, .static_abilities = &.{.{
         .kind = .self_strength,
@@ -4051,29 +4009,13 @@ pub const all_cards = [_]CardSpec{
                 return countFractersInHeap(gameFromConstEffectContext(ctx));
             }
         }.req,
-    }}, .installed_ability = .{
-        .kind = .break_subroutine,
-        .break_subroutine_count = 1,
-        .credit_cost = 1,
-    }, .pump_ability = .{
-        .kind = .pump_strength,
-        .pump_strength_amount = 1,
-        .credit_cost = 1,
-    }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    }}, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 1, .pump_amount = 1 },
     } },
-    .{ .title = "Sang Kancil", .side = .runner, .code = 35020, .card_type = "Program", .subtypes = &.{ "Decoder", "Icebreaker" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
-        .kind = .break_subroutine,
-        .break_subroutine_count = 1,
-        .credit_cost = 1,
-    }, .pump_ability = .{
-        .kind = .pump_strength,
-        .pump_strength_amount = 2,
-        .credit_cost = 3,
-    }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    .{ .title = "Sang Kancil", .side = .runner, .code = 35020, .card_type = "Program", .subtypes = &.{ "Decoder", "Icebreaker" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 3, .pump_amount = 2 },
     }, .static_abilities = &.{.{
         .kind = .pump_cost,
         .value = -2,
@@ -4142,17 +4084,9 @@ pub const all_cards = [_]CardSpec{
                 return @intCast(countInstalledIcebreakers(gameFromConstEffectContext(ctx)));
             }
         }.req,
-    }}, .installed_ability = .{
-        .kind = .break_subroutine,
-        .break_subroutine_count = 1,
-        .credit_cost = 1,
-    }, .pump_ability = .{
-        .kind = .pump_strength,
-        .pump_strength_amount = 2,
-        .credit_cost = 2,
-    }, .abilities = &.{
-        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter },
-        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter },
+    }}, .abilities = &.{
+        .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
+        .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 2, .pump_amount = 2 },
     } },
     // --- Elevation Runner Resources ---
     .{
@@ -7666,24 +7600,14 @@ fn applyUseSubroutine(
         std.mem.eql(u8, action.card_title.?, ice.title);
 
     if (is_bioroid_ability) {
-        // Find the bioroid ability on the ICE
-        var found_ability: ?state.RunnerAbilitySpec = null;
-        for (ice.runner_abilities) |ability| {
-            if (ability.kind == .bioroid_break) {
-                found_ability = ability;
-                break;
-            }
-        }
-        const ability = found_ability orelse return error.NoBioroidAbility;
+        if (ice.abilities.len == 0) return error.NoBioroidAbility;
+        const bioroid_ability = ice.abilities[0];
+        const click_cost = if (bioroid_ability.cost) |c| c.clicks else return error.NoBioroidAbility;
 
-        // Check if runner has enough clicks
-        if (generated.runner_click < ability.click_cost) return error.InsufficientClicks;
+        if (generated.runner_click < click_cost) return error.InsufficientClicks;
+        generated.runner_click -= click_cost;
 
-        // Spend clicks
-        generated.runner_click -= ability.click_cost;
-
-        // Break subroutines (up to break_quantity, or fewer if not enough unbroken subs)
-        const break_qty = ability.break_quantity;
+        const break_qty = bioroid_ability.break_count;
         var broken_count: u8 = 0;
         for (ice.subroutines, 0..) |_, sub_idx| {
             if (broken_count >= break_qty) break;
@@ -7724,10 +7648,9 @@ fn applyUseSubroutine(
             if (sub_idx >= ice.subroutines.len) return error.InvalidSubroutine;
 
             // Check if we have enough credits
-            if (generated.runner_credit < icebreaker.installed_ability.credit_cost) return error.InsufficientCredits;
-
-            // Spend credits
-            generated.runner_credit -= icebreaker.installed_ability.credit_cost;
+            const break_credit = if (icebreaker.abilities.len > 0) icebreaker.abilities[0].credit_cost else 0;
+            if (generated.runner_credit < break_credit) return error.InsufficientCredits;
+            generated.runner_credit -= break_credit;
 
             // Mark subroutine as broken
             ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(sub_idx)));
@@ -8727,7 +8650,7 @@ fn openBreakSubPrompt(
     subs_selected: u8,
 ) !void {
     const allocator = generated.arena.allocator();
-    const break_count = @max(@as(u8, 1), breaker.installed_ability.break_subroutine_count);
+    const break_count = if (breaker.abilities.len > 0) @max(@as(u8, 1), breaker.abilities[0].break_count) else 1;
 
     // Build choices: each unbroken sub + "Done"
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
@@ -10174,15 +10097,16 @@ fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
     const ice_str = effectiveIceStrength(ice.*, run.server, run.ice_strength_modifier);
     if (effectiveStrength(icebreaker.*) < ice_str) return error.InsufficientStrength;
 
+    const break_ability = icebreaker.abilities[0];
     const credit_cost = applyCostModifier(
-        icebreaker.installed_ability.credit_cost,
+        break_ability.credit_cost,
         sumStaticEffects(g, .runner, .break_cost, icebreaker),
     );
     if (g.runner_credit < credit_cost) return error.InsufficientCredits;
     g.runner_credit -= credit_cost;
 
     icebreaker.used_break_this_run = true;
-    if (icebreaker.installed_ability.on_break) |callback| {
+    if (break_ability.on_break) |callback| {
         try callback(effectContext(g), icebreaker);
     }
 
@@ -10201,23 +10125,24 @@ fn encounterPumpHandler(ctx: *state.EffectContext, card: *state.CardInstance) an
 
     var icebreaker = card;
 
-    if (icebreaker.pump_ability.can_use) |can_use| {
+    const pump_ability = icebreaker.abilities[1];
+    if (pump_ability.pump_can_use) |can_use| {
         if (!can_use(effectContextConst(g), icebreaker)) return error.InsufficientCredits;
     }
     const pump_cost = applyCostModifier(
-        icebreaker.pump_ability.credit_cost,
+        pump_ability.credit_cost,
         sumStaticEffects(g, .runner, .pump_cost, icebreaker),
     );
     if (g.runner_credit < pump_cost) return error.InsufficientCredits;
     g.runner_credit -= pump_cost;
 
     const current = effectiveStrength(icebreaker.*);
-    const pump_amount = if (icebreaker.pump_ability.amount_fn) |amount_fn|
+    const pump_amount_val = if (pump_ability.pump_amount_fn) |amount_fn|
         amount_fn(effectContextConst(g), icebreaker)
     else
-        icebreaker.pump_ability.pump_strength_amount;
-    icebreaker.current_strength = current + pump_amount;
-    if (icebreaker.pump_ability.on_pump) |callback| {
+        pump_ability.pump_amount;
+    icebreaker.current_strength = current + pump_amount_val;
+    if (pump_ability.on_pump) |callback| {
         try callback(effectContext(g), icebreaker);
     }
 
@@ -10240,10 +10165,11 @@ fn encounterLeechHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
     const g = gameFromEffectContext(ctx);
     const allocator = g.arena.allocator();
     if (g.run == null) return error.NoRunInProgress;
+    const leech_ability = card.abilities[0];
     card.virus_counter -= 1;
-    g.run.?.ice_strength_modifier -= @intCast(card.installed_ability.virus_ice_strength_reduction);
+    g.run.?.ice_strength_modifier -= @intCast(leech_ability.virus_strength_reduction);
     g.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to give ICE -{d} strength.", .{
-        card.title, card.installed_ability.virus_ice_strength_reduction,
+        card.title, leech_ability.virus_strength_reduction,
     });
     const run = g.run.?;
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
@@ -10290,22 +10216,17 @@ fn encounterBioroidHandler(ctx: *state.EffectContext, _: *state.CardInstance) an
     const actual_ice_idx = ice_count - 1 - current_ice_idx;
     var ice = &server.ices.items[actual_ice_idx];
 
-    // Find the bioroid ability on the ICE
-    var found_ability: ?state.RunnerAbilitySpec = null;
-    for (ice.runner_abilities) |ability| {
-        if (ability.kind == .bioroid_break) {
-            found_ability = ability;
-            break;
-        }
-    }
-    const ability = found_ability orelse return error.NoBioroidAbility;
+    // Read bioroid params from ICE's abilities[0]
+    if (ice.abilities.len == 0) return error.NoBioroidAbility;
+    const bioroid_ability = ice.abilities[0];
+    const click_cost = if (bioroid_ability.cost) |c| c.clicks else return error.NoBioroidAbility;
 
-    if (g.runner_click < ability.click_cost) return error.InsufficientClicks;
-    g.runner_click -= ability.click_cost;
+    if (g.runner_click < click_cost) return error.InsufficientClicks;
+    g.runner_click -= click_cost;
 
     var broken_count: u8 = 0;
     for (ice.subroutines, 0..) |_, sub_idx| {
-        if (broken_count >= ability.break_quantity) break;
+        if (broken_count >= bioroid_ability.break_count) break;
         const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(sub_idx))) != 0;
         if (!is_broken) {
             ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(sub_idx)));
@@ -10337,10 +10258,10 @@ fn encounterActionsForState(
     if (unbroken_count > 0) {
         for (generated.runner_rig_program.items) |card| {
             if (!isIcebreaker(card)) continue;
-            if (card.abilities.len < 1) continue; // abilities[0] = break
+            if (card.abilities.len < 1) continue;
             if (!canBreakIceType(card, ice)) continue;
             if (effectiveStrength(card) < ice_str) continue;
-            var break_cost = card.installed_ability.credit_cost;
+            var break_cost = card.abilities[0].credit_cost;
             break_cost = applyCostModifier(break_cost, sumStaticEffects(generated, .runner, .break_cost, &card));
             if (generated.runner_credit < break_cost) continue;
             breaker_count += 1;
@@ -10358,18 +10279,19 @@ fn encounterActionsForState(
         // Pump: icebreakers with abilities[1] = pump
         for (generated.runner_rig_program.items) |card| {
             if (!isIcebreaker(card)) continue;
-            if (card.abilities.len < 2) continue; // abilities[1] = pump
+            if (card.abilities.len < 2) continue;
+            const pump_spec = card.abilities[1];
             if (!canBreakIceType(card, ice)) continue;
-            if (card.pump_ability.can_use) |can_use| {
+            if (pump_spec.pump_can_use) |can_use| {
                 if (!can_use(effectContextConst(generated), &card)) continue;
             }
-            const pump_cost = applyCostModifier(card.pump_ability.credit_cost, sumStaticEffects(generated, .runner, .pump_cost, &card));
+            const pump_cost = applyCostModifier(pump_spec.credit_cost, sumStaticEffects(generated, .runner, .pump_cost, &card));
             if (generated.runner_credit < pump_cost) continue;
             pump_count += 1;
         }
-        // Leech: programs with virus_ice_strength_reduction and virus counters
+        // Leech: programs with virus_strength_reduction ability
         for (generated.runner_rig_program.items) |card| {
-            if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
+            if (card.abilities.len > 0 and card.abilities[0].virus_strength_reduction > 0 and card.virus_counter > 0) {
                 leech_count += 1;
             }
         }
@@ -10401,9 +10323,10 @@ fn encounterActionsForState(
             if (card.abilities.len < 1) continue;
             if (!canBreakIceType(card, ice)) continue;
             if (effectiveStrength(card) < ice_str) continue;
-            const break_count = @max(@as(u16, 1), @as(u16, card.installed_ability.break_subroutine_count));
+            const break_spec = card.abilities[0];
+            const break_count = @max(@as(u16, 1), @as(u16, break_spec.break_count));
             const activations = (unbroken_count + break_count - 1) / break_count;
-            const total_cost = activations * card.installed_ability.credit_cost;
+            const total_cost = activations * break_spec.credit_cost;
             if (generated.runner_credit < total_cost) continue;
 
             const combined_idx = generated.runner_rig_resources.items.len + card_idx;
@@ -10425,11 +10348,12 @@ fn encounterActionsForState(
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
             if (!isIcebreaker(card)) continue;
             if (card.abilities.len < 2) continue;
+            const pump_spec = card.abilities[1];
             if (!canBreakIceType(card, ice)) continue;
-            if (card.pump_ability.can_use) |can_use| {
+            if (pump_spec.pump_can_use) |can_use| {
                 if (!can_use(effectContextConst(generated), &card)) continue;
             }
-            if (generated.runner_credit < card.pump_ability.credit_cost) continue;
+            if (generated.runner_credit < pump_spec.credit_cost) continue;
 
             const combined_idx = generated.runner_rig_resources.items.len + card_idx;
             actions[next] = .{
@@ -10438,14 +10362,14 @@ fn encounterActionsForState(
                 .card_index = @intCast(combined_idx),
                 .card_title = try allocator.dupe(u8, card.title),
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 1 },
-                .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ card.pump_ability.pump_strength_amount, card.title }),
+                .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ pump_spec.pump_amount, card.title }),
             };
             next += 1;
         }
 
         // Leech: virus ICE strength reduction
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
-            if (card.installed_ability.virus_ice_strength_reduction > 0 and card.virus_counter > 0) {
+            if (card.abilities.len > 0 and card.abilities[0].virus_strength_reduction > 0 and card.virus_counter > 0) {
                 const combined_idx = generated.runner_rig_resources.items.len + card_idx;
                 actions[next] = .{
                     .kind = .use_installed_ability,
@@ -10453,7 +10377,7 @@ fn encounterActionsForState(
                     .card_index = @intCast(combined_idx),
                     .card_title = try allocator.dupe(u8, card.title),
                     .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                    .label = try std.fmt.allocPrint(allocator, "Give -{d} strength to {s}", .{ card.installed_ability.virus_ice_strength_reduction, ice.title }),
+                    .label = try std.fmt.allocPrint(allocator, "Give -{d} strength to {s}", .{ card.abilities[0].virus_strength_reduction, ice.title }),
                 };
                 next += 1;
             }

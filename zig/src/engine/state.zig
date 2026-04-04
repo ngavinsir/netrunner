@@ -238,6 +238,15 @@ pub const AbilitySpec = struct {
     side: ?Side = null,
     allow_opponent_use: bool = false,
     once_per_turn: bool = false,
+    // Encounter parameters (used by shared break/pump/bioroid handlers):
+    credit_cost: u16 = 0,
+    break_count: u8 = 1,
+    pump_amount: u8 = 0,
+    pump_amount_fn: ?*const fn (*const EffectContext, *const CardInstance) u8 = null,
+    pump_can_use: ?*const fn (*const EffectContext, *const CardInstance) bool = null,
+    on_break: ?*const fn (*EffectContext, *CardInstance) anyerror!void = null,
+    on_pump: ?*const fn (*EffectContext, *CardInstance) anyerror!void = null,
+    virus_strength_reduction: u8 = 0,
 };
 
 pub const StaticAbilityKind = enum(u8) {
