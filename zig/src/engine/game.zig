@@ -7707,9 +7707,7 @@ fn applyUseSubroutine(
             const icebreaker_idx = found_icebreaker orelse return error.NotAnIcebreaker;
             const icebreaker = generated.runner_rig_program.items[icebreaker_idx];
 
-            // Check if it's actually an icebreaker with break ability
             if (!isIcebreaker(icebreaker)) return error.NotAnIcebreaker;
-            if (icebreaker.installed_ability.kind != .break_subroutine) return error.UnsupportedAbility;
 
             // Validate subtype matching
             if (!canBreakIceType(icebreaker, ice.*)) return error.CannotBreakIceType;
@@ -10172,7 +10170,6 @@ fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
     const ice = &server.ices.items[actual_ice_idx];
 
     if (!isIcebreaker(icebreaker.*)) return error.NotAnIcebreaker;
-    if (icebreaker.installed_ability.kind != .break_subroutine) return error.UnsupportedAbility;
     if (!canBreakIceType(icebreaker.*, ice.*)) return error.CannotBreakIceType;
     const ice_str = effectiveIceStrength(ice.*, run.server, run.ice_strength_modifier);
     if (effectiveStrength(icebreaker.*) < ice_str) return error.InsufficientStrength;
