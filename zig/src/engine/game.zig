@@ -10551,68 +10551,20 @@ fn corpOpeningActionsForState(
         };
         next += 1;
     }
-    for (servers, 0..) |server, server_index| {
-        const display_name = try displayNameForServer(allocator, server.name, server_index);
-        for (server.content.items, 0..) |card, content_index| {
-            if (hasCorpInstalledAbilityAction(card)) {
-                actions[next] = .{
-                    .kind = .use_installed_ability,
-                    .side = .corp,
-                    .server = display_name,
-                    .card_index = @intCast(content_index),
-                    .card_title = try allocator.dupe(u8, card.title),
-                        .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                    .label = try installedAbilityLabel(allocator, card),
-                };
-                next += 1;
-            }
+    for (servers) |server| {
+        for (server.content.items) |card| {
             if (card.rezzed) {
                 next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
             }
         }
     }
-    const opp_res_len = g.runner_rig_resources.items.len;
-    const opp_prog_len = g.runner_rig_program.items.len;
-    for (g.runner_rig_resources.items, 0..) |card, idx| {
-        if (hasRunnerInstalledAbilityAction(g, .corp, card)) {
-            actions[next] = .{
-                .kind = .use_installed_ability,
-                .side = .corp,
-                .card_index = @intCast(idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                .label = try installedAbilityLabel(allocator, card),
-            };
-            next += 1;
-        }
+    for (g.runner_rig_resources.items) |card| {
         next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
     }
-    for (g.runner_rig_program.items, 0..) |card, idx| {
-        if (hasRunnerInstalledAbilityAction(g, .corp, card)) {
-            actions[next] = .{
-                .kind = .use_installed_ability,
-                .side = .corp,
-                .card_index = @intCast(opp_res_len + idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                .label = try installedAbilityLabel(allocator, card),
-            };
-            next += 1;
-        }
+    for (g.runner_rig_program.items) |card| {
         next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
     }
-    for (g.runner_rig_hardware.items, 0..) |card, idx| {
-        if (hasRunnerInstalledAbilityAction(g, .corp, card)) {
-            actions[next] = .{
-                .kind = .use_installed_ability,
-                .side = .corp,
-                .card_index = @intCast(opp_res_len + opp_prog_len + idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                .label = try installedAbilityLabel(allocator, card),
-            };
-            next += 1;
-        }
+    for (g.runner_rig_hardware.items) |card| {
         next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
     }
 
@@ -10811,49 +10763,13 @@ fn runnerOpeningActionsForState(
         };
         next += 1;
     }
-    // Combined indices: resources[0..R], programs[R..R+P], hardware[R+P..R+P+H]
-    const res_len = g.runner_rig_resources.items.len;
-    const prog_len = g.runner_rig_program.items.len;
-    for (g.runner_rig_resources.items, 0..) |card, idx| {
-        if (hasRunnerInstalledAbilityAction(g, .runner, card)) {
-            actions[next] = .{
-                .kind = .use_installed_ability,
-                .side = .runner,
-                .card_index = @intCast(idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                .label = try installedAbilityLabel(allocator, card),
-            };
-            next += 1;
-        }
+    for (g.runner_rig_resources.items) |card| {
         next = try emitCardAbilityActions(allocator, g, .runner, card, actions, next);
     }
-    for (g.runner_rig_program.items, 0..) |card, idx| {
-        if (hasRunnerInstalledAbilityAction(g, .runner, card)) {
-            actions[next] = .{
-                .kind = .use_installed_ability,
-                .side = .runner,
-                .card_index = @intCast(res_len + idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                .label = try installedAbilityLabel(allocator, card),
-            };
-            next += 1;
-        }
+    for (g.runner_rig_program.items) |card| {
         next = try emitCardAbilityActions(allocator, g, .runner, card, actions, next);
     }
-    for (g.runner_rig_hardware.items, 0..) |card, idx| {
-        if (hasRunnerInstalledAbilityAction(g, .runner, card)) {
-            actions[next] = .{
-                .kind = .use_installed_ability,
-                .side = .runner,
-                .card_index = @intCast(res_len + prog_len + idx),
-                .card_title = try allocator.dupe(u8, card.title),
-                .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                .label = try installedAbilityLabel(allocator, card),
-            };
-            next += 1;
-        }
+    for (g.runner_rig_hardware.items) |card| {
         next = try emitCardAbilityActions(allocator, g, .runner, card, actions, next);
     }
 
@@ -10916,95 +10832,6 @@ fn basicAbilityAction(
     };
 }
 
-fn installedAbilityLabel(
-    allocator: std.mem.Allocator,
-    card: state.CardInstance,
-) ![]const u8 {
-    if (card.installed_ability.label_fn) |label_fn| {
-        return label_fn(allocator, card);
-    }
-    return switch (card.installed_ability.kind) {
-        .take_credits => std.fmt.allocPrint(allocator, "Take {d} [Credits] from this card", .{card.installed_ability.take_credits_amount}),
-        .place_credits => std.fmt.allocPrint(allocator, "Place {d} [Credits] on this card", .{card.installed_ability.place_credits_amount}),
-        .break_subroutine => std.fmt.allocPrint(allocator, "Break {d} subroutine(s)", .{card.installed_ability.break_subroutine_count}),
-        .pump_strength => std.fmt.allocPrint(allocator, "Add {d} strength", .{card.installed_ability.pump_strength_amount}),
-        .run_central => allocator.dupe(u8, "Make a run on a central server"),
-        .run_rd => allocator.dupe(u8, "Run on R&D"),
-        .start_of_turn_credits => allocator.dupe(u8, "Take credits (automatic)"),
-        .trash_for_virus_credits => std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{@as(u16, card.virus_counter) * @as(u16, card.installed_ability.trash_for_virus_credits)}),
-        .trash_for_damage => std.fmt.allocPrint(allocator, "Trash to do {d} meat damage", .{card.advancement_counter}),
-        .remove_from_game_shuffle => allocator.dupe(u8, "Remove from game to shuffle Archives"),
-        .click_trash_for_credits => std.fmt.allocPrint(allocator, "Gain {d} [Credits]", .{card.installed_ability.credit_cost}),
-        .none => allocator.dupe(u8, "Use ability"),
-    };
-}
-
-fn hasRunnerInstalledAbilityAction(generated: *const Game, side: state.Side, card: state.CardInstance) bool {
-    // Cards with abilities array are handled by countCardAbilityActions/emitCardAbilityActions
-    if (card.abilities.len > 0) return false;
-    if (card.installed_ability.on_use != null) {
-        if (side != .runner and !card.installed_ability.allow_opponent_use) return false;
-        if (isAbilityUsedThisTurn(&card, 0) and card.installed_ability.once_per_turn) return false;
-        if (card.installed_ability.can_use) |can_use| {
-            if (!can_use(effectContextConst(generated), &card)) return false;
-        }
-        return switch (side) {
-            .corp => generated.corp_click >= card.installed_ability.click_cost and generated.corp_credit >= card.installed_ability.credit_cost,
-            .runner => generated.runner_click >= card.installed_ability.click_cost and generated.runner_credit >= card.installed_ability.credit_cost,
-        };
-    }
-    if (card.installed_ability.kind == .none) return false;
-    if (side != .runner) return false;
-    if (isAbilityUsedThisTurn(&card, 0) and card.installed_ability.once_per_turn) return false;
-
-    // For run_central, check if there are un-run central servers this turn
-    if (card.installed_ability.kind == .run_central) {
-        if (generated.runner_click < card.installed_ability.click_cost or card.installed_ability.click_cost == 0) return false;
-        const has_unrun_central = !generated.turn_events.made_run_on_hq or !generated.turn_events.made_run_on_rnd or !generated.turn_events.made_run_on_archives;
-        return has_unrun_central;
-    }
-
-    // For run_rd (Conduit), just check click cost
-    if (card.installed_ability.kind == .run_rd) {
-        return generated.runner_click >= card.installed_ability.click_cost and card.installed_ability.click_cost > 0;
-    }
-
-    // Combat abilities (break/pump) are only valid during encounter — handled by encounterActionsForState
-    if (card.installed_ability.kind == .break_subroutine or card.installed_ability.kind == .pump_strength) {
-        return false;
-    }
-
-    // Fermenter: click + trash to gain credits (always available if has virus counters)
-    if (card.installed_ability.kind == .trash_for_virus_credits) {
-        return generated.runner_click >= card.installed_ability.click_cost and card.installed_ability.click_cost > 0 and card.virus_counter > 0;
-    }
-
-    // Rent Rioters: N clicks + trash for flat credits (always available)
-    if (card.installed_ability.kind == .click_trash_for_credits) {
-        return generated.runner_click >= card.installed_ability.click_cost and card.installed_ability.click_cost > 0;
-    }
-
-    // For abilities that require clicks, check click cost
-    if (card.installed_ability.click_cost > 0) {
-        return generated.runner_click >= card.installed_ability.click_cost;
-    }
-
-    return false;
-}
-
-fn hasCorpInstalledAbilityAction(card: state.CardInstance) bool {
-    if (card.abilities.len > 0) return false;
-    if (card.installed_ability.kind == .none) return false;
-    if (!card.rezzed) return false;
-    if (card.installed_ability.click_cost == 0) return false;
-    if (isAbilityUsedThisTurn(&card, 0) and card.installed_ability.once_per_turn) return false;
-    // Clearinghouse: trash_for_damage requires advancement counters
-    if (card.installed_ability.kind == .trash_for_damage) return card.advancement_counter > 0;
-    // Spin Doctor: remove_from_game_shuffle is always available when rezzed (no click cost, no counters needed)
-    if (card.installed_ability.kind == .remove_from_game_shuffle) return true;
-    return card.credit_counter > 0;
-}
-
 fn countCardAbilityActions(generated: *const Game, side: state.Side, card: state.CardInstance) usize {
     var count: usize = 0;
     for (card.abilities, 0..) |ability, ability_idx| {
@@ -11058,7 +10885,6 @@ fn emitCardAbilityActions(
 fn countRunnerInstalledAbilityActions(generated: *const Game, side: state.Side, cards: []const state.CardInstance) usize {
     var count: usize = 0;
     for (cards) |card| {
-        if (hasRunnerInstalledAbilityAction(generated, side, card)) count += 1;
         count += countCardAbilityActions(generated, side, card);
     }
     return count;
@@ -11068,7 +10894,6 @@ fn countCorpInstalledAbilityActions(generated: *const Game, servers: []const Mut
     var count: usize = 0;
     for (servers) |server| {
         for (server.content.items) |card| {
-            if (hasCorpInstalledAbilityAction(card)) count += 1;
             if (card.rezzed) count += countCardAbilityActions(generated, .corp, card);
         }
     }
