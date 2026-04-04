@@ -122,10 +122,10 @@ pub fn manegarmSkunkworksOnChoice(ctx: *state.EffectContext, choice_text: []cons
     const card = findCardPtrByInstanceId(g, ref.source_instance_id) orelse return error.MissingSourceCard;
     var run = &g.run.?;
     if (std.mem.eql(u8, choice_text, "Spend [Click][Click]")) {
-        g.runner_click -= card.access.click_cost;
+        g.runner_click -= 2;
         g.systemMsg(.runner, 30042, "Runner uses Manegarm Skunkworks to spend [Click][Click].", .{});
     } else if (std.mem.eql(u8, choice_text, "Pay 5 [Credits]")) {
-        g.runner_credit -= @intCast(card.access.credit_cost);
+        g.runner_credit -= 5;
         g.systemMsg(.runner, 30042, "Runner uses Manegarm Skunkworks to pay 5 [Credits].", .{});
     } else if (std.mem.eql(u8, choice_text, "End the run")) {
         try completeUnsuccessfulRun(g);
@@ -946,14 +946,10 @@ pub const CardSpec = struct {
     remote_strength_bonus: u8 = 0,
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
-    corp_play: state.CorpPlaySpec = .{},
-    runner_play: state.RunnerPlaySpec = .{},
-    access: state.AccessSpec = .{},
     install: state.InstallSpec = .{},
     runner_install: state.RunnerInstallSpec = .{},
     static_abilities: []const state.StaticAbility = &.{},
     event_abilities: []const state.EventAbility = &.{},
-    installed_ability: state.InstalledAbilitySpec = .{},
     subroutines: []const state.SubroutineSpec = &.{},
     abilities: []const state.AbilitySpec = &.{},
     initial_credit_counters: u16 = 0,
@@ -1217,7 +1213,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 4,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -1233,7 +1229,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 3,
         .advancement_requirement = 5,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -1253,7 +1249,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 1,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .static_abilities = &.{.{ .kind = .hand_size, .value = 2 }},
         .on_score_fn = &struct {
@@ -1270,7 +1266,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 4,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -1285,8 +1281,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.score,
     },
-    .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 9, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+    .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 9, .auto_take_credits = true,
         .take_credits_amount = 3,
         .trash_on_empty = true,
         .on_empty = &struct {
@@ -1294,7 +1289,7 @@ pub const all_cards = [_]CardSpec{
                 try drawCards(gameFromEffectContext(ctx), .corp, 1);
             }
         }.handle,
-    } },
+    },
     .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .trash_cost = 3, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 15, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .req = &struct {
@@ -1318,7 +1313,7 @@ pub const all_cards = [_]CardSpec{
         }.use,
         .label = "Take 3 [Credits]",
     }} },
-    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .access = .{ .kind = .net_damage_on_access, .corp_credit_cost = 2, .base_damage = 2, .adds_advancement = true }, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .abilities = &.{corpPlayAbility(10, 15, 0)} },
     .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .abilities = &.{corpPlayAbility(5, 9, 0)} },
     .{
@@ -1522,7 +1517,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Upgrade",
         .cost = 2,
         .trash_cost = 3,
-        .access = .{ .kind = .tax_or_etr, .click_cost = 2, .credit_cost = 5 },
         .install = .{ .kind = .corp_server_choice },
     },
     .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .tags_on_agenda_steal_from_server = 2 },
@@ -1623,7 +1617,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30011,
         .card_type = "Event",
         .cost = 0,
-        .runner_play = .{ .kind = .custom },
+
         .on_play_msg = "search stack for an icebreaker.",
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
@@ -1655,7 +1649,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30002,
         .card_type = "Event",
         .cost = 2,
-        .runner_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -1987,7 +1981,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -2141,7 +2135,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -2272,7 +2266,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -2337,7 +2331,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, scored_card: state.CardInstance) anyerror!void {
@@ -2692,7 +2686,6 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
         .trash_cost = 1,
         .install = .{ .kind = .corp_server_choice },
-        .access = .{ .kind = .corp_pay_etr, .credit_cost = 2 },
     },
     // ====================================================================
     // ELEVATION PACK (35001–35082)
@@ -3337,7 +3330,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 1,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         // "First time Runner trashes installed Corp card each turn, they may spend [click]. If not, Corp gets +1 allotted [click] next turn."
         // Complex trigger - requires event system enhancement
@@ -3350,7 +3343,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Research"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -3374,7 +3367,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Security"},
         .agenda_points = 2,
         .advancement_requirement = 4,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -3393,7 +3386,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Expansion"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -3414,7 +3407,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -3435,7 +3428,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 3,
         .advancement_requirement = 5,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -3454,7 +3447,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Expansion"},
         .agenda_points = 1,
         .advancement_requirement = 2,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -3471,7 +3464,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -3697,8 +3690,7 @@ pub const all_cards = [_]CardSpec{
             }.label,
         }},
     },
-    .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 6, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+    .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 6, .auto_take_credits = true,
         .take_credits_amount = 2,
         .trash_on_empty = true,
         .on_empty = &struct {
@@ -3706,7 +3698,7 @@ pub const all_cards = [_]CardSpec{
                 gameFromEffectContext(ctx).corp_click += 2;
             }
         }.handle,
-    } },
+    },
     .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     .{
@@ -3741,8 +3733,7 @@ pub const all_cards = [_]CardSpec{
             }.handle,
         }},
     },
-    .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 8, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+    .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 8, .auto_take_credits = true,
         .take_credits_amount = 4,
         .trash_on_empty = true,
         .on_take = &struct {
@@ -3750,7 +3741,7 @@ pub const all_cards = [_]CardSpec{
                 try drawCards(gameFromEffectContext(ctx), .corp, 1);
             }
         }.handle,
-    } },
+    },
     .{ .title = "Plutus", .side = .corp, .code = 35073, .card_type = "Asset", .subtypes = &.{"Deep Net"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     // --- Elevation Upgrades ---
     .{ .title = "Mercia B4LL4RD", .side = .corp, .code = 35045, .card_type = "Upgrade", .subtypes = &.{ "Academic", "Bioroid" }, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
@@ -4159,7 +4150,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .archives_only },
     },
     .{
         .title = "Scrounge",
@@ -4168,7 +4158,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Double"},
         .cost = 1,
-        .runner_play = .{ .kind = .custom, .lose_clicks = 1 },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 // Additional cost: spend [click] (Double)
@@ -4213,9 +4203,8 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 1,
-        .runner_play = .{ .kind = .choose_run_target },
     },
-    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .runner_play = .{ .kind = .choose_run_target, .gain_credits = 6, .successful_run_draw_cards = 0 } },
+    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3 },
     .{
         .title = "Lie Low",
         .side = .runner,
@@ -4223,7 +4212,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Double"},
         .cost = 1,
-        .runner_play = .{ .kind = .custom, .lose_clicks = 1 },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 // Additional cost: spend [click] (Double)
@@ -4299,7 +4288,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{ "Double", "Run" },
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .archives_only, .lose_clicks = 1 },
     },
     .{
         .title = "Transfer of Wealth",
@@ -4308,7 +4296,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .hq_only },
     },
     .{
         .title = "Illumination",
@@ -4317,7 +4304,6 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .rd_only },
     },
     .{
         .title = "Ritual",
@@ -4325,7 +4311,7 @@ pub const all_cards = [_]CardSpec{
         .code = 35026,
         .card_type = "Event",
         .cost = 0,
-        .runner_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
                 // "Draw 1 card for each [click] you have remaining."
@@ -4949,11 +4935,9 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .runner_install = .{ .kind = .resource, .mu_cost = 0 },
         .initial_credit_counters = 6,
-        .installed_ability = .{
-            .kind = .start_of_turn_credits,
+        .auto_take_credits = true,
             .take_credits_amount = 1,
             .trash_on_empty = true,
-        },
     },
     .{
         .title = "\"Knickknack\" O'Brian",

@@ -52,14 +52,6 @@ pub const BasicAction = enum(u8) {
     remove_tag,
 };
 
-pub const CorpPlayKind = enum(u8) {
-    none,
-    gain_credits,
-    advance_installed,
-    custom,
-    no_op,
-};
-
 pub const RunTargetKind = enum(u8) {
     any_runnable,
     hq_and_rnd_only,
@@ -72,21 +64,6 @@ pub const RunTargetKind = enum(u8) {
 pub const RunSuccessEffectKind = enum(u8) {
     none,
     draw_cards,
-};
-
-pub const RunnerPlayKind = enum(u8) {
-    none,
-    gain_credits,
-    choose_run_target,
-    custom,
-};
-
-pub const AccessKind = enum(u8) {
-    none,
-    steal_agenda,
-    net_damage_on_access,
-    tax_or_etr,
-    corp_pay_etr, // Anoetic Void: corp pays credits + trashes from HQ → ETR
 };
 
 pub const InstallKind = enum(u8) {
@@ -102,20 +79,6 @@ pub const RunnerInstallKind = enum(u8) {
     program,
 };
 
-pub const InstalledAbilityKind = enum(u8) {
-    none,
-    take_credits,
-    place_credits,
-    break_subroutine,
-    pump_strength,
-    run_central,
-    run_rd, // Conduit: click to run R&D
-    start_of_turn_credits, // Nico Campaign: auto-take credits at start of corp turn
-    trash_for_virus_credits, // Fermenter: click + trash to gain N credits per virus counter
-    trash_for_damage, // Clearinghouse: click + trash to do 1 meat damage per advancement counter
-    remove_from_game_shuffle, // Spin Doctor: remove from game, shuffle up to 2 from Archives into R&D
-    click_trash_for_credits, // Rent Rioters: N clicks + trash for flat credits
-};
 
 pub const SubroutineKind = enum(u8) {
     none,
@@ -166,35 +129,6 @@ pub const AgendaEffectSpec = struct {
 };
 
 
-pub const CorpPlaySpec = struct {
-    kind: CorpPlayKind = .none,
-    gain_credits: u16 = 0,
-    draw_cards: u8 = 0,
-    advancement_amount: u8 = 1,
-    not_installed_this_turn: bool = false, // Seamless Launch: exclude cards installed this turn
-};
-
-pub const RunnerPlaySpec = struct {
-    kind: RunnerPlayKind = .none,
-    gain_credits: u16 = 0,
-    run_credits: u16 = 0,
-    draw_cards: u8 = 0,
-    lose_clicks: u8 = 0,
-    run_target_kind: RunTargetKind = .any_runnable,
-    run_rez_cost_bonus: u16 = 0,
-    successful_run_effect: RunSuccessEffectKind = .none,
-    successful_run_draw_cards: u8 = 0,
-    successful_run_access_bonus: u8 = 0,
-};
-
-pub const AccessSpec = struct {
-    kind: AccessKind = .none,
-    corp_credit_cost: u16 = 0,
-    base_damage: u8 = 0,
-    adds_advancement: bool = false,
-    click_cost: u8 = 0,
-    credit_cost: u16 = 0,
-};
 
 pub const InstallSpec = struct {
     kind: InstallKind = .none,
@@ -260,25 +194,6 @@ pub const StaticAbility = struct {
 
 pub const InstalledAbilityCallback = *const fn (*EffectContext, *CardInstance) anyerror!void;
 
-pub const InstalledAbilitySpec = struct {
-    kind: InstalledAbilityKind = .none,
-    initial_credit_counters: u16 = 0,
-    take_credits_amount: u16 = 0,
-    trash_on_empty: bool = false,
-    on_install: ?InstalledAbilityCallback = null,
-    on_take: ?InstalledAbilityCallback = null,
-    on_empty: ?InstalledAbilityCallback = null,
-    click_draw_bonus: u8 = 0,
-    tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements
-    trojan_break_any: bool = false, // Botulus
-    trojan_derez_threshold: u8 = 0, // Tranquilizer
-    trojan_adds_all_subtypes: bool = false, // Chromatophores
-    auto_trash_at_credits: u8 = 0, // Side Hustle
-    draw_on_auto_trash: u8 = 0, // Side Hustle
-    trash_access_hand_cost: u8 = 0, // Carnivore
-    trash_access_self_trash: bool = false, // Gourmand
-    trash_access_draw: u8 = 0, // Gourmand
-};
 
 pub const GameEvent = enum(u8) {
     agenda_scored,
@@ -343,15 +258,30 @@ pub const CardInstance = struct {
     remote_strength_bonus: u8 = 0, // Palisade: +N strength when protecting a remote
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
-    corp_play: CorpPlaySpec = .{},
-    runner_play: RunnerPlaySpec = .{},
-    access: AccessSpec = .{},
     install: InstallSpec = .{},
     runner_install: RunnerInstallSpec = .{},
     abilities: []const AbilitySpec = &.{},
     static_abilities: []const StaticAbility = &.{},
     event_abilities: []const EventAbility = &.{},
-    installed_ability: InstalledAbilitySpec = .{},
+    // Installed ability data (flattened from InstalledAbilitySpec)
+    initial_credit_counters: u16 = 0,
+    take_credits_amount: u16 = 0,
+    trash_on_empty: bool = false,
+    on_install: ?InstalledAbilityCallback = null,
+    on_take: ?InstalledAbilityCallback = null,
+    on_empty: ?InstalledAbilityCallback = null,
+    click_draw_bonus: u8 = 0,
+    tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements
+    trojan_break_any: bool = false, // Botulus
+    trojan_derez_threshold: u8 = 0, // Tranquilizer
+    trojan_adds_all_subtypes: bool = false, // Chromatophores
+    auto_trash_at_credits: u8 = 0, // Side Hustle
+    draw_on_auto_trash: u8 = 0, // Side Hustle
+    trash_access_hand_cost: u8 = 0, // Carnivore
+    trash_access_self_trash: bool = false, // Gourmand
+    trash_access_draw: u8 = 0, // Gourmand
+    place_credits_per_turn: bool = false, // Smartware Distributor
+    auto_take_credits: bool = false, // Nico Campaign: start of corp turn
     subroutines: []const SubroutineSpec = &.{},
     rezzed: bool = false,
     current_strength: ?u8 = null, // Boosted strength during encounter

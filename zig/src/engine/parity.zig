@@ -2368,34 +2368,90 @@ fn findPlayByCardType(gen: *const generator.Game, actions: []const state.LegalAc
     return null;
 }
 
-fn findPlayByCorpPlayKind(gen: *const generator.Game, actions: []const state.LegalAction, kind: state.CorpPlayKind) ?state.LegalAction {
+/// Corp economy operation gain amounts (parity picker heuristic)
+fn corpOperationGain(code: u32) u16 {
+    return switch (code) {
+        30064 => 15, // Government Subsidy
+        30075 => 9, // Hedge Fund
+        35081 => 5, // Petty Cash
+        else => 0,
+    };
+}
+
+/// Runner economy event gain amounts (parity picker heuristic)
+fn runnerEventGain(code: u32) u16 {
+    return switch (code) {
+        30020 => 5, // Creative Commission
+        30030 => 9, // Sure Gamble
+        else => 0,
+    };
+}
+
+fn isRunSubtype(card: state.CardInstance) bool {
+    for (card.subtypes) |s| {
+        if (std.mem.eql(u8, s, "Run")) return true;
+    }
+    return false;
+}
+
+fn isDoubleSubtype(card: state.CardInstance) bool {
+    for (card.subtypes) |s| {
+        if (std.mem.eql(u8, s, "Double")) return true;
+    }
+    return false;
+}
+
+/// Check if runner has enough clicks for an event
+fn canAffordEventClicks(gen: *const generator.Game, card: state.CardInstance) bool {
+    const extra: u8 = if (isDoubleSubtype(card)) 1 else extraClickCost(card.code orelse 0);
+    return gen.runner_click >= 1 + extra;
+}
+
+/// Extra click cost for non-Double events (Creative Commission, VRcation)
+fn extraClickCost(code: u32) u8 {
+    return switch (code) {
+        30020, 30021 => 1, // Creative Commission, VRcation
+        else => 0,
+    };
+}
+
+/// Find a corp non-economy operation (advancement or utility)
+fn findCorpNonEconOperation(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind != .play_from_hand or a.side != .corp) continue;
         const title = a.card_title orelse continue;
         const card = findCardInHand(gen, title, .corp) orelse continue;
-        if (card.corp_play.kind == kind) return a;
+        const code = card.code orelse continue;
+        if (corpOperationGain(code) > 0) continue; // skip economy
+        const card_type = card.card_type orelse continue;
+        if (!std.mem.eql(u8, card_type, "Operation")) continue;
+        return a;
     }
     return null;
 }
 
-fn findPlayByRunnerPlayKind(gen: *const generator.Game, actions: []const state.LegalAction, kind: state.RunnerPlayKind) ?state.LegalAction {
+/// Find runner event by category: run events, economy, or utility/custom
+fn findRunnerEventByCategory(gen: *const generator.Game, actions: []const state.LegalAction, category: enum { run, economy, other }) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind != .play_from_hand or a.side != .runner) continue;
         const title = a.card_title orelse continue;
         const card = findCardInHand(gen, title, .runner) orelse continue;
         if (!canAffordEventClicks(gen, card)) continue;
-        if (card.runner_play.kind == kind) return a;
+        const card_type = card.card_type orelse continue;
+        if (!std.mem.eql(u8, card_type, "Event")) continue;
+        const code = card.code orelse 0;
+        const is_run = isRunSubtype(card);
+        const is_econ = runnerEventGain(code) > 0;
+        switch (category) {
+            .run => if (is_run) return a,
+            .economy => if (is_econ) return a,
+            .other => if (!is_run and !is_econ) return a,
+        }
     }
     return null;
 }
 
-/// Check if runner has enough clicks for an event (1 base + lose_clicks)
-fn canAffordEventClicks(gen: *const generator.Game, card: state.CardInstance) bool {
-    return gen.runner_click >= 1 + card.runner_play.lose_clicks;
-}
-
-/// Find the best economy event: gain_credits kind with actual credit gain, prefer highest gain.
-/// Skips events that only draw cards (VRcation) — those are handled separately.
+/// Find the best economy event: highest credit gain.
 fn findRunnerPureEconomy(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
     var best: ?state.LegalAction = null;
     var best_gain: u16 = 0;
@@ -2404,16 +2460,18 @@ fn findRunnerPureEconomy(gen: *const generator.Game, actions: []const state.Lega
         const title = a.card_title orelse continue;
         const card = findCardInHand(gen, title, .runner) orelse continue;
         if (!canAffordEventClicks(gen, card)) continue;
-        if (card.runner_play.kind != .gain_credits or card.runner_play.gain_credits == 0) continue;
-        if (card.runner_play.gain_credits > best_gain) {
+        const code = card.code orelse continue;
+        const gain = runnerEventGain(code);
+        if (gain == 0) continue;
+        if (gain > best_gain) {
             best = a;
-            best_gain = card.runner_play.gain_credits;
+            best_gain = gain;
         }
     }
     return best;
 }
 
-/// Find the best corp economy operation: gain_credits kind, prefer highest gain.
+/// Find the best corp economy operation: prefer highest gain.
 fn findCorpBestEconomy(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
     var best: ?state.LegalAction = null;
     var best_gain: u16 = 0;
@@ -2425,10 +2483,12 @@ fn findCorpBestEconomy(gen: *const generator.Game, actions: []const state.LegalA
             .flashback => findCardInDiscard(gen, title, .corp),
             else => null,
         } orelse continue;
-        if (card.corp_play.kind != .gain_credits or card.corp_play.gain_credits == 0) continue;
-        if (card.corp_play.gain_credits > best_gain) {
+        const code = card.code orelse continue;
+        const gain = corpOperationGain(code);
+        if (gain == 0) continue;
+        if (gain > best_gain) {
             best = a;
-            best_gain = card.corp_play.gain_credits;
+            best_gain = gain;
         }
     }
     return best;
@@ -3084,13 +3144,8 @@ fn pickCorpAction(gen: *generator.Game, actions: []const state.LegalAction) stat
         if (findBasicAction(actions, .corp, .advance_installed)) |a| return a;
     }
 
-    // Play advancement operations (generic: any operation with advance_installed kind)
-    if (hasAdvanceableCards(gen)) {
-        if (findPlayByCorpPlayKind(gen, actions, .advance_installed)) |a| return a;
-    }
-
-    // Play custom operations (Predictive Planogram, Public Trail, Retribution, etc.)
-    if (findPlayByCorpPlayKind(gen, actions, .custom)) |a| return a;
+    // Play non-economy operations (advancement, utility, custom)
+    if (findCorpNonEconOperation(gen, actions)) |a| return a;
 
     // Draw cards if hand is small
     if (gen.corp_hand.items.len <= 3) {
@@ -3114,7 +3169,7 @@ fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) st
     if (findRunnerPureEconomy(gen, actions)) |a| return a;
 
     // Install economy resources (take_credits ability — drip economy)
-    if (findRunnerInstallByAbility(gen, actions, .take_credits)) |a| return a;
+    if (findRunnerInstallDripEconomy(gen, actions)) |a| return a;
 
     // Install free resources (cost 0 — Smartware Distributor etc.)
     if (findRunnerInstallByMaxCost(gen, actions, "Resource", 0)) |a| return a;
@@ -3140,14 +3195,11 @@ fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) st
         if (findRunActionAny(actions)) |a| return a;
     }
 
-    // Play run events (generic: any event with choose_run_target kind)
-    if (findPlayByRunnerPlayKind(gen, actions, .choose_run_target)) |a| return a;
+    // Play run events
+    if (findRunnerEventByCategory(gen, actions, .run)) |a| return a;
 
-    // Play draw/utility events (VRcation, etc. — gain_credits kind with 0 credit gain)
-    if (findPlayByRunnerPlayKind(gen, actions, .gain_credits)) |a| return a;
-
-    // Play custom events (Mutual Favor, Wildcat Strike, etc.)
-    if (findPlayByRunnerPlayKind(gen, actions, .custom)) |a| return a;
+    // Play utility/custom events (VRcation, Mutual Favor, Wildcat Strike, etc.)
+    if (findRunnerEventByCategory(gen, actions, .other)) |a| return a;
 
     // Install remaining programs (utility — Conduit, Leech)
     if (credit >= 1) {
@@ -3173,12 +3225,13 @@ fn pickRunnerAction(gen: *generator.Game, actions: []const state.LegalAction) st
     return actions[0];
 }
 
-fn findRunnerInstallByAbility(gen: *const generator.Game, actions: []const state.LegalAction, ability_kind: state.InstalledAbilityKind) ?state.LegalAction {
+fn findRunnerInstallDripEconomy(gen: *const generator.Game, actions: []const state.LegalAction) ?state.LegalAction {
     for (actions) |a| {
         if (a.kind != .play_from_hand or a.side != .runner) continue;
         const title = a.card_title orelse continue;
         const card = findCardInHand(gen, title, .runner) orelse continue;
-        if (card.installed_ability.kind == ability_kind) return a;
+        // Drip economy: cards with credit counters (Telework Contract, Pennyshaver, etc.)
+        if (card.initial_credit_counters > 0 or card.abilities.len > 0) return a;
     }
     return null;
 }
@@ -3236,7 +3289,7 @@ fn hasAdvanceableCards(gen: *const generator.Game) bool {
     for (gen.corp_servers.items) |server| {
         for (server.content.items) |card| {
             if (card.agenda_points != null) return true;
-            if (card.access.adds_advancement) return true;
+            if (card.advanceable) return true;
         }
     }
     return false;

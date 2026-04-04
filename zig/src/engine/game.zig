@@ -25,15 +25,37 @@ pub const CardSpec = struct {
     remote_strength_bonus: u8 = 0, // Palisade: +N strength when protecting a remote
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
-    corp_play: state.CorpPlaySpec = .{},
-    runner_play: state.RunnerPlaySpec = .{},
-    access: state.AccessSpec = .{},
+    // Run event fields (for run-target events)
+    run_target_kind: state.RunTargetKind = .any_runnable,
+    run_credits: u16 = 0,
+    run_rez_cost_bonus: u16 = 0,
+    successful_run_effect: state.RunSuccessEffectKind = .none,
+    successful_run_draw_cards: u8 = 0,
+    successful_run_access_bonus: u8 = 0,
     install: state.InstallSpec = .{},
     runner_install: state.RunnerInstallSpec = .{},
     abilities: []const state.AbilitySpec = &.{},
     static_abilities: []const state.StaticAbility = &.{},
     event_abilities: []const state.EventAbility = &.{},
-    installed_ability: state.InstalledAbilitySpec = .{},
+    // Installed ability data (flattened)
+    initial_credit_counters: u16 = 0,
+    take_credits_amount: u16 = 0,
+    trash_on_empty: bool = false,
+    on_install: ?state.InstalledAbilityCallback = null,
+    on_take: ?state.InstalledAbilityCallback = null,
+    on_empty: ?state.InstalledAbilityCallback = null,
+    click_draw_bonus: u8 = 0,
+    tags_on_agenda_steal_from_server: u8 = 0,
+    trojan_break_any: bool = false,
+    trojan_derez_threshold: u8 = 0,
+    trojan_adds_all_subtypes: bool = false,
+    auto_trash_at_credits: u8 = 0,
+    draw_on_auto_trash: u8 = 0,
+    trash_access_hand_cost: u8 = 0,
+    trash_access_self_trash: bool = false,
+    trash_access_draw: u8 = 0,
+    place_credits_per_turn: bool = false,
+    auto_take_credits: bool = false,
     subroutines: []const state.SubroutineSpec = &.{},
     on_score: state.AgendaEffectSpec = .{},
     on_steal: state.AgendaEffectSpec = .{},
@@ -49,6 +71,8 @@ pub const CardSpec = struct {
     on_play: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     on_prompt_choice: ?*const fn (*Game, []const u8) anyerror!void = null,
     on_score_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
+    on_access: ?*const fn (*Game, state.CardInstance) anyerror!bool = null,
+    on_approach: ?*const fn (*Game, *const state.CardInstance) anyerror!bool = null,
     on_encounter: ?*const fn (*Game, *const state.CardInstance) anyerror!void = null,
     on_rez: ?*const fn (*Game) anyerror!void = null,
     on_rez_msg: ?[]const u8 = null, // logged after on_rez fires
@@ -127,6 +151,48 @@ pub const MatchupSpec = struct {
     corp: SideSpec,
     runner: SideSpec,
 };
+
+// Shared on_play generators for parameterized play effects
+fn corpGainCreditsOnPlay(comptime credits: u16, comptime draw: u8) *const fn (*Game, state.CardInstance) anyerror!void {
+    return &struct {
+        fn play(g: *Game, _: state.CardInstance) anyerror!void {
+            g.corp_credit += credits;
+            if (draw > 0) try drawCards(g, .corp, draw);
+            if (credits > 0) {
+                g.turn_events.operation_played_count += 1;
+                _ = try fireEvent(g, .operation_played);
+            }
+        }
+    }.play;
+}
+
+fn runnerGainCreditsOnPlay(comptime credits: u16, comptime draw: u8, comptime lose_clicks: u8) *const fn (*Game, state.CardInstance) anyerror!void {
+    return &struct {
+        fn play(g: *Game, _: state.CardInstance) anyerror!void {
+            if (lose_clicks > 0) try spendClicks(g, .runner, lose_clicks);
+            g.runner_credit += credits;
+            if (draw > 0) try drawCards(g, .runner, draw);
+            g.decision_side = .runner;
+            g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
+        }
+    }.play;
+}
+
+fn runnerRunEventOnPlay(comptime target_kind: state.RunTargetKind, comptime lose_clicks: u8) *const fn (*Game, state.CardInstance) anyerror!void {
+    return &struct {
+        fn play(g: *Game, card: state.CardInstance) anyerror!void {
+            const allocator = g.arena.allocator();
+            if (lose_clicks > 0) try spendClicks(g, .runner, lose_clicks);
+            g.runner_prompt_state = .{
+                .prompt_type = try allocator.dupe(u8, "run-target"),
+                .choices = try runTargetChoicesFor(allocator, target_kind, g.corp_servers.items),
+                .source_card = card,
+            };
+            g.decision_side = .runner;
+            g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+        }
+    }.play;
+}
 
 pub const all_cards = [_]CardSpec{
     .{ .title = "The Syndicate: Profit over Principle", .side = .corp, .code = 30077, .card_type = "Identity" },
@@ -341,9 +407,9 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     },
-    .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
-    .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
-    .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .static_abilities = &.{.{ .kind = .hand_size, .value = 2 }}, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
+    .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
+    .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
+    .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .install = .{ .kind = .corp_remote_only }, .static_abilities = &.{.{ .kind = .hand_size, .value = 2 }}, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
     .{
         .title = "Orbital Superiority",
         .side = .corp,
@@ -351,7 +417,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 4,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -366,8 +432,8 @@ pub const all_cards = [_]CardSpec{
             }
         }.score,
     },
-    .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+    .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only },
+        .auto_take_credits = true,
         .initial_credit_counters = 9,
         .take_credits_amount = 3,
         .trash_on_empty = true,
@@ -376,11 +442,10 @@ pub const all_cards = [_]CardSpec{
                 try drawCards(gameFromEffectContext(ctx), .corp, 1);
             }
         }.handle,
-    } },
-    .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .trash_cost = 3, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
-        .kind = .take_credits, // retained for legacy counting/picker
+    },
+    .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .trash_cost = 3, .install = .{ .kind = .corp_remote_only },
         .initial_credit_counters = 15,
-    }, .abilities = &.{.{
+    .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Take 3 [Credits] from this card",
         .on_use = &struct {
@@ -398,17 +463,54 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .access = .{ .kind = .net_damage_on_access, .corp_credit_cost = 2, .base_damage = 2, .adds_advancement = true }, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .corp_play = .{ .kind = .gain_credits, .gain_credits = 15 } },
-    .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .corp_play = .{ .kind = .gain_credits, .gain_credits = 9 } },
-    .{ .title = "Seamless Launch", .side = .corp, .code = 30040, .card_type = "Operation", .cost = 1, .corp_play = .{ .kind = .advance_installed, .advancement_amount = 2, .not_installed_this_turn = true } },
+    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only }, .on_access = &struct {
+        fn access(g: *Game, accessed: state.CardInstance) anyerror!bool {
+            return try beginNetDamageOnAccessPrompt(g, accessed);
+        }
+    }.access },
+    .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .on_play = corpGainCreditsOnPlay(15, 0) },
+    .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .on_play = corpGainCreditsOnPlay(9, 0) },
+    .{
+        .title = "Seamless Launch",
+        .side = .corp,
+        .code = 30040,
+        .card_type = "Operation",
+        .cost = 1,
+        .on_play = &struct {
+            fn play(g: *Game, card: state.CardInstance) anyerror!void {
+                const allocator = g.arena.allocator();
+                const choices = try installedNotThisTurnChoices(allocator, g.corp_servers.items);
+                if (choices.len == 0) {
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                    return;
+                }
+                g.corp_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "seamless-advance"),
+                    .choices = choices,
+                    .source_card = card,
+                };
+                g.decision_side = .corp;
+                g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+            }
+        }.play,
+        .on_prompt_choice = &struct {
+            fn choice(g: *Game, choice_text: []const u8) anyerror!void {
+                const advanced_card = try addAdvancementCounter(g, choice_text, 2);
+                g.systemMsg(.corp, 30040, "Corp uses Seamless Launch to advance {s} 2 times.", .{advanced_card.title});
+                g.corp_prompt_state = null;
+                g.decision_side = .corp;
+                g.legal_actions = try corpOpeningActionsForState(g.arena.allocator(), g);
+            }
+        }.choice,
+    },
     .{
         .title = "Predictive Planogram",
         .side = .corp,
         .code = 30056,
         .card_type = "Operation",
         .cost = 0,
-        .corp_play = .{ .kind = .custom },
+
         .log_prompt_choice = true,
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
@@ -450,7 +552,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30057,
         .card_type = "Operation",
         .cost = 4,
-        .corp_play = .{ .kind = .custom },
+
         .log_prompt_choice = true,
         .can_play = &struct {
             fn check(g: *const Game) bool {
@@ -499,7 +601,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30065,
         .card_type = "Operation",
         .cost = 1,
-        .corp_play = .{ .kind = .custom },
+
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 return is_runner_tagged(g.runner_tag) and
@@ -564,19 +666,38 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Upgrade",
         .cost = 2,
         .trash_cost = 3,
-        .access = .{ .kind = .tax_or_etr, .click_cost = 2, .credit_cost = 5 },
         .install = .{ .kind = .corp_server_choice },
+        .on_approach = &struct {
+            fn approach(g: *Game, card: *const state.CardInstance) anyerror!bool {
+                if (!card.rezzed) return false;
+                const allocator = g.arena.allocator();
+                var choices: std.ArrayList(state.PromptChoice) = .empty;
+                if (g.runner_click >= 2) {
+                    try choices.append(allocator, stringChoice(try allocator.dupe(u8, "Spend [Click][Click]")));
+                }
+                if (g.runner_credit >= 5) {
+                    try choices.append(allocator, stringChoice(try allocator.dupe(u8, "Pay 5 [Credits]")));
+                }
+                try choices.append(allocator, stringChoice(try allocator.dupe(u8, "End the run")));
+                g.runner_prompt_state = .{
+                    .prompt_type = try allocator.dupe(u8, "manegarm-tax"),
+                    .choices = try choices.toOwnedSlice(allocator),
+                    .source_card = card.*,
+                };
+                g.decision_side = .runner;
+                g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                return true;
+            }
+        }.approach,
         .log_prompt_choice = true,
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 const allocator = g.arena.allocator();
-                const prompt = g.runner_prompt_state orelse return error.MissingPrompt;
-                const card = prompt.source_card orelse return error.MissingSourceCard;
                 var run = &g.run.?;
                 if (std.mem.eql(u8, choice_text, "Spend [Click][Click]")) {
-                    g.runner_click -= card.access.click_cost;
+                    g.runner_click -= 2;
                 } else if (std.mem.eql(u8, choice_text, "Pay 5 [Credits]")) {
-                    g.runner_credit -= @intCast(card.access.credit_cost);
+                    g.runner_credit -= 5;
                 } else if (std.mem.eql(u8, choice_text, "End the run")) {
                     try completeUnsuccessfulRun(g);
                     return;
@@ -600,7 +721,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .installed_ability = .{ .tags_on_agenda_steal_from_server = 2 } },
+    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .tags_on_agenda_steal_from_server = 2 },
     .{
         .title = "Brân 1.0",
         .side = .corp,
@@ -692,32 +813,18 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .runner_play = .{ .kind = .gain_credits, .gain_credits = 5, .lose_clicks = 1 } },
-    .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .runner_play = .{
-        .kind = .choose_run_target,
-        .run_target_kind = .hq_and_rnd_only,
-        .successful_run_effect = .draw_cards,
-        .successful_run_draw_cards = 1,
-        .successful_run_access_bonus = 1,
-    } },
-    .{ .title = "Overclock", .side = .runner, .code = 30029, .card_type = "Event", .cost = 1, .runner_play = .{
-        .kind = .choose_run_target,
-        .run_target_kind = .any_runnable,
-        .run_credits = 5,
-    } },
-    .{ .title = "Sure Gamble", .side = .runner, .code = 30030, .card_type = "Event", .cost = 5, .runner_play = .{ .kind = .gain_credits, .gain_credits = 9 } },
-    .{ .title = "Tread Lightly", .side = .runner, .code = 30012, .card_type = "Event", .cost = 1, .runner_play = .{
-        .kind = .choose_run_target,
-        .run_target_kind = .any_runnable,
-        .run_rez_cost_bonus = 3,
-    } },
+    .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .on_play = runnerGainCreditsOnPlay(5, 0, 1) },
+    .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .on_play = runnerRunEventOnPlay(.hq_and_rnd_only, 0), .run_target_kind = .hq_and_rnd_only, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 1, .successful_run_access_bonus = 1 },
+    .{ .title = "Overclock", .side = .runner, .code = 30029, .card_type = "Event", .cost = 1, .on_play = runnerRunEventOnPlay(.any_runnable, 0), .run_credits = 5 },
+    .{ .title = "Sure Gamble", .side = .runner, .code = 30030, .card_type = "Event", .cost = 5, .on_play = runnerGainCreditsOnPlay(9, 0, 0) },
+    .{ .title = "Tread Lightly", .side = .runner, .code = 30012, .card_type = "Event", .cost = 1, .on_play = runnerRunEventOnPlay(.any_runnable, 0), .run_rez_cost_bonus = 3 },
     .{
         .title = "Mutual Favor",
         .side = .runner,
         .code = 30011,
         .card_type = "Event",
         .cost = 0,
-        .runner_play = .{ .kind = .custom },
+
         .on_play_msg = "search stack for an icebreaker.",
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
@@ -749,7 +856,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30002,
         .card_type = "Event",
         .cost = 2,
-        .runner_play = .{ .kind = .custom },
+
         .log_prompt_choice = true,
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
@@ -785,7 +892,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.choice,
     },
-    .{ .title = "VRcation", .side = .runner, .code = 30021, .card_type = "Event", .cost = 1, .runner_play = .{ .kind = .gain_credits, .draw_cards = 4, .lose_clicks = 1 } },
+    .{ .title = "VRcation", .side = .runner, .code = 30021, .card_type = "Event", .cost = 1, .on_play = runnerGainCreditsOnPlay(0, 4, 1) },
     .{ .title = "Docklands Pass", .side = .runner, .code = 30013, .card_type = "Hardware", .cost = 2, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .hq_access, .value = 1 }} },
     .{ .title = "Pennyshaver", .side = .runner, .code = 30014, .card_type = "Hardware", .cost = 3, .runner_install = .{ .kind = .hardware }, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
@@ -821,12 +928,11 @@ pub const all_cards = [_]CardSpec{
             }
         }.req },
     } },
-    .{ .title = "Red Team", .side = .runner, .code = 30018, .card_type = "Resource", .cost = 5, .runner_install = .{ .kind = .resource }, .installed_ability = .{
-        .kind = .run_central, // retained for e2e picker heuristic
+    .{ .title = "Red Team", .side = .runner, .code = 30018, .card_type = "Resource", .cost = 5, .runner_install = .{ .kind = .resource },
         .initial_credit_counters = 12,
         .take_credits_amount = 3, // read by applySourceCardOnSuccessfulRun
         .trash_on_empty = true, // read by applySourceCardOnSuccessfulRun
-    }, .abilities = &.{.{
+    .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Make a run on a central server",
         .req = &struct {
@@ -851,9 +957,9 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Smartware Distributor", .side = .runner, .code = 30033, .card_type = "Resource", .cost = 0, .runner_install = .{ .kind = .resource }, .installed_ability = .{
-        .kind = .place_credits, // retained for passive start-of-turn credit trigger
-    }, .abilities = &.{.{
+    .{ .title = "Smartware Distributor", .side = .runner, .code = 30033, .card_type = "Resource", .cost = 0, .runner_install = .{ .kind = .resource },
+        .place_credits_per_turn = true,
+    .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Place 3 [Credits] on this card",
         .on_use = &struct {
@@ -862,10 +968,9 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Telework Contract", .side = .runner, .code = 30027, .card_type = "Resource", .cost = 1, .runner_install = .{ .kind = .resource }, .installed_ability = .{
-        .kind = .take_credits, // retained for e2e picker heuristic
+    .{ .title = "Telework Contract", .side = .runner, .code = 30027, .card_type = "Resource", .cost = 1, .runner_install = .{ .kind = .resource },
         .initial_credit_counters = 9,
-    }, .abilities = &.{.{
+    .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .once_per_turn = true,
         .label = "Take 3 [Credits] from this card",
@@ -884,7 +989,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Verbal Plasticity", .side = .runner, .code = 30034, .card_type = "Resource", .cost = 3, .runner_install = .{ .kind = .resource }, .installed_ability = .{ .click_draw_bonus = 1 } },
+    .{ .title = "Verbal Plasticity", .side = .runner, .code = 30034, .card_type = "Resource", .cost = 3, .runner_install = .{ .kind = .resource }, .click_draw_bonus = 1 },
     .{ .title = "Carmen", .side = .runner, .code = 30015, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer" }, .cost = 5, .strength = 2, .runner_install = .{ .kind = .program, .install_cost_reduction_if_successful_run = 2 }, .abilities = &.{
         .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
         .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 2, .pump_amount = 3 },
@@ -931,14 +1036,12 @@ pub const all_cards = [_]CardSpec{
                 return @intCast(source.virus_counter);
             }
         }.req,
-    }}, .installed_ability = .{
-        .kind = .run_rd, // retained for e2e picker heuristic
-    }, .abilities = &.{.{
+    }}, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Run on R&D",
         .on_use = &struct {
             fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                try applyRunFromAbility(gameFromEffectContext(ctx), "R&D", card.*);
+                try applyRunFromAbility(gameFromEffectContext(ctx), "R&D", card.code);
             }
         }.handle,
     }}, .event_abilities = &.{.{
@@ -1015,7 +1118,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score = .{ .kind = .give_runner_tag, .amount = 1 },
         .on_steal = .{ .kind = .give_runner_tag, .amount = 1 },
@@ -1033,7 +1136,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30041,
         .card_type = "Operation",
         .cost = 0,
-        .corp_play = .{ .kind = .custom },
+
         .on_play_msg = "draw 3 cards.",
         .on_play = &struct {
             fn play(g: *Game, src_card: state.CardInstance) anyerror!void {
@@ -1110,7 +1213,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30048,
         .card_type = "Operation",
         .cost = 5,
-        .corp_play = .{ .kind = .custom },
+
         .on_play_msg = "gain 10 [credits].",
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
@@ -1159,7 +1262,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -1202,14 +1305,13 @@ pub const all_cards = [_]CardSpec{
         .{ .kind = .end_the_run },
         .{ .kind = .end_the_run },
     } },
-    .{ .title = "Fermenter", .side = .runner, .code = 30007, .card_type = "Program", .subtypes = &.{"Virus"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{
-        .kind = .trash_for_virus_credits, // retained for e2e picker heuristic
+    .{ .title = "Fermenter", .side = .runner, .code = 30007, .card_type = "Program", .subtypes = &.{"Virus"}, .cost = 1, .runner_install = .{ .kind = .program },
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
             }
         }.handle,
-    }, .abilities = &.{.{
+    .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Gain [Credits]",
         .req = &struct {
@@ -1242,7 +1344,7 @@ pub const all_cards = [_]CardSpec{
         .code = 30049,
         .card_type = "Operation",
         .cost = 3,
-        .corp_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
                 const damage = g.turn_events.agenda_points_scored_this_turn;
@@ -1264,7 +1366,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score = .{ .kind = .gain_clicks, .amount = 3 },
     },
@@ -1306,7 +1408,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -1519,7 +1621,7 @@ pub const all_cards = [_]CardSpec{
         // Spin Doctor ability not yet wired (was dead in legacy too)
     },
     // --- Phase 3: Consoles ---
-    .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }}, .installed_ability = .{ .trash_access_hand_cost = 2 } },
+    .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }}, .trash_access_hand_cost = 2 },
     .{
         .title = "Pantograph",
         .side = .runner,
@@ -1581,14 +1683,14 @@ pub const all_cards = [_]CardSpec{
         }.choice,
     },
     // --- Phase 4: Trojans ---
-    .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+    .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program },
         .trojan_break_any = true,
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
             }
         }.handle,
-    }, .abilities = &.{.{
+    .abilities = &.{.{
         .on_use = &encounterBotulusHandler,
         .req = &struct {
             fn check(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
@@ -1604,20 +1706,20 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Tranquilizer", .side = .runner, .code = 30017, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+    .{ .title = "Tranquilizer", .side = .runner, .code = 30017, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program },
         .trojan_derez_threshold = 3,
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
             }
         }.handle,
-    }, .event_abilities = &.{.{
+    .event_abilities = &.{.{
         .event = .runner_turn_begins,
         .handler = &struct {
             fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
                 const g = gameFromEffectContext(ctx);
-                if (card.virus_counter < card.installed_ability.trojan_derez_threshold) return;
+                if (card.virus_counter < card.trojan_derez_threshold) return;
                 for (g.corp_servers.items) |*server| {
                     for (server.ices.items) |*ice| {
                         for (ice.hosted) |hosted| {
@@ -1656,7 +1758,26 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
         .trash_cost = 1,
         .install = .{ .kind = .corp_server_choice },
-        .access = .{ .kind = .corp_pay_etr, .credit_cost = 2 },
+        .on_approach = &struct {
+            fn approach(g: *Game, card: *const state.CardInstance) anyerror!bool {
+                if (!card.rezzed) return false;
+                if (g.corp_credit >= 2 and g.corp_hand.items.len >= 2) {
+                    const allocator = g.arena.allocator();
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "anoetic-void"),
+                        .choices = &.{
+                            .{ .kind = .string, .text = "Use Anoetic Void" },
+                            .{ .kind = .string, .text = "No action" },
+                        },
+                        .source_card = card.*,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    return true;
+                }
+                return false;
+            }
+        }.approach,
         .on_prompt_choice = &struct {
             fn choice(g: *Game, choice_text: []const u8) anyerror!void {
                 if (std.mem.eql(u8, choice_text, "Use Anoetic Void")) {
@@ -1692,7 +1813,7 @@ pub const all_cards = [_]CardSpec{
                     const run = &g.run.?;
                     const allocator = g.arena.allocator();
                     // Check Manegarm next
-                    if (try checkManegarmSkunkworks(g)) return;
+                    if (try checkServerApproachAbilities(g)) return;
                     if (try prepareNextAccess(g)) {
                         run.phase = try allocator.dupe(u8, "success");
                         if (g.runner_prompt_state) |ps| {
@@ -2347,7 +2468,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 1,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         // "First time Runner trashes installed Corp card each turn, they may spend [click]. If not, Corp gets +1 allotted [click] next turn."
         // Complex trigger - requires event system enhancement
@@ -2360,7 +2481,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Research"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -2384,7 +2505,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Security"},
         .agenda_points = 2,
         .advancement_requirement = 4,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -2403,7 +2524,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Expansion"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -2424,7 +2545,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -2445,7 +2566,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 3,
         .advancement_requirement = 5,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, _: state.CardInstance) anyerror!void {
@@ -2456,7 +2577,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.score,
     },
-    .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .access = .{ .kind = .steal_agenda }, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 2 } },
+    .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 2 } },
     .{
         .title = "Off the Books",
         .side = .corp,
@@ -2465,7 +2586,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Initiative"},
         .agenda_points = 2,
         .advancement_requirement = 3,
-        .access = .{ .kind = .steal_agenda },
+
         .install = .{ .kind = .corp_remote_only },
         .on_score_fn = &struct {
             fn score(g: *Game, card: state.CardInstance) anyerror!void {
@@ -2686,8 +2807,8 @@ pub const all_cards = [_]CardSpec{
             }.handle,
         }},
     },
-    .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+    .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only },
+        .auto_take_credits = true,
         .initial_credit_counters = 6,
         .take_credits_amount = 2,
         .trash_on_empty = true,
@@ -2696,7 +2817,7 @@ pub const all_cards = [_]CardSpec{
                 gameFromEffectContext(ctx).corp_click += 2;
             }
         }.handle,
-    } },
+    },
     .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     .{
@@ -2731,8 +2852,8 @@ pub const all_cards = [_]CardSpec{
             }.handle,
         }},
     },
-    .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only }, .installed_ability = .{
-        .kind = .start_of_turn_credits,
+    .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only },
+        .auto_take_credits = true,
         .initial_credit_counters = 8,
         .take_credits_amount = 4,
         .trash_on_empty = true,
@@ -2741,7 +2862,7 @@ pub const all_cards = [_]CardSpec{
                 try drawCards(gameFromEffectContext(ctx), .corp, 1);
             }
         }.handle,
-    } },
+    },
     .{ .title = "Plutus", .side = .corp, .code = 35073, .card_type = "Asset", .subtypes = &.{"Deep Net"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     // --- Elevation Upgrades ---
     .{ .title = "Mercia B4LL4RD", .side = .corp, .code = 35045, .card_type = "Upgrade", .subtypes = &.{ "Academic", "Bioroid" }, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
@@ -2757,10 +2878,10 @@ pub const all_cards = [_]CardSpec{
         .install = .{ .kind = .corp_server_choice },
         // "2 recurring credits for rez costs. Persistent: trash cost of assets in root +2."
         // Recurring credits handled via initial counters. Trash cost increase is static.
-        .installed_ability = .{ .initial_credit_counters = 2 },
+        .initial_credit_counters = 2,
     },
     // --- Elevation Operations ---
-    .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .corp_play = .{ .kind = .custom }, .on_play = &struct {
+    .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .on_play = &struct {
         fn play(g: *Game, _: state.CardInstance) anyerror!void {
             g.corp_click += 2;
         }
@@ -2771,7 +2892,7 @@ pub const all_cards = [_]CardSpec{
         .code = 35044,
         .card_type = "Operation",
         .cost = 2,
-        .corp_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 // "Draw 2 cards. Install up to 2 cards from HQ (one at a time)."
@@ -2843,7 +2964,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Transaction"},
         .cost = 4,
-        .corp_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 const allocator = g.arena.allocator();
@@ -2921,7 +3042,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Gray Ops"},
         .cost = 0,
-        .corp_play = .{ .kind = .custom },
+
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // "Play only if the Runner is tagged."
@@ -3004,7 +3125,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Gray Ops"},
         .cost = 0,
-        .corp_play = .{ .kind = .custom },
+
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // Requires runner to be tagged and have stolen agendas
@@ -3081,7 +3202,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Double"},
         .cost = 2,
-        .corp_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 // Additional cost: spend [click] (Double)
@@ -3123,7 +3244,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Transaction"},
         .cost = 1,
-        .corp_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 // "Resolve 2 of: Gain 2cr, Install ice ignoring costs, Place 1 advancement, Draw 1 + shuffle 1"
@@ -3283,7 +3404,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Black Ops"},
         .cost = 5,
         .trash_cost = 3,
-        .corp_play = .{ .kind = .custom },
+
         .can_play = &struct {
             fn check(g: *const Game) bool {
                 // "Play only if the threat level is 4 or greater, and only if the Runner made a successful run during their last turn."
@@ -3338,7 +3459,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Transaction"},
         .cost = 3,
-        .corp_play = .{ .kind = .gain_credits, .gain_credits = 5 },
+        .on_play = corpGainCreditsOnPlay(5, 0),
         // Flashback: play from Archives for 1 extra click, gain 1 click after
         // Params now inline in applyCorpFlashback/isCorpFlashbackPlayable
         .can_play = &struct {
@@ -3356,7 +3477,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .archives_only },
+        .on_play = runnerRunEventOnPlay(.archives_only, 0),
     },
     .{
         .title = "Scrounge",
@@ -3365,7 +3486,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Double"},
         .cost = 1,
-        .runner_play = .{ .kind = .custom, .lose_clicks = 1 },
+
         .on_play = &struct {
             fn play(g: *Game, card: state.CardInstance) anyerror!void {
                 // Additional cost: spend [click] (Double)
@@ -3452,9 +3573,9 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 1,
-        .runner_play = .{ .kind = .choose_run_target },
+        .on_play = runnerRunEventOnPlay(.any_runnable, 0),
     },
-    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .runner_play = .{ .kind = .choose_run_target, .gain_credits = 6, .successful_run_effect = .draw_cards, .successful_run_draw_cards = 0 } },
+    .{ .title = "Clean Getaway", .side = .runner, .code = 35014, .card_type = "Event", .subtypes = &.{"Run"}, .cost = 3, .on_play = runnerRunEventOnPlay(.any_runnable, 0), .successful_run_effect = .draw_cards },
     .{
         .title = "Lie Low",
         .side = .runner,
@@ -3462,7 +3583,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Double"},
         .cost = 1,
-        .runner_play = .{ .kind = .custom, .lose_clicks = 1 },
+
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
                 // Additional cost: spend [click] (Double)
@@ -3535,7 +3656,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{ "Double", "Run" },
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .archives_only, .lose_clicks = 1 },
+        .on_play = runnerRunEventOnPlay(.archives_only, 1),
     },
     .{
         .title = "Transfer of Wealth",
@@ -3544,7 +3665,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .hq_only },
+        .on_play = runnerRunEventOnPlay(.hq_only, 0),
     },
     .{
         .title = "Illumination",
@@ -3553,7 +3674,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Event",
         .subtypes = &.{"Run"},
         .cost = 0,
-        .runner_play = .{ .kind = .choose_run_target, .run_target_kind = .rd_only },
+        .on_play = runnerRunEventOnPlay(.rd_only, 0),
     },
     .{
         .title = "Ritual",
@@ -3561,7 +3682,7 @@ pub const all_cards = [_]CardSpec{
         .code = 35026,
         .card_type = "Event",
         .cost = 0,
-        .runner_play = .{ .kind = .custom },
+
         .on_play = &struct {
             fn play(g: *Game, _: state.CardInstance) anyerror!void {
                 // "Draw 1 card for each [click] you have remaining."
@@ -3585,16 +3706,14 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
         .static_abilities = &.{.{ .kind = .mu, .value = 1 }},
-        .installed_ability = .{
-            .on_install = &struct {
-                fn install(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                    const g = gameFromEffectContext(ctx);
-                    const install_ctx = g.runner_install_context orelse return;
-                    if (install_ctx.install_cost != 0 or g.runner_deck.items.len == 0) return;
-                    try hostTopRunnerDeckCard(g, card);
-                }
-            }.install,
-        },
+        .on_install = &struct {
+            fn install(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                const install_ctx = g.runner_install_context orelse return;
+                if (install_ctx.install_cost != 0 or g.runner_deck.items.len == 0) return;
+                try hostTopRunnerDeckCard(g, card);
+            }
+        }.install,
         .abilities = &.{.{
             .label = "Play or install a hosted card",
             .req = &struct {
@@ -3975,15 +4094,15 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Program",
         .cost = 0,
         .runner_install = .{ .kind = .program },
-        .installed_ability = .{ .trash_access_self_trash = true, .trash_access_draw = 1 },
+        .trash_access_self_trash = true, .trash_access_draw = 1,
     },
-    .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .installed_ability = .{
+    .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program },
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 2;
             }
         }.handle,
-    }, .abilities = &.{
+    .abilities = &.{
         .{ .on_use = &encounterBreakHandler, .req = &isInEncounter, .credit_cost = 1, .break_count = 1 },
         .{ .on_use = &encounterPumpHandler, .req = &isInEncounter, .credit_cost = 0, .pump_amount = 2, .pump_can_use = &struct {
             fn canUse(_: *const state.EffectContext, card: *const state.CardInstance) bool {
@@ -4031,7 +4150,7 @@ pub const all_cards = [_]CardSpec{
         .cost = 1,
         .runner_install = .{ .kind = .program, .mu_cost = 2 },
         // "2 recurring credits. You can spend hosted credits to pay trash costs."
-        .installed_ability = .{ .initial_credit_counters = 2 },
+        .initial_credit_counters = 2,
         .event_abilities = &.{.{
             .event = .runner_turn_begins,
             .handler = &struct {
@@ -4041,7 +4160,7 @@ pub const all_cards = [_]CardSpec{
             }.handle,
         }},
     },
-    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .installed_ability = .{ .trojan_adds_all_subtypes = true } },
+    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .trojan_adds_all_subtypes = true },
     .{
         .title = "Devadatta Drone",
         .side = .runner,
@@ -4049,11 +4168,11 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Program",
         .cost = 1,
         .runner_install = .{ .kind = .program },
-        .installed_ability = .{ .on_install = &struct {
+        .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.power_counter += 2;
             }
-        }.handle },
+        }.handle,
         .event_abilities = &.{.{
             .event = .successful_run_ends,
             .handler = &struct {
@@ -4162,12 +4281,10 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{ "Job", "Location" },
         .cost = 2,
         .runner_install = .{ .kind = .resource, .mu_cost = 0 },
-        .installed_ability = .{
-            .kind = .start_of_turn_credits,
-            .initial_credit_counters = 6,
-            .take_credits_amount = 1,
-            .trash_on_empty = true,
-        },
+        .auto_take_credits = true,
+        .initial_credit_counters = 6,
+        .take_credits_amount = 1,
+        .trash_on_empty = true,
     },
     .{
         .title = "\"Knickknack\" O'Brian",
@@ -4285,11 +4402,9 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Job"},
         .cost = 2,
         .runner_install = .{ .kind = .resource, .mu_cost = 0 },
-        .installed_ability = .{
-            .initial_credit_counters = 1,
-            .auto_trash_at_credits = 6,
-            .draw_on_auto_trash = 1,
-        },
+        .initial_credit_counters = 1,
+        .auto_trash_at_credits = 6,
+        .draw_on_auto_trash = 1,
         .event_abilities = &.{.{
             .event = .run_begins,
             .handler = &struct {
@@ -4297,14 +4412,14 @@ pub const all_cards = [_]CardSpec{
                     const g = gameFromEffectContext(ctx);
                     card.credit_counter += 1;
                     g.systemMsg(.runner, card.code orelse 0, "Runner places 1 [credit] on {s}.", .{card.title});
-                    if (card.credit_counter >= card.installed_ability.auto_trash_at_credits) {
+                    if (card.credit_counter >= card.auto_trash_at_credits) {
                         g.runner_credit += card.credit_counter;
                         g.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to gain {d} [credits] and draw {d} card{s}.", .{
-                            card.title,                                                                       card.credit_counter, card.installed_ability.draw_on_auto_trash,
-                            if (card.installed_ability.draw_on_auto_trash != 1) @as([]const u8, "s") else "",
+                            card.title,                                                                       card.credit_counter, card.draw_on_auto_trash,
+                            if (card.draw_on_auto_trash != 1) @as([]const u8, "s") else "",
                         });
                         card.credit_counter = 0;
-                        try drawCards(g, .runner, card.installed_ability.draw_on_auto_trash);
+                        try drawCards(g, .runner, card.draw_on_auto_trash);
                         // Remove self from resources
                         if (findRunnerResourceIndex(g, card.code orelse 0)) |idx| {
                             const trashed = g.runner_rig_resources.orderedRemove(idx);
@@ -5617,7 +5732,7 @@ pub fn applyStartTurn(
 
             // Start-of-turn: take 1 credit from each card with place_credits ability and counters
             for (generated.runner_rig_resources.items) |*card| {
-                if (card.installed_ability.kind == .place_credits and card.credit_counter > 0) {
+                if (card.place_credits_per_turn and card.credit_counter > 0) {
                     card.credit_counter -= 1;
                     generated.runner_credit += 1;
                     generated.systemMsg(.runner, card.code orelse 0, "Runner gains 1 [credit] from {s}.", .{card.title});
@@ -5629,15 +5744,15 @@ pub fn applyStartTurn(
                 var ri: usize = 0;
                 while (ri < generated.runner_rig_resources.items.len) {
                     var card = &generated.runner_rig_resources.items[ri];
-                    if (card.installed_ability.kind == .start_of_turn_credits and card.credit_counter > 0) {
-                        const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
+                    if (card.auto_take_credits and card.credit_counter > 0) {
+                        const take = @min(card.credit_counter, card.take_credits_amount);
                         card.credit_counter -= take;
                         generated.runner_credit += take;
                         generated.systemMsg(.runner, card.code orelse 0, "Runner takes {d} [credit{s}] from {s}.", .{
                             take, if (take != 1) "s" else "", card.title,
                         });
-                        if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
-                            if (card.installed_ability.on_empty) |callback| {
+                        if (card.trash_on_empty and card.credit_counter == 0) {
+                            if (card.on_empty) |callback| {
                                 try callback(effectContext(generated), card);
                             }
                             const trashed = generated.runner_rig_resources.orderedRemove(ri);
@@ -5875,7 +5990,7 @@ fn applyPromptChoice(
 
     if (std.mem.eql(u8, prompt.prompt_type, prompt_run_central)) {
         // Red Team: click already spent in run_central handler, just start the run
-        try applyRunFromAbility(generated, choice_text, prompt.source_card);
+        try applyRunFromAbility(generated, choice_text, if (prompt.source_card) |sc| sc.code else null);
         return;
     }
 
@@ -6181,20 +6296,11 @@ fn applyAdvanceInstalledChoice(
     generated: *Game,
     choice_text: []const u8,
 ) !void {
-    const source_card = if (generated.corp_prompt_state) |prompt_state| prompt_state.source_card else null;
-    const advancement_amount = if (source_card) |card| card.corp_play.advancement_amount else 1;
-    if (advancement_amount == 1) {
-        try spendClicks(generated, .corp, 1);
-        try spendCredits(generated, .corp, 1);
-    }
-    const advanced_card = try addAdvancementCounter(generated, choice_text, advancement_amount);
-    if (advancement_amount == 1) {
-        generated.systemMsg(.corp, advanced_card.code orelse 0, "Corp spends [click] and pays 1 [credit] to advance {s}.", .{advanced_card.title});
-    } else {
-        if (source_card) |card| {
-            generated.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to advance {s} {d} times.", .{ card.title, advanced_card.title, advancement_amount });
-        }
-    }
+    // Basic advance action: always 1 advancement, costs 1 click + 1 credit
+    try spendClicks(generated, .corp, 1);
+    try spendCredits(generated, .corp, 1);
+    const advanced_card = try addAdvancementCounter(generated, choice_text, 1);
+    generated.systemMsg(.corp, advanced_card.code orelse 0, "Corp spends [click] and pays 1 [credit] to advance {s}.", .{advanced_card.title});
     generated.corp_prompt_state = null;
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
@@ -6311,9 +6417,7 @@ fn isAdvanceable(card: state.CardInstance) bool {
     if (card.card_type) |ct| {
         if (std.mem.eql(u8, ct, "Agenda")) return true;
     }
-    // Assets with net_damage_on_access and adds_advancement (Urtica Cipher)
-    if (card.access.adds_advancement) return true;
-    // Explicitly advanceable cards (Pharos, Clearinghouse)
+    // Explicitly advanceable cards (Urtica Cipher, Pharos, Clearinghouse)
     if (card.advanceable) return true;
     return false;
 }
@@ -6920,7 +7024,7 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     }
     try spendCredits(generated, .runner, pending.runner_install_cost);
     var installed_card = try removeCardFromHand(generated, .runner, pending.card_index);
-    installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
+    installed_card.credit_counter = installed_card.initial_credit_counters;
     clearAbilityUsage(&installed_card);
     // Host trojan on the ICE card (matching Clojure's model)
     const allocator = generated.arena.allocator();
@@ -6939,8 +7043,8 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
         mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
     }
     // Tranquilizer: check derez threshold immediately after install
-    if (ice.hosted[ice.hosted.len - 1].installed_ability.trojan_derez_threshold > 0 and
-        ice.hosted[ice.hosted.len - 1].virus_counter >= ice.hosted[ice.hosted.len - 1].installed_ability.trojan_derez_threshold)
+    if (ice.hosted[ice.hosted.len - 1].trojan_derez_threshold > 0 and
+        ice.hosted[ice.hosted.len - 1].virus_counter >= ice.hosted[ice.hosted.len - 1].trojan_derez_threshold)
     {
         ice.rezzed = false;
     }
@@ -6958,10 +7062,10 @@ fn runner_had_successful_run_last_turn(generated: *const Game) bool {
 fn runner_installed_click_draw_bonus(generated: *const Game) u8 {
     var bonus: u8 = 0;
     for (generated.runner_rig_resources.items) |card| {
-        bonus += card.installed_ability.click_draw_bonus;
+        bonus += card.click_draw_bonus;
     }
     for (generated.runner_rig_hardware.items) |card| {
-        bonus += card.installed_ability.click_draw_bonus;
+        bonus += card.click_draw_bonus;
     }
     return bonus;
 }
@@ -7030,7 +7134,7 @@ fn iceHasSubtype(ice: state.CardInstance, subtype: []const u8) bool {
     if (hasSubtype(ice, subtype)) return true;
     // Chromatophores: hosted trojan adds all subtypes to host ICE
     for (ice.hosted) |hosted| {
-        if (hosted.installed_ability.trojan_adds_all_subtypes) return true;
+        if (hosted.trojan_adds_all_subtypes) return true;
     }
     return false;
 }
@@ -7171,7 +7275,7 @@ fn applyPendingInstallChoice(
 
     _ = try removeCardFromHand(generated, .corp, pending_install.card_index);
     var installed = pending_install.card;
-    installed.credit_counter = installed.installed_ability.initial_credit_counters;
+    installed.credit_counter = installed.initial_credit_counters;
     clearAbilityUsage(&installed);
     try installCard(generated, installed, choice_text);
 
@@ -7226,12 +7330,11 @@ fn applyAccessPromptChoice(
         try applySelfTrashAccess(generated, accessed);
         return;
     }
-    switch (accessed.access.kind) {
-        .steal_agenda => try applyStealAgendaChoice(generated, accessed, choice_text),
-        .net_damage_on_access => return error.UnsupportedAccessTarget,
-        .tax_or_etr => return error.UnsupportedAccessTarget,
-        .corp_pay_etr => return error.UnsupportedAccessTarget,
-        .none => return error.UnsupportedAccessTarget,
+    const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
+    if (is_agenda) {
+        try applyStealAgendaChoice(generated, accessed, choice_text);
+    } else {
+        return error.UnsupportedAccessTarget;
     }
 }
 
@@ -7239,8 +7342,8 @@ fn applyCarnivoreTrash(generated: *Game, accessed: state.CardInstance) !void {
     // Find the card with trash_access_hand_cost and use it
     var hand_cost: u8 = 2; // default
     for (generated.runner_rig_hardware.items) |*hw| {
-        if (hw.installed_ability.trash_access_hand_cost > 0 and !isAbilityUsedThisTurn(hw, 0)) {
-            hand_cost = hw.installed_ability.trash_access_hand_cost;
+        if (hw.trash_access_hand_cost > 0 and !isAbilityUsedThisTurn(hw, 0)) {
+            hand_cost = hw.trash_access_hand_cost;
             markAbilityUsedThisTurn(hw, 0);
             break;
         }
@@ -7268,8 +7371,8 @@ fn applySelfTrashAccess(generated: *Game, accessed: state.CardInstance) !void {
     var trash_code: u32 = 0;
     // Check programs first, then hardware
     for (generated.runner_rig_program.items, 0..) |prog, idx| {
-        if (prog.installed_ability.trash_access_self_trash) {
-            draw_count = prog.installed_ability.trash_access_draw;
+        if (prog.trash_access_self_trash) {
+            draw_count = prog.trash_access_draw;
             trash_title = prog.title;
             trash_code = prog.code orelse 0;
             const trashed_prog = generated.runner_rig_program.orderedRemove(idx);
@@ -7315,9 +7418,9 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     generated.turn_events.runner_trash_corp_card_count += 1;
     if (try fireEvent(generated, .runner_trash_corp_card)) return;
     // AMAZE Amusements: if trashed during a run, record pending tags
-    if (accessed.installed_ability.tags_on_agenda_steal_from_server > 0) {
+    if (accessed.tags_on_agenda_steal_from_server > 0) {
         if (generated.run) |*mutable_run| {
-            mutable_run.tags_pending_on_steal += accessed.installed_ability.tags_on_agenda_steal_from_server;
+            mutable_run.tags_pending_on_steal += accessed.tags_on_agenda_steal_from_server;
         }
     }
     try removeCurrentAccessedCard(generated);
@@ -7738,15 +7841,12 @@ fn applyAccessCleanupChoice(
     choice_text: []const u8,
 ) !void {
     const accessed = (if (generated.corp_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
-    switch (accessed.access.kind) {
-        .steal_agenda => {
-            if (!std.mem.eql(u8, choice_text, "Done")) return error.UnsupportedChoice;
-            try completeRunAfterAccess(generated);
-        },
-        .net_damage_on_access => return error.UnsupportedChoice,
-        .tax_or_etr => return error.UnsupportedChoice,
-        .corp_pay_etr => return error.UnsupportedChoice,
-        .none => return error.UnsupportedChoice,
+    const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
+    if (is_agenda) {
+        if (!std.mem.eql(u8, choice_text, "Done")) return error.UnsupportedChoice;
+        try completeRunAfterAccess(generated);
+    } else {
+        return error.UnsupportedChoice;
     }
 }
 
@@ -7806,55 +7906,16 @@ fn logCorpOperationPlay(generated: *Game, card: state.CardInstance, from_archive
 }
 
 fn resolveCorpOperation(generated: *Game, card: state.CardInstance) !void {
-    const allocator = generated.arena.allocator();
-    switch (card.corp_play.kind) {
-        .gain_credits => {
-            generated.corp_credit += card.corp_play.gain_credits;
-            try drawCards(generated, .corp, card.corp_play.draw_cards);
-            // Fire operation_played for Zwicky trigger (credit gain from operation)
-            if (card.corp_play.gain_credits > 0) {
-                generated.turn_events.operation_played_count += 1;
-                if (try fireEvent(generated, .operation_played)) return;
-            }
-        },
-        .advance_installed => {
-            const choices = if (card.corp_play.not_installed_this_turn)
-                try installedNotThisTurnChoices(allocator, generated.corp_servers.items)
-            else
-                try installedCardChoices(allocator, generated.corp_servers.items);
-            if (choices.len == 0) {
-                generated.decision_side = .corp;
-                generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
-                return;
-            }
-            generated.corp_prompt_state = .{
-                .prompt_type = try allocator.dupe(u8, prompt_advance_installed),
-                .choices = choices,
-                .source_card = card,
-            };
-            generated.decision_side = .corp;
-            generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
-            return;
-        },
-        .custom => {
-            const spec = lookupCardSpec(card) orelse return error.UnsupportedOperation;
-            if (spec.on_play) |handler| {
-                try handler(generated, card);
-                if (spec.on_play_msg) |msg| {
-                    generated.systemMsg(.corp, spec.code, "Corp uses {s} to {s}", .{ spec.title, msg });
-                }
-            } else {
-                return error.UnsupportedOperation;
-            }
-            // If handler opened a prompt, don't override legal actions
-            if (generated.corp_prompt_state != null or generated.runner_prompt_state != null) return;
-        },
-        .no_op => {},
-        .none => return error.UnsupportedOperation,
+    const spec = lookupCardSpec(card) orelse return error.UnsupportedOperation;
+    const handler = spec.on_play orelse return error.UnsupportedOperation;
+    try handler(generated, card);
+    if (spec.on_play_msg) |msg| {
+        generated.systemMsg(.corp, spec.code, "Corp uses {s} to {s}", .{ spec.title, msg });
     }
-
+    // If handler opened a prompt, don't override legal actions
+    if (generated.corp_prompt_state != null or generated.runner_prompt_state != null) return;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }
 
 fn applyRunnerPlayFromHand(
@@ -7869,31 +7930,25 @@ fn applyRunnerPlayFromHand(
     const card_type = card.card_type orelse return error.MissingCardType;
     if (!std.mem.eql(u8, card_type, "Event")) return error.UnsupportedCardType;
 
-    switch (card.runner_play.kind) {
-        .gain_credits => try playRunnerGainCredits(generated, card_index, card),
-        .choose_run_target => try playRunnerChooseRunTarget(generated, card_index, card),
-        .custom => {
-            const spec = lookupCardSpec(card) orelse return error.UnsupportedCardType;
-            const handler = spec.on_play orelse return error.UnsupportedCardType;
-            // Common event play flow: spend click, pay cost, remove from hand, discard
-            const ev_cost = card.cost orelse 0;
-            try spendClicks(generated, .runner, 1);
-            try spendCredits(generated, .runner, ev_cost);
-            _ = try removeCardFromHand(generated, .runner, card_index);
-            try appendDiscardCard(generated, .runner, card);
-            if (ev_cost > 0) {
-                generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] and pays {d} [credit{s}] to play {s}.", .{
-                    ev_cost, if (ev_cost != 1) "s" else "", card.title,
-                });
-            } else {
-                generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] to play {s}.", .{card.title});
-            }
-            try handler(generated, card);
-            if (spec.on_play_msg) |msg| {
-                generated.systemMsg(.runner, spec.code, "Runner uses {s} to {s}", .{ spec.title, msg });
-            }
-        },
-        .none => return error.UnsupportedCardType,
+    const spec = lookupCardSpec(card) orelse return error.UnsupportedCardType;
+    const handler = spec.on_play orelse return error.UnsupportedCardType;
+
+    // Common event play flow: spend click, pay cost, remove from hand, discard, log
+    const ev_cost = card.cost orelse 0;
+    try spendClicks(generated, .runner, 1);
+    try spendCredits(generated, .runner, ev_cost);
+    _ = try removeCardFromHand(generated, .runner, card_index);
+    try appendDiscardCard(generated, .runner, card);
+    if (ev_cost > 0) {
+        generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] and pays {d} [credit{s}] to play {s}.", .{
+            ev_cost, if (ev_cost != 1) "s" else "", card.title,
+        });
+    } else {
+        generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] to play {s}.", .{card.title});
+    }
+    try handler(generated, card);
+    if (spec.on_play_msg) |msg| {
+        generated.systemMsg(.runner, spec.code, "Runner uses {s} to {s}", .{ spec.title, msg });
     }
 }
 
@@ -8025,7 +8080,7 @@ fn completeRunnerInstall(generated: *Game, card_index: u8, _: state.CardInstance
     try spendCredits(generated, .runner, install_cost);
 
     var installed_card = try removeCardFromHand(generated, .runner, card_index);
-    installed_card.credit_counter = installed_card.installed_ability.initial_credit_counters;
+    installed_card.credit_counter = installed_card.initial_credit_counters;
     clearAbilityUsage(&installed_card);
     try appendRunnerInstalledCard(generated, installed_card);
     generated.runner_install_context = .{ .install_cost = install_cost };
@@ -8033,14 +8088,14 @@ fn completeRunnerInstall(generated: *Game, card_index: u8, _: state.CardInstance
     switch (installed_card.runner_install.kind) {
         .hardware => {
             if (generated.runner_rig_hardware.items.len > 0) {
-                if (generated.runner_rig_hardware.items[generated.runner_rig_hardware.items.len - 1].installed_ability.on_install) |callback| {
+                if (generated.runner_rig_hardware.items[generated.runner_rig_hardware.items.len - 1].on_install) |callback| {
                     try callback(effectContext(generated), &generated.runner_rig_hardware.items[generated.runner_rig_hardware.items.len - 1]);
                 }
             }
         },
         .resource => {
             if (generated.runner_rig_resources.items.len > 0) {
-                if (generated.runner_rig_resources.items[generated.runner_rig_resources.items.len - 1].installed_ability.on_install) |callback| {
+                if (generated.runner_rig_resources.items[generated.runner_rig_resources.items.len - 1].on_install) |callback| {
                     try callback(effectContext(generated), &generated.runner_rig_resources.items[generated.runner_rig_resources.items.len - 1]);
                 }
             }
@@ -8080,74 +8135,12 @@ fn completeRunnerInstall(generated: *Game, card_index: u8, _: state.CardInstance
     generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
 
-fn playRunnerGainCredits(
-    generated: *Game,
-    card_index: u8,
-    card: state.CardInstance,
-) !void {
-    const allocator = generated.arena.allocator();
-    const play_cost = card.cost orelse 0;
-    try spendClicks(generated, .runner, 1);
-    try spendCredits(generated, .runner, play_cost);
-    _ = try removeCardFromHand(generated, .runner, card_index);
-    try appendDiscardCard(generated, .runner, card);
-    try spendClicks(generated, .runner, card.runner_play.lose_clicks);
-    generated.runner_credit += card.runner_play.gain_credits;
-    try drawCards(generated, .runner, card.runner_play.draw_cards);
-
-    if (play_cost > 0) {
-        generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] and pays {d} [credit{s}] to play {s}.", .{
-            play_cost, if (play_cost != 1) "s" else "", card.title,
-        });
-    } else {
-        generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] to play {s}.", .{card.title});
-    }
-
-    generated.decision_side = .runner;
-    generated.legal_actions = try runnerOpeningActionsForState(
-        allocator,
-        generated,
-    );
-}
-
-fn playRunnerChooseRunTarget(
-    generated: *Game,
-    card_index: u8,
-    card: state.CardInstance,
-) !void {
-    const allocator = generated.arena.allocator();
-    const rt_cost = card.cost orelse 0;
-    try spendClicks(generated, .runner, 1);
-    try spendCredits(generated, .runner, rt_cost);
-    _ = try removeCardFromHand(generated, .runner, card_index);
-    try appendDiscardCard(generated, .runner, card);
-    // Double events: spend additional clicks
-    if (card.runner_play.lose_clicks > 0) {
-        try spendClicks(generated, .runner, card.runner_play.lose_clicks);
-    }
-    if (rt_cost > 0) {
-        generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] and pays {d} [credit{s}] to play {s}.", .{
-            rt_cost, if (rt_cost != 1) "s" else "", card.title,
-        });
-    } else {
-        generated.systemMsg(.runner, card.code orelse 0, "Runner spends [click] to play {s}.", .{card.title});
-    }
-    generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_run_target),
-        .choices = try runTargetChoicesFor(allocator, card.runner_play.run_target_kind, generated.corp_servers.items),
-        .source_card = card,
-    };
-
-    generated.decision_side = .runner;
-    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-}
-
 fn applyRunnerRunTargetChoice(
     generated: *Game,
     server: []const u8,
 ) !void {
     const source_card = (if (generated.runner_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
-    if (source_card.runner_play.kind != .choose_run_target) return error.UnsupportedPrompt;
+    const spec = lookupCardSpec(source_card) orelse return error.UnsupportedPrompt;
     const allocator = generated.arena.allocator();
 
     const run_server = try canonicalRunServer(allocator, server);
@@ -8173,15 +8166,15 @@ fn applyRunnerRunTargetChoice(
         .current_ice_index = null,
         .corp_auto_no_action = false,
         .no_action = null,
-        .temporary_run_credits = source_card.runner_play.run_credits,
+        .temporary_run_credits = spec.run_credits,
         .accesses_remaining = 0,
         .accessed_count = 0,
         .accessed_card_indexes = .{ null, null, null, null },
         .access_card_index = null,
-        .rez_cost_bonus = source_card.runner_play.run_rez_cost_bonus,
-        .successful_run_effect = source_card.runner_play.successful_run_effect,
-        .successful_run_draw_cards = source_card.runner_play.successful_run_draw_cards,
-        .access_bonus = source_card.runner_play.successful_run_access_bonus,
+        .rez_cost_bonus = spec.run_rez_cost_bonus,
+        .successful_run_effect = spec.successful_run_effect,
+        .successful_run_draw_cards = spec.successful_run_draw_cards,
+        .access_bonus = spec.successful_run_access_bonus,
         .jack_out_available = false,
     };
     // Fire run_begins event (Side Hustle: place credit)
@@ -8245,7 +8238,7 @@ fn applyRun(
 fn applyRunFromAbility(
     generated: *Game,
     server: []const u8,
-    source_card: ?state.CardInstance,
+    source_card_code: ?u32,
 ) !void {
     const allocator = generated.arena.allocator();
     const run_server = try canonicalRunServer(allocator, server);
@@ -8283,7 +8276,7 @@ fn applyRunFromAbility(
         .successful_run_draw_cards = 0,
         .access_bonus = 0,
         .jack_out_available = false,
-        .source_card_code = if (source_card) |sc| sc.code else null,
+        .source_card_code = source_card_code,
     };
     // Fire run_begins event (Side Hustle: place credit)
     if (try fireEvent(generated, .run_begins)) return;
@@ -9108,63 +9101,19 @@ fn resolveEncounteredIceSubroutines(
     }
 }
 
-fn checkManegarmSkunkworks(generated: *Game) !bool {
+fn checkServerApproachAbilities(generated: *Game) !bool {
     const run = generated.run orelse return false;
     if (run.position != 0) return false;
 
     const target_server = try findServerByRunPath(generated.corp_servers.items, run.server);
     const server = target_server.slot;
 
-    for (server.content.items) |card| {
-        if (card.access.kind == .tax_or_etr and card.rezzed) {
-            const allocator = generated.arena.allocator();
-            var choices: std.ArrayList(state.PromptChoice) = .empty;
-
-            if (generated.runner_click >= card.access.click_cost) {
-                try choices.append(allocator, .{
-                    .kind = .string,
-                    .text = try allocator.dupe(u8, "Spend [Click][Click]"),
-                });
-            }
-
-            if (generated.runner_credit >= card.access.credit_cost) {
-                try choices.append(allocator, .{
-                    .kind = .string,
-                    .text = try allocator.dupe(u8, "Pay 5 [Credits]"),
-                });
-            }
-
-            try choices.append(allocator, .{
-                .kind = .string,
-                .text = try allocator.dupe(u8, "End the run"),
-            });
-
-            generated.runner_prompt_state = .{
-                .prompt_type = try allocator.dupe(u8, prompt_manegarm_tax),
-                .choices = try choices.toOwnedSlice(allocator),
-                .source_card = card,
-            };
-
-            generated.decision_side = .runner;
-            generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-            return true;
-        }
-
-        // Anoetic Void: corp may pay 2cr + trash 2 from HQ to ETR
-        if (card.access.kind == .corp_pay_etr and card.rezzed) {
-            if (generated.corp_credit >= card.access.credit_cost and generated.corp_hand.items.len >= 2) {
-                const allocator = generated.arena.allocator();
-                generated.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "anoetic-void"),
-                    .choices = &.{
-                        .{ .kind = .string, .text = "Use Anoetic Void" },
-                        .{ .kind = .string, .text = "No action" },
-                    },
-                    .source_card = card,
-                };
-                generated.decision_side = .corp;
-                generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
-                return true;
+    for (server.content.items) |*card| {
+        if (card.code) |code| {
+            if (lookupCardSpecByCode(code)) |spec| {
+                if (spec.on_approach) |handler| {
+                    if (try handler(generated, card)) return true;
+                }
             }
         }
     }
@@ -9547,7 +9496,7 @@ fn advanceMovementPhase(generated: *Game) !void {
     }
 
     // Check for Manegarm Skunkworks when approaching server (position == 0)
-    if (try checkManegarmSkunkworks(generated)) {
+    if (try checkServerApproachAbilities(generated)) {
         return;
     }
 
@@ -9697,26 +9646,27 @@ fn beginAccessFlow(
     const no_steal_or_trash = if (generated.run) |r| r.no_steal_or_trash else false;
     if (try fireEvent(generated, .access)) return true;
     if (generated.game_over) return true;
-    switch (accessed.access.kind) {
-        .steal_agenda => {
-            if (no_steal_or_trash) {
-                // Ansel 1.0: can't steal — show "No action" only
-                return try beginNoActionAccessPrompt(generated, accessed);
-            }
-            generated.runner_prompt_state = .{
-                .prompt_type = try allocator.dupe(u8, prompt_access_choice),
-                .choices = try singleStringChoice(allocator, "Steal"),
-                .source_card = accessed,
-            };
-            return true;
-        },
-        .net_damage_on_access => {
-            return try beginNetDamageOnAccessPrompt(generated, accessed);
-        },
-        .tax_or_etr => return try beginTrashAccessPrompt(generated, accessed),
-        .corp_pay_etr => return try beginTrashAccessPrompt(generated, accessed),
-        .none => return try beginTrashAccessPrompt(generated, accessed),
+    // Card-specific access handler (Urtica Cipher net damage, etc.)
+    if (lookupCardSpec(accessed)) |spec| {
+        if (spec.on_access) |handler| {
+            return try handler(generated, accessed);
+        }
     }
+    // Agendas: steal flow
+    const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
+    if (is_agenda) {
+        if (no_steal_or_trash) {
+            return try beginNoActionAccessPrompt(generated, accessed);
+        }
+        generated.runner_prompt_state = .{
+            .prompt_type = try allocator.dupe(u8, prompt_access_choice),
+            .choices = try singleStringChoice(allocator, "Steal"),
+            .source_card = accessed,
+        };
+        return true;
+    }
+    // Default: trash prompt
+    return try beginTrashAccessPrompt(generated, accessed);
 }
 
 fn beginNoActionAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
@@ -9732,8 +9682,8 @@ fn beginNoActionAccessPrompt(generated: *Game, accessed: state.CardInstance) !bo
 /// Check if runner has a card with trash-from-hand access ability (Carnivore pattern)
 fn hasTrashAccessFromHand(generated: *const Game) bool {
     for (generated.runner_rig_hardware.items) |hw| {
-        if (hw.installed_ability.trash_access_hand_cost > 0 and !isAbilityUsedThisTurn(&hw, 0) and
-            generated.runner_hand.items.len >= hw.installed_ability.trash_access_hand_cost) return true;
+        if (hw.trash_access_hand_cost > 0 and !isAbilityUsedThisTurn(&hw, 0) and
+            generated.runner_hand.items.len >= hw.trash_access_hand_cost) return true;
     }
     return false;
 }
@@ -9741,10 +9691,10 @@ fn hasTrashAccessFromHand(generated: *const Game) bool {
 /// Check if runner has a card with self-trash access ability (Gourmand pattern)
 fn hasTrashAccessSelfTrash(generated: *const Game) bool {
     for (generated.runner_rig_program.items) |prog| {
-        if (prog.installed_ability.trash_access_self_trash) return true;
+        if (prog.trash_access_self_trash) return true;
     }
     for (generated.runner_rig_hardware.items) |hw| {
-        if (hw.installed_ability.trash_access_self_trash) return true;
+        if (hw.trash_access_self_trash) return true;
     }
     return false;
 }
@@ -9796,8 +9746,9 @@ fn beginNetDamageOnAccessPrompt(
     accessed: state.CardInstance,
 ) !bool {
     const allocator = generated.arena.allocator();
-    const damage: u8 = accessed.access.base_damage + if (accessed.access.adds_advancement) accessed.advancement_counter else 0;
-    const cost = accessed.access.corp_credit_cost;
+    // Urtica Cipher: 2 base damage + advancement counters, costs 2 credits
+    const damage: u8 = 2 + accessed.advancement_counter;
+    const cost: u16 = 2;
 
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
@@ -9823,8 +9774,9 @@ fn applyNetDamageOnAccessChoice(
     generated.corp_prompt_state = null;
 
     if (std.mem.startsWith(u8, choice_text, "Pay ")) {
-        try spendCredits(generated, .corp, accessed.access.corp_credit_cost);
-        const damage: u8 = accessed.access.base_damage + if (accessed.access.adds_advancement) accessed.advancement_counter else 0;
+        // Urtica Cipher: 2 credits, 2 base damage + advancement counters
+        try spendCredits(generated, .corp, 2);
+        const damage: u8 = 2 + accessed.advancement_counter;
         try trashRandomRunnerHandCards(generated, damage);
         updateTerminalState(generated);
         if (generated.game_over) return;
@@ -11379,15 +11331,29 @@ fn makeCardInstance(
         .remote_strength_bonus = spec.remote_strength_bonus,
         .agenda_points = spec.agenda_points,
         .advancement_requirement = spec.advancement_requirement,
-        .corp_play = spec.corp_play,
-        .runner_play = spec.runner_play,
-        .access = spec.access,
         .install = spec.install,
         .runner_install = spec.runner_install,
         .abilities = spec.abilities,
         .static_abilities = spec.static_abilities,
         .event_abilities = spec.event_abilities,
-        .installed_ability = spec.installed_ability,
+        .initial_credit_counters = spec.initial_credit_counters,
+        .take_credits_amount = spec.take_credits_amount,
+        .trash_on_empty = spec.trash_on_empty,
+        .on_install = spec.on_install,
+        .on_take = spec.on_take,
+        .on_empty = spec.on_empty,
+        .click_draw_bonus = spec.click_draw_bonus,
+        .tags_on_agenda_steal_from_server = spec.tags_on_agenda_steal_from_server,
+        .trojan_break_any = spec.trojan_break_any,
+        .trojan_derez_threshold = spec.trojan_derez_threshold,
+        .trojan_adds_all_subtypes = spec.trojan_adds_all_subtypes,
+        .auto_trash_at_credits = spec.auto_trash_at_credits,
+        .draw_on_auto_trash = spec.draw_on_auto_trash,
+        .trash_access_hand_cost = spec.trash_access_hand_cost,
+        .trash_access_self_trash = spec.trash_access_self_trash,
+        .trash_access_draw = spec.trash_access_draw,
+        .place_credits_per_turn = spec.place_credits_per_turn,
+        .auto_take_credits = spec.auto_take_credits,
         .subroutines = spec.subroutines,
         .advancement_counter = 0,
         .credit_counter = 0,
@@ -11480,16 +11446,16 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
         var i: usize = 0;
         while (i < game.corp_servers.items[server_index].content.items.len) {
             var card = &game.corp_servers.items[server_index].content.items[i];
-            if (card.installed_ability.kind == .start_of_turn_credits and card.rezzed and card.credit_counter > 0) {
-                const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
+            if (card.auto_take_credits and card.rezzed and card.credit_counter > 0) {
+                const take = @min(card.credit_counter, card.take_credits_amount);
                 card.credit_counter -= take;
                 game.corp_credit += take;
-                if (card.installed_ability.on_take) |callback| {
+                if (card.on_take) |callback| {
                     try callback(effectContext(game), card);
                 }
 
-                if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
-                    if (card.installed_ability.on_empty) |callback| {
+                if (card.trash_on_empty and card.credit_counter == 0) {
+                    if (card.on_empty) |callback| {
                         try callback(effectContext(game), card);
                     }
                     const trashed = game.corp_servers.items[server_index].content.orderedRemove(i);
@@ -11557,12 +11523,12 @@ fn applySourceCardOnSuccessfulRun(game: *Game) !void {
     // Find the source card in runner's rig (Red Team is a resource)
     for (game.runner_rig_resources.items, 0..) |*card, idx| {
         if (card.code != null and card.code.? == source_code and card.credit_counter > 0) {
-            const take = @min(card.credit_counter, card.installed_ability.take_credits_amount);
+            const take = @min(card.credit_counter, card.take_credits_amount);
             card.credit_counter -= take;
             game.runner_credit += take;
 
             // Trash card if empty and trash_on_empty
-            if (card.installed_ability.trash_on_empty and card.credit_counter == 0) {
+            if (card.trash_on_empty and card.credit_counter == 0) {
                 const trashed = game.runner_rig_resources.orderedRemove(idx);
                 try appendDiscardCard(game, .runner, trashed);
             }
@@ -11586,7 +11552,7 @@ fn runnerCookbookBonus(generated: *const Game, card: *const state.CardInstance) 
 
 fn applyRunnerInstalledCardCounters(generated: *Game, card: *state.CardInstance) void {
     if (card.runner_install.kind != .program) return;
-    if (card.installed_ability.on_install) |callback| {
+    if (card.on_install) |callback| {
         callback(effectContext(generated), card) catch unreachable;
     }
     if (card.virus_counter > 0 or hasSubtype(card.*, "Virus")) {
@@ -11630,8 +11596,8 @@ fn applyAmazeTagsOnRunEnd(game: *Game) void {
     const target_server = findServerByRunPath(game.corp_servers.items, run.server) catch return;
     var tags: u8 = 0;
     for (target_server.slot.content.items) |card| {
-        if (card.installed_ability.tags_on_agenda_steal_from_server > 0 and card.rezzed) {
-            tags += card.installed_ability.tags_on_agenda_steal_from_server;
+        if (card.tags_on_agenda_steal_from_server > 0 and card.rezzed) {
+            tags += card.tags_on_agenda_steal_from_server;
         }
     }
     // Also check pending tags from trashed AMAZE
@@ -12541,7 +12507,7 @@ test "corp installed credit ability on regolith pays out and trashes when empty"
     try corpStartTurnFull(&generated);
 
     var regolith = try makeGameCard(&generated, try lookupRequiredCardSpec(30071));
-    regolith.credit_counter = regolith.installed_ability.initial_credit_counters;
+    regolith.credit_counter = regolith.initial_credit_counters;
     regolith.rezzed = true;
     try installCard(&generated, regolith, "New remote");
 
@@ -13324,7 +13290,6 @@ test "Loup trash on HQ access completes run and does not repeat access" {
         .side = .corp,
         .code = 30053,
         .card_type = "Asset",
-        .access = .{ .kind = .none },
     });
 
     try endTurnAndDiscard(&generated, .corp);
