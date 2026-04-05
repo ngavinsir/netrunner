@@ -150,6 +150,20 @@ pub const AbilitySpec = struct {
     is_access_ability: bool = false,
 };
 
+pub const PayCreditsContext = enum(u8) {
+    runner_install, // Can spend when runner installs a card
+    runner_trash_corp, // Can spend when runner trashes a corp card
+    corp_rez, // Can spend when corp rezzes
+};
+
+pub const PayCreditsSpec = struct {
+    context: PayCreditsContext,
+    /// Optional requirement: checks if this card's credits can be used for this specific payment.
+    /// Receives the EffectContext, the pay-credits source card, and optionally the target card.
+    /// Returns true if credits can be spent.
+    req: ?*const fn (*const EffectContext, *const CardInstance, ?*const CardInstance) bool = null,
+};
+
 pub const StaticAbilityKind = enum(u8) {
     mu,
     hand_size,
@@ -270,6 +284,7 @@ pub const CardInstance = struct {
     abilities: []const AbilitySpec = &.{},
     static_abilities: []const StaticAbility = &.{},
     event_abilities: []const EventAbility = &.{},
+    pay_credits: ?PayCreditsSpec = null,
     // Installed ability data
     initial_credit_counters: u16 = 0,
     take_credits_amount: u16 = 0,

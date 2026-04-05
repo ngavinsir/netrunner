@@ -3022,8 +3022,8 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     const base_trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
     const bonus = sumStaticEffects(generated, .corp, .trash_cost, &accessed);
     const trash_cost: u16 = @intCast(@max(0, @as(i32, base_trash_cost) + bonus));
-    // Auto-spend Azimat recurring credits for trashing corp cards
-    const actual_cost = spendPayCredits(generated, trash_cost, .runner_trash_corp, null);
+    // Auto-spend eligible pay-credits for trashing corp cards
+    const actual_cost = spendPayCredits(generated, trash_cost, .runner_trash_corp, &accessed);
     try spendCredits(generated, .runner, actual_cost);
     if (trash_cost > 0) {
         generated.systemMsg(.runner, accessed.code orelse 0, "Runner pays {d} [credit{s}] to trash {s}.", .{
@@ -3605,11 +3605,8 @@ fn hasInstalledIce(generated: *const Game) bool {
 pub fn runnerHandInstallableByEffect(generated: *const Game, card: state.CardInstance) bool {
     if (card.runner_install.kind == .none) return false;
     const cost = runnerInstallCostForCard(generated, &card);
-    var available = generated.runner_credit;
-    if (hasSubtype(card, "Job") or hasSubtype(card, "Connection")) {
-        available += availablePayCredits(generated, .runner_install_job_connection, null);
-    }
-    if (available < cost) return false;
+    const pc = availablePayCredits(generated, .runner_install, &card);
+    if (generated.runner_credit + pc < cost) return false;
     if (hasSubtype(card, "Trojan") and !hasInstalledIce(generated)) return false;
     return true;
 }
@@ -3705,14 +3702,9 @@ pub fn beginRunnerInstallFromHand(generated: *Game, card_index: u8, spend_click:
 
 pub fn completeRunnerInstall(generated: *Game, card_index: u8, _: state.CardInstance, install_cost: u16, spend_click: bool) !void {
     const allocator = generated.arena.allocator();
-    // Auto-spend hosted credits from Open Market if installing a Job/Connection
-    var actual_cost = install_cost;
-    if (card_index < generated.runner_hand.items.len) {
-        const target = generated.runner_hand.items[card_index];
-        if (hasSubtype(target, "Job") or hasSubtype(target, "Connection")) {
-            actual_cost = spendPayCredits(generated, install_cost, .runner_install_job_connection, null);
-        }
-    }
+    // Auto-spend eligible pay-credits for runner install
+    const target_card = if (card_index < generated.runner_hand.items.len) &generated.runner_hand.items[card_index] else null;
+    const actual_cost = spendPayCredits(generated, install_cost, .runner_install, target_card);
     try spendCredits(generated, .runner, actual_cost);
 
     var installed_card = try removeCardFromHand(generated, .runner, card_index);
@@ -3930,8 +3922,8 @@ fn applyRezApproachedIce(generated: *Game) !void {
     _ = generated.run orelse return error.NoRunInProgress;
     const floating_rez_bonus: u16 = @intCast(@max(0, sumFloatingEffects(generated, .rez_cost_bonus)));
     const adjusted_cost = applyCostModifier(rez_cost + floating_rez_bonus, sumStaticEffects(generated, .runner, .rez_cost, &target.ice));
-    // Auto-spend Mahkota Langit Grid recurring credits for rezzing ice in same server
-    const actual_cost = spendPayCredits(generated, adjusted_cost, .corp_rez_same_server, target.server_index);
+    // Auto-spend eligible pay-credits for rezzing
+    const actual_cost = spendPayCredits(generated, adjusted_cost, .corp_rez, &target.ice);
     try spendCredits(generated, .corp, actual_cost);
     generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
     if (adjusted_cost > 0) {
@@ -3967,8 +3959,8 @@ fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !vo
     if (card.rezzed) return error.AlreadyRezzed;
 
     const rez_cost: u16 = card.cost orelse return error.InvalidCost;
-    // Auto-spend Mahkota Langit Grid recurring credits for rezzing in same server
-    const actual_cost = spendPayCredits(generated, rez_cost, .corp_rez_same_server, target_server.index);
+    // Auto-spend eligible pay-credits for rezzing
+    const actual_cost = spendPayCredits(generated, rez_cost, .corp_rez, card);
     if (generated.corp_credit < actual_cost) return error.InsufficientCredits;
 
     // Pay rez cost and set rezzed
@@ -5466,8 +5458,8 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
     const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
 
     const can_afford = if (trash_cost) |tc| blk2: {
-        const azimat_credits = availablePayCredits(generated, .runner_trash_corp, null);
-        break :blk2 (generated.runner_credit + azimat_credits >= tc) and !no_steal_or_trash;
+        const pc = availablePayCredits(generated, .runner_trash_corp, &accessed);
+        break :blk2 (generated.runner_credit + pc >= tc) and !no_steal_or_trash;
     } else false;
     const access_ability_count = countAccessAbilities(generated, no_steal_or_trash, is_agenda);
     var choice_count: usize = 1; // "No action"
@@ -5944,26 +5936,27 @@ fn canRezApproachedIce(game: *const Game) !bool {
     const rez_cost = target.ice.cost orelse 0;
     const floating_rez_bonus: u16 = @intCast(@max(0, sumFloatingEffects(game, .rez_cost_bonus)));
     const adjusted_cost = applyCostModifier(rez_cost + floating_rez_bonus, sumStaticEffects(game, .runner, .rez_cost, &target.ice));
-    const mahkota_credits = availablePayCredits(game, .corp_rez_same_server, target.server_index);
-    return game.corp_credit + mahkota_credits >= adjusted_cost;
+    const pay_credits = availablePayCredits(game, .corp_rez, &target.ice);
+    return game.corp_credit + pay_credits >= adjusted_cost;
 }
 
 fn corpRezNonIceActions(allocator: std.mem.Allocator, game: *const Game) ![]const state.LegalAction {
     const run = game.run orelse return &[_]state.LegalAction{};
     const target_server = findServerByRunPath(game.corp_servers.items, run.server) catch return &[_]state.LegalAction{};
     const server = target_server.slot;
-    const mahkota_credits = availablePayCredits(game, .corp_rez_same_server, target_server.index);
-
     var count: usize = 0;
-    for (server.content.items) |card| {
-        if (!card.rezzed and card.cost != null and game.corp_credit + mahkota_credits >= card.cost.?) count += 1;
+    for (server.content.items) |*card| {
+        if (!card.rezzed and card.cost != null) {
+            const pc = availablePayCredits(game, .corp_rez, card);
+            if (game.corp_credit + pc >= card.cost.?) count += 1;
+        }
     }
     if (count == 0) return &[_]state.LegalAction{};
 
     const actions = try allocator.alloc(state.LegalAction, count);
     var idx: usize = 0;
-    for (server.content.items, 0..) |card, card_idx| {
-        if (!card.rezzed and card.cost != null and game.corp_credit + mahkota_credits >= card.cost.?) {
+    for (server.content.items, 0..) |*card, card_idx| {
+        if (!card.rezzed and card.cost != null and (game.corp_credit + availablePayCredits(game, .corp_rez, card) >= card.cost.?)) {
             actions[idx] = .{
                 .kind = .rez_non_ice,
                 .side = .corp,
@@ -6460,10 +6453,9 @@ pub fn corpOpeningActionsForState(
     }
 
     // Rez non-ICE cards (free action, no click cost)
-    for (servers, 0..) |server, srv_idx| {
-        const mahkota = availablePayCredits(g, .corp_rez_same_server, srv_idx);
-        for (server.content.items, 0..) |card, card_idx| {
-            if (!card.rezzed and card.cost != null and g.corp_credit + mahkota >= card.cost.?) {
+    for (servers) |server| {
+        for (server.content.items, 0..) |*card, card_idx| {
+            if (!card.rezzed and card.cost != null and (g.corp_credit + availablePayCredits(g, .corp_rez, card) >= card.cost.?)) {
                 actions[next] = .{
                     .kind = .rez_non_ice,
                     .side = .corp,
@@ -6495,10 +6487,12 @@ fn countScoreableAgendas(servers: []const MutableServer) usize {
 
 fn countRezzableNonIce(g: *const Game) usize {
     var count: usize = 0;
-    for (g.corp_servers.items, 0..) |server, srv_idx| {
-        const mahkota = availablePayCredits(g, .corp_rez_same_server, srv_idx);
-        for (server.content.items) |card| {
-            if (!card.rezzed and card.cost != null and g.corp_credit + mahkota >= card.cost.?) count += 1;
+    for (g.corp_servers.items) |server| {
+        for (server.content.items) |*card| {
+            if (!card.rezzed and card.cost != null) {
+                const pc = availablePayCredits(g, .corp_rez, card);
+                if (g.corp_credit + pc >= card.cost.?) count += 1;
+            }
         }
     }
     return count;
@@ -6545,15 +6539,11 @@ pub fn runnerOpeningActionsForState(
     const runnable_servers = try runnableServers(allocator, g.corp_servers.items);
 
     var playable_hand_count: usize = 0;
-    const om_credits = availablePayCredits(g, .runner_install_job_connection, null);
-    for (g.runner_hand.items) |card| {
-        const first_program_discount = if (card.runner_install.kind == .program) runnerInstalledFirstProgramDiscount(g, &card) else 0;
-        // Include Open Market credits for Job/Connection installs
-        const effective_credit = if (card.runner_install.kind != .none and (hasSubtype(card, "Job") or hasSubtype(card, "Connection")))
-            g.runner_credit + om_credits
-        else
-            g.runner_credit;
-        if (isRunnerCardPlayableFromHand(g.runner_click, effective_credit, card, g.runner_successful_run_this_turn, first_program_discount, runnerHasConsoleInstalled(g), corpHasInstalledIce(g))) playable_hand_count += 1;
+    for (g.runner_hand.items) |*card| {
+        const first_program_discount = if (card.runner_install.kind == .program) runnerInstalledFirstProgramDiscount(g, card) else 0;
+        // Include eligible pay-credits for install affordability
+        const pc = if (card.runner_install.kind != .none) availablePayCredits(g, .runner_install, card) else 0;
+        if (isRunnerCardPlayableFromHand(g.runner_click, g.runner_credit + pc, card.*, g.runner_successful_run_this_turn, first_program_discount, runnerHasConsoleInstalled(g), corpHasInstalledIce(g))) playable_hand_count += 1;
     }
     const resource_ability_count = countRunnerInstalledAbilityActions(g, .runner, g.runner_rig_resources.items);
     const hardware_ability_count = countRunnerInstalledAbilityActions(g, .runner, g.runner_rig_hardware.items);
@@ -7304,6 +7294,7 @@ fn makeCardInstance(
         .abilities = spec.abilities,
         .static_abilities = spec.static_abilities,
         .event_abilities = spec.event_abilities,
+        .pay_credits = spec.pay_credits,
         .initial_credit_counters = spec.initial_credit_counters,
         .take_credits_amount = spec.take_credits_amount,
         .trash_on_empty = spec.trash_on_empty,
@@ -7727,97 +7718,84 @@ pub fn spendCredits(
     credit.* -= amount;
 }
 
-/// Count available hosted credits for a pay-credits context.
-pub fn availablePayCredits(game: *const Game, context: PayCreditsContext, server_idx: ?usize) u16 {
+/// Count available hosted credits from cards with matching pay_credits spec.
+/// `target` is the card being paid for (e.g., the card being installed, or null).
+pub fn availablePayCredits(game: *const Game, context: state.PayCreditsContext, target: ?*const state.CardInstance) u16 {
     var total: u16 = 0;
-    switch (context) {
-        .runner_install_job_connection => {
-            for (game.runner_rig_resources.items) |card| {
-                if (card.code != null and card.code.? == 35022 and card.credit_counter > 0) {
-                    total += card.credit_counter;
-                }
-            }
-        },
-        .runner_trash_corp => {
-            for (game.runner_rig_program.items) |card| {
-                if (card.code != null and card.code.? == 35029 and card.credit_counter > 0) {
-                    total += card.credit_counter;
-                }
-            }
-        },
-        .corp_rez_same_server => {
-            const srv = server_idx orelse return 0;
-            if (srv < game.corp_servers.items.len) {
-                for (game.corp_servers.items[srv].content.items) |card| {
-                    if (card.code != null and card.code.? == 35082 and card.rezzed and card.credit_counter > 0) {
-                        total += card.credit_counter;
-                    }
-                }
-            }
-        },
+    const ctx = effectContextConst(game);
+    // Scan runner installed cards
+    for (game.runner_rig_resources.items) |*card| {
+        total += checkPayCredits(ctx, card, context, target);
+    }
+    for (game.runner_rig_program.items) |*card| {
+        total += checkPayCredits(ctx, card, context, target);
+    }
+    for (game.runner_rig_hardware.items) |*card| {
+        total += checkPayCredits(ctx, card, context, target);
+    }
+    // Scan corp installed cards (for corp_rez context)
+    for (game.corp_servers.items) |server| {
+        for (server.content.items) |*card| {
+            if (!card.rezzed) continue;
+            total += checkPayCredits(ctx, card, context, target);
+        }
     }
     return total;
 }
 
-pub const PayCreditsContext = enum(u8) {
-    runner_install_job_connection, // Open Market: hosted credits for installing Job/Connection
-    runner_trash_corp, // Azimat: recurring credits for trashing corp cards
-    corp_rez_same_server, // Mahkota Langit Grid: recurring credits for rezzing in same server
-};
+fn checkPayCredits(ctx: *const state.EffectContext, card: *const state.CardInstance, context: state.PayCreditsContext, target: ?*const state.CardInstance) u16 {
+    const spec = card.pay_credits orelse return 0;
+    if (spec.context != context) return 0;
+    if (card.credit_counter == 0) return 0;
+    if (spec.req) |req| {
+        if (!req(ctx, card, target)) return 0;
+    }
+    return card.credit_counter;
+}
 
-/// Auto-spend hosted credits from eligible pay-credits cards before using the pool.
+/// Auto-spend hosted credits from cards with matching pay_credits spec.
 /// Returns the remaining amount that must be paid from the credit pool.
-pub fn spendPayCredits(game: *Game, amount: u16, context: PayCreditsContext, server_idx: ?usize) u16 {
+/// `target` is the card being paid for (e.g., the card being installed, or null).
+pub fn spendPayCredits(game: *Game, amount: u16, context: state.PayCreditsContext, target: ?*const state.CardInstance) u16 {
     var remaining = amount;
-    switch (context) {
-        .runner_install_job_connection => {
-            // Open Market (35022): spend hosted credits when installing Job/Connection
-            for (game.runner_rig_resources.items) |*card| {
-                if (remaining == 0) break;
-                if (card.code == null or card.code.? != 35022) continue;
-                if (card.credit_counter == 0) continue;
-                const spend: u16 = @min(card.credit_counter, remaining);
-                card.credit_counter -= spend;
-                remaining -= spend;
-                game.systemMsg(.runner, 35022, "Runner spends {d} [credit{s}] from Open Market.", .{
-                    spend, if (spend != 1) @as([]const u8, "s") else "",
-                });
-            }
-        },
-        .runner_trash_corp => {
-            // Azimat (35029): spend recurring credits when trashing corp cards
-            for (game.runner_rig_program.items) |*card| {
-                if (remaining == 0) break;
-                if (card.code == null or card.code.? != 35029) continue;
-                if (card.credit_counter == 0) continue;
-                const spend: u16 = @min(card.credit_counter, remaining);
-                card.credit_counter -= spend;
-                remaining -= spend;
-                game.systemMsg(.runner, 35029, "Runner spends {d} [credit{s}] from Azimat.", .{
-                    spend, if (spend != 1) @as([]const u8, "s") else "",
-                });
-            }
-        },
-        .corp_rez_same_server => {
-            // Mahkota Langit Grid (35082): spend recurring credits when rezzing in same server
-            const srv_idx = server_idx orelse return remaining;
-            if (srv_idx < game.corp_servers.items.len) {
-                for (game.corp_servers.items[srv_idx].content.items) |*card| {
-                    if (remaining == 0) break;
-                    if (card.code == null or card.code.? != 35082) continue;
-                    if (!card.rezzed) continue;
-                    if (card.credit_counter == 0) continue;
-                    const spend: u16 = @min(card.credit_counter, remaining);
-                    card.credit_counter -= spend;
-                    remaining -= spend;
-                    game.systemMsg(.corp, 35082, "Corp spends {d} [credit{s}] from Mahkota Langit Grid.", .{
-                        spend, if (spend != 1) @as([]const u8, "s") else "",
-                    });
-                }
-            }
-        },
+    const ctx = effectContextConst(game);
+    // Helper to try spending from a card slice
+    const zones = [_]struct { items: []state.CardInstance }{
+        .{ .items = game.runner_rig_resources.items },
+        .{ .items = game.runner_rig_program.items },
+        .{ .items = game.runner_rig_hardware.items },
+    };
+    for (&zones) |zone| {
+        for (zone.items) |*card| {
+            if (remaining == 0) break;
+            if (trySpendFromCard(game, &ctx, card, context, target, &remaining)) {}
+        }
+    }
+    // Corp installed cards (for corp_rez context)
+    for (game.corp_servers.items) |*server| {
+        for (server.content.items) |*card| {
+            if (remaining == 0) break;
+            if (!card.rezzed) continue;
+            if (trySpendFromCard(game, &ctx, card, context, target, &remaining)) {}
+        }
     }
     return remaining;
+}
+
+fn trySpendFromCard(game: *Game, ctx: *const *const state.EffectContext, card: *state.CardInstance, context: state.PayCreditsContext, target: ?*const state.CardInstance, remaining: *u16) bool {
+    const spec = card.pay_credits orelse return false;
+    if (spec.context != context) return false;
+    if (card.credit_counter == 0) return false;
+    if (spec.req) |req| {
+        if (!req(ctx.*, card, target)) return false;
+    }
+    const spend: u16 = @min(card.credit_counter, remaining.*);
+    card.credit_counter -= spend;
+    remaining.* -= spend;
+    game.systemMsg(card.side, card.code orelse 0, "Spends {d} [credit{s}] from {s}.", .{
+        spend, if (spend != 1) @as([]const u8, "s") else @as([]const u8, ""), card.title,
+    });
+    return true;
 }
 
 fn parseKeepState(text: []const u8) state.KeepState {

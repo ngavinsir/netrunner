@@ -165,6 +165,7 @@ pub const CardSpec = struct {
     abilities: []const state.AbilitySpec = &.{},
     static_abilities: []const state.StaticAbility = &.{},
     event_abilities: []const state.EventAbility = &.{},
+    pay_credits: ?state.PayCreditsSpec = null,
     // Installed ability data (flattened)
     initial_credit_counters: u16 = 0,
     take_credits_amount: u16 = 0,
@@ -3694,6 +3695,33 @@ pub const all_cards = [_]CardSpec{
         // "The trash cost of each asset in this server's root is increased by 2."
         // "When the Runner trashes this upgrade during a run, the trash cost bonus persists until end of run."
         .initial_credit_counters = 2,
+        .pay_credits = .{
+            .context = .corp_rez,
+            .req = &struct {
+                fn check(ctx: *const state.EffectContext, source: *const state.CardInstance, target: ?*const state.CardInstance) bool {
+                    const t = target orelse return false;
+                    // Only for ice or assets
+                    const ct = t.card_type orelse return false;
+                    if (!std.mem.eql(u8, ct, "ICE") and !std.mem.eql(u8, ct, "Asset")) return false;
+                    // Must be in the same server
+                    const g = gameFromConstEffectContext(ctx);
+                    for (g.corp_servers.items) |server| {
+                        var found_source = false;
+                        var found_target = false;
+                        for (server.content.items) |c| {
+                            if (c.instance_id == source.instance_id) found_source = true;
+                            if (c.instance_id == t.instance_id) found_target = true;
+                        }
+                        for (server.ices.items) |ice| {
+                            if (ice.instance_id == t.instance_id) found_target = true;
+                        }
+                        if (found_source and found_target) return true;
+                        if (found_source) return false;
+                    }
+                    return false;
+                }
+            }.check,
+        },
         .event_abilities = &.{
             // Recurring credits: reset to 2 at start of corp turn
             .{
@@ -5091,6 +5119,7 @@ pub const all_cards = [_]CardSpec{
         .runner_install = .{ .kind = .program, .mu_cost = 2 },
         // "2 recurring credits. You can spend hosted credits to pay trash costs."
         .initial_credit_counters = 2,
+        .pay_credits = .{ .context = .runner_trash_corp },
         .event_abilities = &.{.{
             .event = .runner_turn_begins,
             .handler = &struct {
@@ -5310,6 +5339,16 @@ pub const all_cards = [_]CardSpec{
         .initial_credit_counters = 6,
         .take_credits_amount = 1,
         .trash_on_empty = true,
+        // "You can spend hosted credits to install Job or Connection cards."
+        .pay_credits = .{
+            .context = .runner_install,
+            .req = &struct {
+                fn check(_: *const state.EffectContext, _: *const state.CardInstance, target: ?*const state.CardInstance) bool {
+                    const t = target orelse return false;
+                    return hasSubtype(t.*, "Job") or hasSubtype(t.*, "Connection");
+                }
+            }.check,
+        },
     },
     .{
         .title = "\"Knickknack\" O'Brian",
