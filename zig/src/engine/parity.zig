@@ -8041,3 +8041,202 @@ test "e2e elevation runner game plays to completion with oracle parity" {
     try std.testing.expect(generated.game_over);
     try std.testing.expect(generated.winner != null);
 }
+
+/// Card Coverage Manifest
+/// Tracks smoke parity coverage for every card in the Zig catalog.
+/// Status: covered = has dedicated parity test, uncovered = needs test
+/// Identity cards are marked covered (tested implicitly through matchup selection).
+const CoverageEntry = struct {
+    code: u32,
+    title: []const u8,
+    covered: bool,
+};
+
+const card_coverage = [_]CoverageEntry{
+    .{ .code = 30001, .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal", .covered = true },
+    .{ .code = 30002, .title = "Wildcat Strike", .covered = true },
+    .{ .code = 30003, .title = "Carnivore", .covered = false },
+    .{ .code = 30004, .title = "Botulus", .covered = true },
+    .{ .code = 30005, .title = "Buzzsaw", .covered = true },
+    .{ .code = 30006, .title = "Cleaver", .covered = false },
+    .{ .code = 30007, .title = "Fermenter", .covered = true },
+    .{ .code = 30008, .title = "Leech", .covered = true },
+    .{ .code = 30009, .title = "Cookbook", .covered = true },
+    .{ .code = 30010, .title = "Zahya Sadeghi: Versatile Smuggler", .covered = true },
+    .{ .code = 30011, .title = "Mutual Favor", .covered = true },
+    .{ .code = 30012, .title = "Tread Lightly", .covered = true },
+    .{ .code = 30013, .title = "Docklands Pass", .covered = true },
+    .{ .code = 30014, .title = "Pennyshaver", .covered = true },
+    .{ .code = 30015, .title = "Carmen", .covered = false },
+    .{ .code = 30016, .title = "Marjanah", .covered = true },
+    .{ .code = 30017, .title = "Tranquilizer", .covered = true },
+    .{ .code = 30018, .title = "Red Team", .covered = false },
+    .{ .code = 30019, .title = "T\xc4\x81o Salonga: Telepresence Magician", .covered = true },
+    .{ .code = 30020, .title = "Creative Commission", .covered = true },
+    .{ .code = 30021, .title = "VRcation", .covered = true },
+    .{ .code = 30022, .title = "DZMZ Optimizer", .covered = true },
+    .{ .code = 30023, .title = "Pantograph", .covered = true },
+    .{ .code = 30024, .title = "Conduit", .covered = true },
+    .{ .code = 30025, .title = "Echelon", .covered = true },
+    .{ .code = 30026, .title = "Unity", .covered = true },
+    .{ .code = 30027, .title = "Telework Contract", .covered = true },
+    .{ .code = 30028, .title = "Jailbreak", .covered = true },
+    .{ .code = 30029, .title = "Overclock", .covered = true },
+    .{ .code = 30030, .title = "Sure Gamble", .covered = true },
+    .{ .code = 30031, .title = "T400 Memory Diamond", .covered = true },
+    .{ .code = 30032, .title = "Mayfly", .covered = true },
+    .{ .code = 30033, .title = "Smartware Distributor", .covered = true },
+    .{ .code = 30034, .title = "Verbal Plasticity", .covered = true },
+    .{ .code = 30035, .title = "Haas-Bioroid: Precision Design", .covered = true },
+    .{ .code = 30036, .title = "Luminal Transubstantiation", .covered = true },
+    .{ .code = 30037, .title = "Nico Campaign", .covered = true },
+    .{ .code = 30038, .title = "Ansel 1.0", .covered = false },
+    .{ .code = 30039, .title = "Brân 1.0", .covered = true },
+    .{ .code = 30040, .title = "Seamless Launch", .covered = true },
+    .{ .code = 30041, .title = "Sprint", .covered = true },
+    .{ .code = 30042, .title = "Manegarm Skunkworks", .covered = true },
+    .{ .code = 30043, .title = "Jinteki: Restoring Humanity", .covered = true },
+    .{ .code = 30044, .title = "Longevity Serum", .covered = true },
+    .{ .code = 30045, .title = "Urtica Cipher", .covered = false },
+    .{ .code = 30046, .title = "Diviner", .covered = false },
+    .{ .code = 30047, .title = "Karunā", .covered = false },
+    .{ .code = 30048, .title = "Hansei Review", .covered = true },
+    .{ .code = 30049, .title = "Neurospike", .covered = true },
+    .{ .code = 30050, .title = "Anoetic Void", .covered = true },
+    .{ .code = 30051, .title = "NBN: Reality Plus", .covered = true },
+    .{ .code = 30052, .title = "Tomorrow's Headline", .covered = true },
+    .{ .code = 30053, .title = "Spin Doctor", .covered = true },
+    .{ .code = 30054, .title = "Funhouse", .covered = true },
+    .{ .code = 30055, .title = "Ping", .covered = true },
+    .{ .code = 30056, .title = "Predictive Planogram", .covered = true },
+    .{ .code = 30057, .title = "Public Trail", .covered = true },
+    .{ .code = 30058, .title = "AMAZE Amusements", .covered = true },
+    .{ .code = 30059, .title = "Weyland Consortium: Built to Last", .covered = true },
+    .{ .code = 30060, .title = "Above the Law", .covered = true },
+    .{ .code = 30061, .title = "Clearinghouse", .covered = true },
+    .{ .code = 30062, .title = "Ballista", .covered = true },
+    .{ .code = 30063, .title = "Pharos", .covered = true },
+    .{ .code = 30064, .title = "Government Subsidy", .covered = true },
+    .{ .code = 30065, .title = "Retribution", .covered = true },
+    .{ .code = 30066, .title = "Malapert Data Vault", .covered = true },
+    .{ .code = 30067, .title = "Offworld Office", .covered = true },
+    .{ .code = 30068, .title = "Orbital Superiority", .covered = true },
+    .{ .code = 30069, .title = "Send a Message", .covered = true },
+    .{ .code = 30070, .title = "Superconducting Hub", .covered = false },
+    .{ .code = 30071, .title = "Regolith Mining License", .covered = true },
+    .{ .code = 30072, .title = "Palisade", .covered = true },
+    .{ .code = 30073, .title = "Tithe", .covered = false },
+    .{ .code = 30074, .title = "Whitespace", .covered = false },
+    .{ .code = 30075, .title = "Hedge Fund", .covered = true },
+    .{ .code = 30076, .title = "The Catalyst: Convention Breaker", .covered = true },
+    .{ .code = 30077, .title = "The Syndicate: Profit over Principle", .covered = true },
+    .{ .code = 35001, .title = "Ry\xc5\x8d \xe2\x80\x9cPhoenix\xe2\x80\x9d \xc5\x8cno: Out of the Ashes", .covered = true },
+    .{ .code = 35002, .title = "Topan: Ormas Leader", .covered = true },
+    .{ .code = 35003, .title = "Charm Offensive", .covered = true },
+    .{ .code = 35004, .title = "Scrounge", .covered = false },
+    .{ .code = 35005, .title = "Shred", .covered = false },
+    .{ .code = 35006, .title = "Bling", .covered = true },
+    .{ .code = 35007, .title = "Gourmand", .covered = true },
+    .{ .code = 35008, .title = "Hantu", .covered = true },
+    .{ .code = 35009, .title = "Rising Tide", .covered = true },
+    .{ .code = 35010, .title = "Cacophony", .covered = true },
+    .{ .code = 35011, .title = "Rent Rioters", .covered = true },
+    .{ .code = 35012, .title = "Barry \xe2\x80\x9cBaz\xe2\x80\x9d Wong: Tri-Maf Veteran", .covered = true },
+    .{ .code = 35013, .title = "MuslihaT: Multifarious Marketeer", .covered = true },
+    .{ .code = 35014, .title = "Clean Getaway", .covered = true },
+    .{ .code = 35015, .title = "Lie Low", .covered = false },
+    .{ .code = 35016, .title = "Maintenance Access", .covered = false },
+    .{ .code = 35017, .title = "Transfer of Wealth", .covered = false },
+    .{ .code = 35018, .title = "Detente", .covered = true },
+    .{ .code = 35019, .title = "Maglectric Rapid (748 Mod)", .covered = true },
+    .{ .code = 35020, .title = "Sang Kancil", .covered = true },
+    .{ .code = 35021, .title = "Fransofia Ward", .covered = true },
+    .{ .code = 35022, .title = "Open Market", .covered = true },
+    .{ .code = 35023, .title = "Dewi Subrotoputri: Pedagogical Dhalang", .covered = true },
+    .{ .code = 35024, .title = "Magdalene Keino-Chemutai: Cryptarchitect", .covered = true },
+    .{ .code = 35025, .title = "Illumination", .covered = false },
+    .{ .code = 35026, .title = "Ritual", .covered = true },
+    .{ .code = 35027, .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .covered = true },
+    .{ .code = 35028, .title = "Madani", .covered = true },
+    .{ .code = 35029, .title = "Azimat", .covered = true },
+    .{ .code = 35030, .title = "Chromatophores", .covered = true },
+    .{ .code = 35031, .title = "Devadatta Drone", .covered = true },
+    .{ .code = 35032, .title = "Principia", .covered = true },
+    .{ .code = 35033, .title = "\"Knickknack\" O'Brian", .covered = true },
+    .{ .code = 35034, .title = "Side Hustle", .covered = true },
+    .{ .code = 35035, .title = "LEO Construction: Labor Solutions", .covered = true },
+    .{ .code = 35036, .title = "Po\xc3\xa9tr\xc3\xaf Luxury Brands: All the Rage", .covered = true },
+    .{ .code = 35037, .title = "Aggressive Trendsetting", .covered = true },
+    .{ .code = 35038, .title = "Project Ingatan", .covered = true },
+    .{ .code = 35039, .title = "Humanoid Resources", .covered = true },
+    .{ .code = 35040, .title = "Otto Campaign", .covered = true },
+    .{ .code = 35041, .title = "Bumi 1.0", .covered = true },
+    .{ .code = 35042, .title = "Scatter Field", .covered = true },
+    .{ .code = 35043, .title = "Nanomanagement", .covered = true },
+    .{ .code = 35044, .title = "Top-Down Solutions", .covered = true },
+    .{ .code = 35045, .title = "Mercia B4LL4RD", .covered = true },
+    .{ .code = 35046, .title = "AU Co.: The Gold Standard in Clones", .covered = true },
+    .{ .code = 35047, .title = "PT Untaian: Life's Building Blocks", .covered = true },
+    .{ .code = 35048, .title = "Proprionegation", .covered = true },
+    .{ .code = 35049, .title = "Sericulture Expansion", .covered = true },
+    .{ .code = 35050, .title = "Byte!", .covered = true },
+    .{ .code = 35051, .title = "Ph\xe1\xba\xadt Gioan Baotixita", .covered = true },
+    .{ .code = 35052, .title = "Empiricist", .covered = true },
+    .{ .code = 35053, .title = "Mycoweb", .covered = false },
+    .{ .code = 35054, .title = "Semak-samun", .covered = true },
+    .{ .code = 35055, .title = "Peer Review", .covered = true },
+    .{ .code = 35056, .title = "Mitra Aman", .covered = true },
+    .{ .code = 35057, .title = "Nebula Talent Management: Making Stars", .covered = true },
+    .{ .code = 35058, .title = "Synapse Global: Faster than Thought", .covered = true },
+    .{ .code = 35059, .title = "Embedded Reporting", .covered = true },
+    .{ .code = 35060, .title = "Next Big Thing", .covered = true },
+    .{ .code = 35061, .title = "Idiosyncresis", .covered = true },
+    .{ .code = 35062, .title = "Public Access Plaza", .covered = true },
+    .{ .code = 35063, .title = "Doomscroll", .covered = true },
+    .{ .code = 35064, .title = "N-Pot", .covered = true },
+    .{ .code = 35065, .title = "Bigger Picture", .covered = false },
+    .{ .code = 35066, .title = "IP Enforcement", .covered = false },
+    .{ .code = 35067, .title = "Touch-ups", .covered = false },
+    .{ .code = 35068, .title = "BANGUN: When Disaster Strikes", .covered = true },
+    .{ .code = 35069, .title = "The Zwicky Group: Invisible Hands", .covered = true },
+    .{ .code = 35070, .title = "Greenmail", .covered = true },
+    .{ .code = 35071, .title = "Off the Books", .covered = true },
+    .{ .code = 35072, .title = "Anthill Excavation Contract", .covered = true },
+    .{ .code = 35073, .title = "Plutus", .covered = true },
+    .{ .code = 35074, .title = "Biawak", .covered = true },
+    .{ .code = 35075, .title = "Kessleroid", .covered = true },
+    .{ .code = 35076, .title = "Syailendra", .covered = true },
+    .{ .code = 35077, .title = "Key Performance Indicators", .covered = false },
+    .{ .code = 35078, .title = "Measured Response", .covered = false },
+    .{ .code = 35079, .title = "Flyswatter", .covered = true },
+    .{ .code = 35080, .title = "Lamplighter", .covered = true },
+    .{ .code = 35081, .title = "Petty Cash", .covered = true },
+    .{ .code = 35082, .title = "Mahkota Langit Grid", .covered = true },
+};
+
+// Coverage summary: 136/159 cards covered (23 uncovered)
+//
+// Uncovered cards needing dedicated parity tests:
+//   30003: Carnivore (Hardware)
+//   30006: Cleaver (Program)
+//   30015: Carmen (Program)
+//   30018: Red Team (Resource)
+//   30038: Ansel 1.0 (ICE)
+//   30045: Urtica Cipher (Asset)
+//   30046: Diviner (ICE)
+//   30047: Karunā (ICE)
+//   30070: Superconducting Hub (Agenda)
+//   30073: Tithe (ICE)
+//   30074: Whitespace (ICE)
+//   35004: Scrounge (Event)
+//   35005: Shred (Event)
+//   35015: Lie Low (Event)
+//   35016: Maintenance Access (Event)
+//   35017: Transfer of Wealth (Event)
+//   35025: Illumination (Event)
+//   35053: Mycoweb (ICE)
+//   35065: Bigger Picture (Operation)
+//   35066: IP Enforcement (Operation)
+//   35067: Touch-ups (Operation)
+//   35077: Key Performance Indicators (Operation)
+//   35078: Measured Response (Operation)
