@@ -1488,6 +1488,25 @@
                                     {:qty 2 :card "Charm Offensive"}
                                     {:qty 2 :card "Smartware Distributor"}
                                     {:qty 1 :card "T400 Memory Diamond"}]]
+                         "uncovered" [30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker"
+                                    [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Send a Message"}
+                                     {:qty 2 :card "Superconducting Hub"}
+                                     {:qty 1 :card "Mycoweb"} {:qty 1 :card "IP Enforcement"}
+                                     {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Regolith Mining License"}
+                                     {:qty 2 :card "Urtica Cipher"} {:qty 3 :card "Hedge Fund"}
+                                     {:qty 2 :card "Seamless Launch"} {:qty 3 :card "Palisade"}
+                                     {:qty 2 :card "Diviner"} {:qty 2 :card "Whitespace"}
+                                     {:qty 2 :card "Karunā"} {:qty 2 :card "Tithe"}]
+                                    [{:qty 3 :card "Sure Gamble"} {:qty 3 :card "Jailbreak"}
+                                     {:qty 1 :card "Scrounge"} {:qty 1 :card "Shred"}
+                                     {:qty 1 :card "Lie Low"} {:qty 1 :card "Maintenance Access"}
+                                     {:qty 1 :card "Transfer of Wealth"} {:qty 1 :card "Illumination"}
+                                     {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                     {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                     {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                     {:qty 2 :card "Smartware Distributor"}
+                                     {:qty 2 :card "Telework Contract"}
+                                     {:qty 1 :card "T400 Memory Diamond"} {:qty 1 :card "VRcation"}]]
                          "runner2" [30059 "Weyland Consortium: Built to Last" 30076 "The Catalyst: Convention Breaker"
                                     [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Greenmail"}
                                      {:qty 2 :card "Send a Message"} {:qty 2 :card "Orbital Superiority"}

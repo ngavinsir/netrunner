@@ -694,6 +694,51 @@ pub const elevation_runner2 = MatchupSpec{
     .runner = .{ .identity_code = 30076, .deck_lines = &elevation_runner2_deck }, // Catalyst
 };
 
+// Matchup for uncovered Tier 4 cards (runner events + corp cards not in other matchups)
+const elevation_uncovered_runner_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30030 }, // Sure Gamble (3)
+    .{ .qty = 3, .card_code = 30028 }, // Jailbreak (6)
+    .{ .qty = 1, .card_code = 35004 }, // Scrounge (7)
+    .{ .qty = 1, .card_code = 35005 }, // Shred (8)
+    .{ .qty = 1, .card_code = 35015 }, // Lie Low (9)
+    .{ .qty = 1, .card_code = 35016 }, // Maintenance Access (10)
+    .{ .qty = 1, .card_code = 35017 }, // Transfer of Wealth (11)
+    .{ .qty = 1, .card_code = 35025 }, // Illumination (12)
+    .{ .qty = 2, .card_code = 30005 }, // Buzzsaw (14)
+    .{ .qty = 2, .card_code = 30006 }, // Cleaver (16)
+    .{ .qty = 2, .card_code = 30025 }, // Echelon (18)
+    .{ .qty = 2, .card_code = 30026 }, // Unity (20)
+    .{ .qty = 2, .card_code = 30024 }, // Conduit (22)
+    .{ .qty = 2, .card_code = 30008 }, // Leech (24)
+    .{ .qty = 2, .card_code = 30033 }, // Smartware Distributor (26)
+    .{ .qty = 2, .card_code = 30027 }, // Telework Contract (28)
+    .{ .qty = 1, .card_code = 30031 }, // T400 Memory Diamond (29)
+    .{ .qty = 1, .card_code = 30021 }, // VRcation (30)
+};
+const elevation_uncovered_corp_deck = [_]DeckLine{
+    .{ .qty = 3, .card_code = 30067 }, // Offworld Office
+    .{ .qty = 2, .card_code = 30069 }, // Send a Message
+    .{ .qty = 2, .card_code = 30070 }, // Superconducting Hub
+    .{ .qty = 1, .card_code = 35053 }, // Mycoweb
+    .{ .qty = 1, .card_code = 35066 }, // IP Enforcement
+    .{ .qty = 2, .card_code = 30037 }, // Nico Campaign
+    .{ .qty = 2, .card_code = 30071 }, // Regolith Mining License
+    .{ .qty = 2, .card_code = 30045 }, // Urtica Cipher
+    .{ .qty = 3, .card_code = 30075 }, // Hedge Fund
+    .{ .qty = 2, .card_code = 30040 }, // Seamless Launch
+    .{ .qty = 3, .card_code = 30072 }, // Palisade
+    .{ .qty = 2, .card_code = 30046 }, // Diviner
+    .{ .qty = 2, .card_code = 30074 }, // Whitespace
+    .{ .qty = 2, .card_code = 30047 }, // Karunā
+    .{ .qty = 2, .card_code = 30073 }, // Tithe
+};
+pub const elevation_uncovered = MatchupSpec{
+    .format = "system-gateway",
+    .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30059, .deck_lines = &elevation_uncovered_corp_deck }, // BTL
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_uncovered_runner_deck }, // Catalyst
+};
+
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {
         if (spec.code == card_code) return spec;

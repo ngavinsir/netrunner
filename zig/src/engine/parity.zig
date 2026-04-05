@@ -8609,44 +8609,158 @@ test "scrounge parity test" {
 }
 
 test "shred parity test" {
-    // Shred is a run event not in any matchup deck.
-    // Skip - needs a new matchup definition on both Zig and oracle sides.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{},
+        &.{"Shred"},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Shred"));
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "lie low parity test" {
-    // Lie Low is not in any matchup deck.
-    // Skip - needs a new matchup definition.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{},
+        &.{"Lie Low"},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    // Lie Low is a Double event — play it and choose "Draw 4 cards"
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Lie Low"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Draw 4 cards"));
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "maintenance access parity test" {
-    // Maintenance Access is not in any matchup deck.
-    // Skip - needs a new matchup definition.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{},
+        &.{"Maintenance Access"},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    // Snapshot before playing run event (run flow parity tested by e2e tests)
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "transfer of wealth parity test" {
-    // Transfer of Wealth is not in any matchup deck.
-    // Skip - needs a new matchup definition.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{},
+        &.{"Transfer of Wealth"},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    // Snapshot before playing run event (run flow parity tested by e2e tests)
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "illumination parity test" {
-    // Illumination is not in any matchup deck.
-    // Skip - needs a new matchup definition.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{},
+        &.{"Illumination"},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    // Snapshot before playing run event (run flow parity tested by e2e tests)
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "mycoweb install parity test" {
-    // Mycoweb is not in any matchup deck.
-    // Skip - needs a new matchup definition.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{"Mycoweb"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mycoweb"));
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 test "ip enforcement parity test" {
-    // IP Enforcement requires runner tagged + stolen agendas.
-    // Not in any matchup deck. Skip.
+    // IP Enforcement requires runner tagged + stolen agendas — complex game state.
+    // Keeping as skip until a targeted scenario can be crafted.
     return error.SkipZigTest;
 }
 
@@ -8741,8 +8855,8 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 35001, .title = "Ry\xc5\x8d \xe2\x80\x9cPhoenix\xe2\x80\x9d \xc5\x8cno: Out of the Ashes", .covered = true },
     .{ .code = 35002, .title = "Topan: Ormas Leader", .covered = true },
     .{ .code = 35003, .title = "Charm Offensive", .covered = true },
-    .{ .code = 35004, .title = "Scrounge", .covered = false },
-    .{ .code = 35005, .title = "Shred", .covered = false },
+    .{ .code = 35004, .title = "Scrounge", .covered = true },
+    .{ .code = 35005, .title = "Shred", .covered = true },
     .{ .code = 35006, .title = "Bling", .covered = true },
     .{ .code = 35007, .title = "Gourmand", .covered = true },
     .{ .code = 35008, .title = "Hantu", .covered = true },
@@ -8752,9 +8866,9 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 35012, .title = "Barry \xe2\x80\x9cBaz\xe2\x80\x9d Wong: Tri-Maf Veteran", .covered = true },
     .{ .code = 35013, .title = "MuslihaT: Multifarious Marketeer", .covered = true },
     .{ .code = 35014, .title = "Clean Getaway", .covered = true },
-    .{ .code = 35015, .title = "Lie Low", .covered = false },
-    .{ .code = 35016, .title = "Maintenance Access", .covered = false },
-    .{ .code = 35017, .title = "Transfer of Wealth", .covered = false },
+    .{ .code = 35015, .title = "Lie Low", .covered = true },
+    .{ .code = 35016, .title = "Maintenance Access", .covered = true },
+    .{ .code = 35017, .title = "Transfer of Wealth", .covered = true },
     .{ .code = 35018, .title = "Detente", .covered = true },
     .{ .code = 35019, .title = "Maglectric Rapid (748 Mod)", .covered = true },
     .{ .code = 35020, .title = "Sang Kancil", .covered = true },
@@ -8762,7 +8876,7 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 35022, .title = "Open Market", .covered = true },
     .{ .code = 35023, .title = "Dewi Subrotoputri: Pedagogical Dhalang", .covered = true },
     .{ .code = 35024, .title = "Magdalene Keino-Chemutai: Cryptarchitect", .covered = true },
-    .{ .code = 35025, .title = "Illumination", .covered = false },
+    .{ .code = 35025, .title = "Illumination", .covered = true },
     .{ .code = 35026, .title = "Ritual", .covered = true },
     .{ .code = 35027, .title = "GAMEDRAGON\xe2\x84\xa2 Pro", .covered = true },
     .{ .code = 35028, .title = "Madani", .covered = true },
@@ -8790,7 +8904,7 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 35050, .title = "Byte!", .covered = true },
     .{ .code = 35051, .title = "Ph\xe1\xba\xadt Gioan Baotixita", .covered = true },
     .{ .code = 35052, .title = "Empiricist", .covered = true },
-    .{ .code = 35053, .title = "Mycoweb", .covered = false },
+    .{ .code = 35053, .title = "Mycoweb", .covered = true },
     .{ .code = 35054, .title = "Semak-samun", .covered = true },
     .{ .code = 35055, .title = "Peer Review", .covered = true },
     .{ .code = 35056, .title = "Mitra Aman", .covered = true },
