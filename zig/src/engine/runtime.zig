@@ -104,9 +104,12 @@ pub const sumFloatingEffects = game.sumFloatingEffects;
 pub const sumStaticEffects = game.sumStaticEffects;
 pub const openBreakSubPrompt = game.openBreakSubPrompt;
 pub const fireEvent = game.fireEvent;
+pub const fireEventWith = game.fireEventWith;
 pub const isAbilityUsedThisTurn = game.isAbilityUsedThisTurn;
 pub const markAbilityUsedThisTurn = game.markAbilityUsedThisTurn;
 pub const beginByteAmbushPrompt = game.beginByteAmbushPrompt;
+pub const beginStartTurnSequence = game.beginStartTurnSequence;
+pub const beginPeekRdTopPrompt = game.beginPeekRdTopPrompt;
 
 
 pub const SideSpec = struct {

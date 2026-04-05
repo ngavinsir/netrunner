@@ -95,12 +95,15 @@ const trackMadeRun = runtime.trackMadeRun;
 const continueActions = runtime.continueActions;
 const public_trail_choices = runtime.public_trail_choices;
 const fireEvent = runtime.fireEvent;
+const fireEventWith = runtime.fireEventWith;
 const isAbilityUsedThisTurn = runtime.isAbilityUsedThisTurn;
 const markAbilityUsedThisTurn = runtime.markAbilityUsedThisTurn;
 const trashCorpServerCardByInstanceId = game_engine.trashCorpServerCardByInstanceId;
 const trashRunnerRigCardByInstanceId = game_engine.trashRunnerRigCardByInstanceId;
 const beginNetDamageOnAccessPrompt = game_engine.beginNetDamageOnAccessPrompt;
 const beginByteAmbushPrompt = game_engine.beginByteAmbushPrompt;
+const beginStartTurnSequence = runtime.beginStartTurnSequence;
+const beginPeekRdTopPrompt = runtime.beginPeekRdTopPrompt;
 const removeCurrentAccessedCard = game_engine.removeCurrentAccessedCard;
 const finishAccessCard = game_engine.finishAccessCard;
 const checkServerApproachAbilities = game_engine.checkServerApproachAbilities;
@@ -2527,17 +2530,32 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Identity",
         .subtypes = &.{"Division"},
         // Place 1 power counter on damage/corp-trash events (auto via event handlers)
-        // Start of turn: optional spend 2 power counters to peek top 3 R&D, trash 1, draw rest
-        .event_abilities = &.{.{
-            .event = .agenda_scored,
-            .handler = &struct {
-                fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                    const g = gameFromEffectContext(ctx);
-                    self_card.power_counter += 1;
-                    g.systemMsg(.corp, 35046, "Corp places 1 power counter on AU Co.", .{});
-                }
-            }.handle,
-        }},
+        // Start of turn: spend 2 power counters to peek top 3 R&D, trash 1, draw rest
+        .event_abilities = &.{
+            .{
+                .event = .agenda_scored,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
+                        const g = gameFromEffectContext(ctx);
+                        self_card.power_counter += 1;
+                        g.systemMsg(.corp, 35046, "Corp places 1 power counter on AU Co.", .{});
+                    }
+                }.handle,
+            },
+            .{
+                .event = .corp_turn_begins,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (card.power_counter < 2) return;
+                        const g = gameFromEffectContext(ctx);
+                        if (g.corp_deck.items.len == 0) return;
+                        card.power_counter -= 2;
+                        g.systemMsg(.corp, 35046, "AU Co.: Corp spends 2 power counters to look at top 3 R&D.", .{});
+                        try beginPeekRdTopPrompt(g, 3, card.instance_id);
+                    }
+                }.handle,
+            },
+        },
     },
     .{
         .title = "PT Untaian: Life's Building Blocks",
@@ -3221,27 +3239,21 @@ pub const all_cards = [_]CardSpec{
                         g.corp_prompt_state = .{
                             .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
                             .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = card.*,
+                            .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                             .on_choice = &struct {
                                 fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                                     const cg = gameFromEffectContext(cctx);
+                                    const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
                                     cg.corp_prompt_state = null;
                                     if (std.mem.eql(u8, choice_text, "No action")) return;
-                                    // Parse "Remove N power counter(s)..." to get N
                                     if (!std.mem.startsWith(u8, choice_text, "Remove ")) return;
                                     const n = std.fmt.parseInt(u8, choice_text[7..8], 10) catch return;
-                                    // Find Phat in installed cards and remove counters
-                                    for (cg.corp_servers.items) |*server| {
-                                        for (server.content.items) |*c| {
-                                            if (c.code == 35051 and c.rezzed and c.power_counter >= n) {
-                                                c.power_counter -= n;
-                                                try trashRandomRunnerHandCards(cg, n);
-                                                updateTerminalState(cg);
-                                                cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
-                                                return;
-                                            }
-                                        }
-                                    }
+                                    const live_card = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
+                                    if (live_card.power_counter < n) return;
+                                    live_card.power_counter -= n;
+                                    try trashRandomRunnerHandCards(cg, n);
+                                    updateTerminalState(cg);
+                                    cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
                                 }
                             }.choice,
                         };
@@ -3270,25 +3282,21 @@ pub const all_cards = [_]CardSpec{
                         g.corp_prompt_state = .{
                             .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
                             .choices = try choices.toOwnedSlice(allocator),
-                            .source_card = card.*,
+                            .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                             .on_choice = &struct {
                                 fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                                     const cg = gameFromEffectContext(cctx);
+                                    const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
                                     cg.corp_prompt_state = null;
                                     if (std.mem.eql(u8, choice_text, "No action")) return;
                                     if (!std.mem.startsWith(u8, choice_text, "Remove ")) return;
                                     const n = std.fmt.parseInt(u8, choice_text[7..8], 10) catch return;
-                                    for (cg.corp_servers.items) |*server| {
-                                        for (server.content.items) |*c| {
-                                            if (c.code == 35051 and c.rezzed and c.power_counter >= n) {
-                                                c.power_counter -= n;
-                                                try trashRandomRunnerHandCards(cg, n);
-                                                updateTerminalState(cg);
-                                                cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
-                                                return;
-                                            }
-                                        }
-                                    }
+                                    const live_card = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
+                                    if (live_card.power_counter < n) return;
+                                    live_card.power_counter -= n;
+                                    try trashRandomRunnerHandCards(cg, n);
+                                    updateTerminalState(cg);
+                                    cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
                                 }
                             }.choice,
                         };
@@ -3324,19 +3332,16 @@ pub const all_cards = [_]CardSpec{
                             stringChoice("Trash Idiosyncresis"),
                             stringChoice("No action"),
                         }),
-                        .source_card = card.*,
+                        .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                         .on_choice = &struct {
                             fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                                 const cg = gameFromEffectContext(cctx);
-                                if (std.mem.eql(u8, choice_text, "No action")) {
-                                    cg.corp_prompt_state = null;
-                                    return;
-                                }
-                                const ps = cg.corp_prompt_state orelse return;
-                                const src = ps.source_card orelse return;
-                                const counters = src.advancement_counter;
-                                const iid = src.instance_id;
+                                const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
                                 cg.corp_prompt_state = null;
+                                if (std.mem.eql(u8, choice_text, "No action")) return;
+                                const live_card = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
+                                const counters = live_card.advancement_counter;
+                                const iid = live_card.instance_id;
                                 try trashCorpServerCardByInstanceId(cg, iid);
                                 const gain: u16 = @as(u16, counters) * 3;
                                 const drain: u16 = @as(u16, counters) * 2;
@@ -3360,16 +3365,34 @@ pub const all_cards = [_]CardSpec{
         .cost = 1,
         .trash_cost = 2,
         .install = .{ .kind = .corp_remote_only },
-        .event_abilities = &.{.{
-            .event = .corp_turn_begins,
-            .handler = &struct {
-                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                    const g = gameFromEffectContext(ctx);
-                    g.corp_credit += 1;
-                    g.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to gain 1 [credit].", .{card.title});
-                }
-            }.handle,
-        }},
+        .event_abilities = &.{
+            .{
+                .event = .corp_turn_begins,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        const g = gameFromEffectContext(ctx);
+                        g.corp_credit += 1;
+                        g.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to gain 1 [credit].", .{card.title});
+                    }
+                }.handle,
+            },
+            .{
+                // "When the Runner trashes this asset, if the threat level is 2 or more, give the Runner 1 tag."
+                .event = .corp_card_runner_trashed,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        const payload = ctx.event orelse return;
+                        if (payload.target_instance_id != card.instance_id) return;
+                        const g = gameFromEffectContext(ctx);
+                        if (threatLevel(g) < 2) return;
+                        _ = try addRunnerTag(g, 1);
+                        g.systemMsg(.corp, 35062, "Corp uses {s}: runner trashed at threat {d}, runner gains 1 tag.", .{ card.title, threatLevel(g) });
+                    }
+                }.handle,
+            },
+        },
     },
     .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only },
         .auto_take_credits = true,
@@ -3391,9 +3414,34 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .trash_cost = 2,
         .install = .{ .kind = .corp_server_choice },
-        // "2 recurring credits for rez costs. Persistent: trash cost of assets in root +2."
-        // Recurring credits handled via initial counters. Trash cost increase is static.
+        // "2 recurring credits for rezzing ice/assets in this server."
+        // "The trash cost of each asset in this server's root is increased by 2."
         .initial_credit_counters = 2,
+        .static_abilities = &.{.{
+            .kind = .trash_cost,
+            .value = 2,
+            .req = &struct {
+                fn check(ctx: *const state.EffectContext, card: *const state.CardInstance, target: ?*const state.CardInstance) i16 {
+                    const t = target orelse return 0;
+                    // Only boost assets (not upgrades or ICE)
+                    if (t.card_type == null) return 0;
+                    if (!std.mem.eql(u8, t.card_type.?, "Asset")) return 0;
+                    const g = gameFromConstEffectContext(ctx);
+                    // Check if both this card and the target are in the same server
+                    for (g.corp_servers.items) |server| {
+                        var found_self = false;
+                        var found_target = false;
+                        for (server.content.items) |c| {
+                            if (c.instance_id == card.instance_id) found_self = true;
+                            if (c.instance_id == t.instance_id) found_target = true;
+                        }
+                        if (found_self and found_target) return 1;
+                        if (found_self) return 0; // target is in a different server
+                    }
+                    return 0;
+                }
+            }.check,
+        }},
     },
     // --- Elevation Operations ---
     .{ .title = "Nanomanagement", .side = .corp, .code = 35043, .card_type = "Operation", .cost = 4, .abilities = &.{.{ .is_play = true, .on_use = &struct {
@@ -4750,6 +4798,56 @@ pub const all_cards = [_]CardSpec{
                         markAbilityUsedThisTurn(card, 0);
                         const g = gameFromEffectContext(ctx);
                         g.systemMsg(.runner, 35010, "Runner places 1 power counter on Cacophony.", .{});
+                    }
+                }.handle,
+            },
+            // "When your action phase ends, remove 2 hosted power counters: Sabotage 3."
+            // (Sabotage 3 = corp trashes top 3 cards of R&D)
+            .{
+                .event = .runner_end_turn,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (card.power_counter < 2) return;
+                        const g = gameFromEffectContext(ctx);
+                        const allocator = g.arena.allocator();
+                        g.runner_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "cacophony-sabotage"),
+                            .choices = try allocator.dupe(state.PromptChoice, &.{
+                                stringChoice("Remove 2 hosted power counters"),
+                                stringChoice("No action"),
+                            }),
+                            .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
+                            .on_choice = &struct {
+                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                    const cg = gameFromEffectContext(cctx);
+                                    const ref = if (cg.runner_prompt_state) |ps| ps.ability_ref else null;
+                                    cg.runner_prompt_state = null;
+                                    if (std.mem.eql(u8, choice_text, "Remove 2 hosted power counters")) {
+                                        if (ref) |r| {
+                                            const live = findCardPtrByInstanceId(cg, r.source_instance_id) orelse {
+                                                try beginStartTurnSequence(cg, .corp);
+                                                return;
+                                            };
+                                            if (live.power_counter < 2) {
+                                                try beginStartTurnSequence(cg, .corp);
+                                                return;
+                                            }
+                                            live.power_counter -= 2;
+                                        }
+                                        // Sabotage 3: trash top 3 cards of R&D
+                                        const trash_count: u8 = @intCast(@min(3, cg.corp_deck.items.len));
+                                        var i: u8 = 0;
+                                        while (i < trash_count) : (i += 1) {
+                                            if (cg.corp_deck.items.len == 0) break;
+                                            const trashed = cg.corp_deck.orderedRemove(0);
+                                            try appendDiscardCard(cg, .corp, trashed);
+                                        }
+                                        cg.systemMsg(.runner, 35010, "Cacophony: Corp trashes top {d} card(s) of R&D.", .{trash_count});
+                                    }
+                                    try beginStartTurnSequence(cg, .corp);
+                                }
+                            }.choice,
+                        };
                     }
                 }.handle,
             },

@@ -165,6 +165,7 @@ pub const StaticAbilityKind = enum(u8) {
     can_advance,
     gain_subtype,
     faceup_agenda_install,
+    trash_cost,
 };
 
 pub const StaticAbility = struct {
@@ -195,6 +196,7 @@ pub const GameEvent = enum(u8) {
     ice_encountered,
     server_approached,
     card_installed,
+    corp_card_runner_trashed, // fires before a corp card is removed; payload.target_instance_id = trashed card
 };
 
 pub const EventAbility = struct {

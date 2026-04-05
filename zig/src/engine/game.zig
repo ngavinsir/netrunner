@@ -1573,6 +1573,7 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
     generated.systemMsg(side, 0, "{s} ends their turn.", .{sideName(side)});
     const next_side = otherSide(side);
     generated.end_turn = true;
+    const allocator = generated.arena.allocator();
     // Clear any discard prompt
     switch (side) {
         .corp => generated.corp_prompt_state = null,
@@ -1583,9 +1584,16 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
         _ = try fireEvent(generated, .corp_end_turn);
     } else {
         _ = try fireEvent(generated, .runner_end_turn);
+        // If runner_end_turn triggered a runner optional prompt (e.g., Cacophony sabotage),
+        // present it before transitioning to the corp's turn.
+        if (generated.runner_prompt_state) |ps| {
+            generated.decision_side = .runner;
+            generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+            return;
+        }
     }
     generated.decision_side = next_side;
-    generated.legal_actions = try startTurnActions(generated.arena.allocator(), next_side);
+    generated.legal_actions = try startTurnActions(allocator, next_side);
 }
 
 pub fn init(seed: u64) RngState {
@@ -2547,6 +2555,12 @@ pub fn fireEvent(generated: *Game, event: state.GameEvent) anyerror!bool {
     return try drainPendingEffects(generated);
 }
 
+/// Fire an event with a full typed payload (e.g. carrying target_instance_id).
+pub fn fireEventWith(generated: *Game, payload: state.EffectContext.EventPayload) anyerror!bool {
+    try collectEventHandlers(generated, payload);
+    return try drainPendingEffects(generated);
+}
+
 fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
     if (std.mem.eql(u8, choice_text, "Done")) {
         // Declined to swap
@@ -2942,7 +2956,9 @@ fn applyAccessAbilityChoice(generated: *Game, choice_text: []const u8) !bool {
 
 fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     const spec = lookupCardSpec(accessed) orelse return error.UnsupportedAccessTarget;
-    const trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
+    const base_trash_cost = spec.trash_cost orelse return error.UnsupportedAccessTarget;
+    const bonus = sumStaticEffects(generated, .corp, .trash_cost, &accessed);
+    const trash_cost: u16 = @intCast(@max(0, @as(i32, base_trash_cost) + bonus));
     try spendCredits(generated, .runner, trash_cost);
     if (trash_cost > 0) {
         generated.systemMsg(.runner, accessed.code orelse 0, "Runner pays {d} [credit{s}] to trash {s}.", .{
@@ -2954,7 +2970,13 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     // Clear access prompt before firing event — otherwise hasActivePrompt sees the
     // stale access prompt and short-circuits, skipping finishAccessCard
     generated.runner_prompt_state = null;
-    // Fire runner_trash_corp_card event (Loup trigger)
+    // Fire corp_card_runner_trashed before removing (so the card's own handlers can fire)
+    if (try fireEventWith(generated, .{
+        .kind = .corp_card_runner_trashed,
+        .target_instance_id = accessed.instance_id,
+    })) return;
+    if (generated.game_over) return;
+    // Fire runner_trash_corp_card event (Loup/Cacophony trigger)
     generated.turn_events.runner_trash_corp_card_count += 1;
     if (try fireEvent(generated, .runner_trash_corp_card)) return;
     try removeCurrentAccessedCard(generated);
@@ -5289,7 +5311,12 @@ fn appendAccessAbilityChoices(
 
 fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
     const spec = lookupCardSpec(accessed);
-    const trash_cost = if (spec) |s| s.trash_cost else null;
+    const base_trash_cost = if (spec) |s| s.trash_cost else null;
+    // Apply trash_cost static bonus (e.g. Mahkota Langit Grid: +2 for assets in same server)
+    const trash_cost: ?u16 = if (base_trash_cost) |tc| blk: {
+        const bonus = sumStaticEffects(generated, .corp, .trash_cost, &accessed);
+        break :blk @intCast(@max(0, @as(i32, tc) + bonus));
+    } else null;
     const allocator = generated.arena.allocator();
     const no_steal_or_trash = hasFloatingEffect(generated, .prevent_steal_or_trash);
     const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
@@ -5417,6 +5444,60 @@ fn applyByteAmbushChoice(generated: *Game, choice_text: []const u8) !void {
         return;
     }
     try finishAccessCard(generated);
+}
+
+/// Transition to the next side's start-turn sequence.
+/// Call this from on_choice handlers triggered at end-of-turn to continue the game.
+pub fn beginStartTurnSequence(g: *Game, side: state.Side) !void {
+    const allocator = g.arena.allocator();
+    g.decision_side = side;
+    g.legal_actions = try startTurnActions(allocator, side);
+}
+
+/// Generic: show corp the top `count` cards of R&D and let them pick one to trash; rest are drawn.
+/// `source_iid` is stored in ability_ref so the handler can log with the correct card.
+pub fn beginPeekRdTopPrompt(g: *Game, count: u8, source_iid: u32) !void {
+    const allocator = g.arena.allocator();
+    const deck = g.corp_deck.items;
+    const actual: u8 = @intCast(@min(count, deck.len));
+    if (actual == 0) return; // nothing to peek
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    for (0..actual) |i| {
+        try choices.append(allocator, stringChoice(
+            try std.fmt.allocPrint(allocator, "peek|{d}|{s}", .{ i, deck[i].title }),
+        ));
+    }
+    g.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "peek-rd-trash-one"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .ability_ref = .{ .source_instance_id = source_iid, .ability_index = actual },
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                const cg = gameFromEffectContext(cctx);
+                const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
+                const peek_count = ref.ability_index;
+                cg.corp_prompt_state = null;
+                // Parse "peek|index|title"
+                var parts = std.mem.splitScalar(u8, choice_text, '|');
+                _ = parts.next(); // "peek"
+                const idx_text = parts.next() orelse return;
+                const chosen_idx = std.fmt.parseInt(usize, idx_text, 10) catch return;
+                if (chosen_idx >= cg.corp_deck.items.len) return;
+                // Trash the chosen card
+                const trashed = cg.corp_deck.orderedRemove(chosen_idx);
+                try appendDiscardCard(cg, .corp, trashed);
+                cg.systemMsg(.corp, 0, "Corp trashes {s} from top of R&D.", .{trashed.title});
+                // Draw the remaining peeked cards (indices shifted after removal)
+                const draw_count: u8 = if (peek_count > 1) peek_count - 1 else 0;
+                if (draw_count > 0) {
+                    try drawCards(cg, .corp, draw_count);
+                }
+            }
+        }.choice,
+    };
+    g.decision_side = .corp;
+    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
 }
 
 fn beginHqAccessChoicePrompt(generated: *Game) !bool {
