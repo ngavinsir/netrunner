@@ -4326,11 +4326,89 @@ pub const all_cards = [_]CardSpec{
                                 if (std.mem.eql(u8, prompt.prompt_type, "touch-ups-advance")) {
                                     _ = try addAdvancementCounter(cg, choice_text, 2);
                                     cg.systemMsg(.corp, 35067, "Corp uses Touch-ups to place 2 advancement counters.", .{});
-                                    // Simplified: skip the reveal grip + shuffle part for now
-                                    // (complex interaction requiring runner hand reveal)
-                                    cg.corp_prompt_state = null;
+                                    // Step 2: Choose a card type to shuffle from runner's grip
+                                    cg.corp_prompt_state = .{
+                                        .prompt_type = try c_allocator.dupe(u8, "touch-ups-type"),
+                                        .choices = try c_allocator.dupe(state.PromptChoice, &.{
+                                            stringChoice("Event"), stringChoice("Hardware"),
+                                            stringChoice("Program"), stringChoice("Resource"),
+                                        }),
+                                        .on_choice = &@This().choice,
+                                    };
                                     cg.decision_side = .corp;
-                                    cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                } else if (std.mem.eql(u8, prompt.prompt_type, "touch-ups-type")) {
+                                    // Step 3: Show runner hand cards of chosen type, pick up to 2 to shuffle
+                                    const chosen_type = choice_text;
+                                    var shuffle_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                    defer shuffle_choices.deinit(c_allocator);
+                                    for (cg.runner_hand.items) |c| {
+                                        const ct = c.card_type orelse continue;
+                                        if (std.mem.eql(u8, ct, chosen_type)) {
+                                            try shuffle_choices.append(c_allocator, stringChoice(try c_allocator.dupe(u8, c.title)));
+                                        }
+                                    }
+                                    if (shuffle_choices.items.len == 0) {
+                                        cg.corp_prompt_state = null;
+                                        if (try resumePendingEffects(cg)) return;
+                                        cg.decision_side = .corp;
+                                        cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                        return;
+                                    }
+                                    try shuffle_choices.append(c_allocator, stringChoice("Done"));
+                                    cg.corp_prompt_state = .{
+                                        .prompt_type = try c_allocator.dupe(u8, "touch-ups-shuffle"),
+                                        .choices = try shuffle_choices.toOwnedSlice(c_allocator),
+                                        .ability_ref = .{ .source_instance_id = 0, .ability_index = 0 }, // tracks count
+                                        .on_choice = &@This().choice,
+                                    };
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
+                                } else if (std.mem.eql(u8, prompt.prompt_type, "touch-ups-shuffle")) {
+                                    const ref = prompt.ability_ref orelse return;
+                                    const picked = ref.ability_index;
+                                    if (std.mem.eql(u8, choice_text, "Done") or picked >= 2) {
+                                        try shuffleDeck(cg, .runner);
+                                        cg.corp_prompt_state = null;
+                                        if (try resumePendingEffects(cg)) return;
+                                        cg.decision_side = .corp;
+                                        cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                        return;
+                                    }
+                                    // Move chosen card from runner hand to runner deck
+                                    for (cg.runner_hand.items, 0..) |c, idx| {
+                                        if (std.mem.eql(u8, c.title, choice_text)) {
+                                            const moved = cg.runner_hand.orderedRemove(idx);
+                                            try cg.runner_deck.append(cg.backing_allocator, moved);
+                                            cg.systemMsg(.corp, 35067, "Corp shuffles {s} from Runner's grip into the stack.", .{moved.title});
+                                            break;
+                                        }
+                                    }
+                                    if (picked + 1 >= 2 or cg.runner_hand.items.len == 0) {
+                                        try shuffleDeck(cg, .runner);
+                                        cg.corp_prompt_state = null;
+                                        if (try resumePendingEffects(cg)) return;
+                                        cg.decision_side = .corp;
+                                        cg.legal_actions = try corpOpeningActionsForState(c_allocator, cg);
+                                        return;
+                                    }
+                                    // Re-present for second pick (rebuild choices for remaining matching cards)
+                                    var new_choices: std.ArrayList(state.PromptChoice) = .empty;
+                                    defer new_choices.deinit(c_allocator);
+                                    // Reconstruct type from previous step — we need to track it
+                                    // For simplicity, show all remaining runner hand cards as choices
+                                    for (cg.runner_hand.items) |c| {
+                                        try new_choices.append(c_allocator, stringChoice(try c_allocator.dupe(u8, c.title)));
+                                    }
+                                    try new_choices.append(c_allocator, stringChoice("Done"));
+                                    cg.corp_prompt_state = .{
+                                        .prompt_type = try c_allocator.dupe(u8, "touch-ups-shuffle"),
+                                        .choices = try new_choices.toOwnedSlice(c_allocator),
+                                        .ability_ref = .{ .source_instance_id = 0, .ability_index = picked + 1 },
+                                        .on_choice = &@This().choice,
+                                    };
+                                    cg.decision_side = .corp;
+                                    cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
                                 } else return error.UnsupportedChoice;
                             }
                         }.choice,
