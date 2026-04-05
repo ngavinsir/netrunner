@@ -10,6 +10,7 @@ pub const lookupCardSpecByCode = game.lookupCardSpecByCode;
 pub const gameFromEffectContext = game.gameFromEffectContext;
 pub const gameFromConstEffectContext = game.gameFromConstEffectContext;
 pub const addAdvancementCounter = game.addAdvancementCounter;
+pub const addFloatingEffect = game.addFloatingEffect;
 pub const addRunnerTag = game.addRunnerTag;
 pub const appendDiscardCard = game.appendDiscardCard;
 pub const appendHostedCard = game.appendHostedCard;
@@ -45,6 +46,7 @@ pub const findRunnerHardwareByCode = game.findRunnerHardwareByCode;
 pub const findRunnerResourceIndex = game.findRunnerResourceIndex;
 pub const findServerByRunPath = game.findServerByRunPath;
 pub const hasActivePrompt = game.hasActivePrompt;
+pub const hasFloatingEffectFromSource = game.hasFloatingEffectFromSource;
 pub const hostedChoiceIndex = game.hostedChoiceIndex;
 pub const hostRandomHqCard = game.hostRandomHqCard;
 pub const hostTopRunnerDeckCard = game.hostTopRunnerDeckCard;
@@ -99,6 +101,7 @@ pub const effectiveIceStrength = game.effectiveIceStrength;
 pub const effectiveStrength = game.effectiveStrength;
 pub const findMutableServerByRunPath = game.findMutableServerByRunPath;
 pub const applyCostModifier = game.applyCostModifier;
+pub const sumFloatingEffects = game.sumFloatingEffects;
 pub const sumStaticEffects = game.sumStaticEffects;
 pub const openBreakSubPrompt = game.openBreakSubPrompt;
 pub const fireEvent = game.fireEvent;
@@ -127,17 +130,14 @@ pub const EventSource = struct {
 
 pub const PendingEffect = union(enum) {
     event_handler: EventSource,
-    on_score_gain_credits: u16,
-    on_score_draw_cards: struct { amount: u8, card_code: u32 },
-    on_score_give_runner_tag: u8,
-    on_score_gain_clicks: u8,
-    on_score_rez_ice_free: state.CardInstance,
-    on_score_fn: state.CardInstance,
+    card_effect: struct { card: state.CardInstance, event: state.GameEvent, ability_index: u8 },
     finish_score: void,
-    on_steal_rez_ice_free: state.CardInstance,
-    on_steal_give_runner_tag: u8,
     finish_steal: struct { accessed: state.CardInstance, is_central: bool },
-    runner_discard_to_deck_prompt: state.CardInstance,
+    deferred_prompt: struct {
+        card: state.CardInstance,
+        on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
+        open_fn: *const fn (*game.Game, state.CardInstance, ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool,
+    },
 };
 
 const PendingAccessZone = enum(u8) {
@@ -190,7 +190,6 @@ pub const LogEntry = struct {
 pub const InstallParams = struct {
     host: ?InstallHost = null,
     facedown: bool = false,
-    advanceable: bool = false,
 };
 
 pub const InstallHost = struct {

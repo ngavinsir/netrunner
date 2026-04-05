@@ -1414,15 +1414,10 @@ fn parseOptionalRunState(
         .phase = try dupeString(allocator, try getRequired(.string, run_object, "phase")),
         .corp_auto_no_action = if (try getOptional(.boolean, run_object, "corp-auto-no-action")) |value| value else false,
         .no_action = try parseOptionalRunSide(run_object, "no-action"),
-        .temporary_run_credits = 0,
         .accesses_remaining = 0,
         .accessed_count = 0,
         .accessed_card_indexes = .{ null, null, null, null },
         .access_card_index = null,
-        .rez_cost_bonus = 0,
-        .successful_run_effect = .none,
-        .successful_run_draw_cards = 0,
-        .access_bonus = 0,
     };
 }
 

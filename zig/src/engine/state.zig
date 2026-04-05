@@ -1,4 +1,5 @@
 const std = @import("std");
+const engine = @import("game.zig");
 
 pub const Side = enum {
     corp,
@@ -38,7 +39,7 @@ pub const ActionKind = enum {
     rez_ice,
     advance,
     score,
-    use_identity_ability, // Topan, AU Co.: click ability on identity card
+    use_identity_ability,
 };
 
 pub const BasicAction = enum(u8) {
@@ -80,37 +81,19 @@ pub const RunnerInstallKind = enum(u8) {
 };
 
 
-pub const SubroutineKind = enum(u8) {
-    none,
-    end_the_run,
-    do_net_damage,
-    do_brain_damage,
-    tag_runner,
-    trace_tag,
-    give_runner_tags,
-    runner_loses_credits,
-    install_ice_from_hq_archives, // Install an ice from HQ or Archives behind this ice
-    corp_gains_credits, // Corp gains N credits
-    do_net_damage_conditional_etr, // Do N net damage; if trashed card has odd cost, ETR
-    runner_loses_credits_or_etr, // Runner loses N credits (sub1); ETR if runner has ≤ amount credits (sub2)
-    do_net_damage_then_jack_out, // Do N net damage, then runner may jack out
-    give_tag_or_pay_credits, // Funhouse: give 1 tag unless runner pays N credits
-    trash_program_or_etr, // Ballista: trash 1 program, or ETR if no programs
-    corp_install_from_hq_archives, // Ansel 1.0: install a card from HQ or Archives
-    prevent_steal_trash, // Ansel 1.0: prevent stealing/trashing for rest of run
-    conditional_net_damage_if_tagged, // Doomscroll: do N net damage if runner has N+ tags
-    conditional_etr_threat, // N-Pot: ETR if threat level >= amount
-    net_damage_unless_etr, // Semak-samun: ETR unless runner suffers N net damage
-    trash_program_or_resource_or_etr, // Biawak: trash 1 program (or resource) or ETR
-    runner_loses_credits_and_net_damage, // Syailendra: runner loses N credits + net damage
-    tag_or_pay_credits_etr, // Lamplighter: give 1 tag unless runner pays N; ETR if tagged
-    place_advancement_counter, // Syailendra: place 1 advancement counter on this ICE
+pub const SubroutineContext = struct {
+    server_index: u8,
+    ice_index: u8,
+    subroutine_index: u8,
+    amount: u8 = 0,
+    base_trace: u8 = 0,
 };
 
 pub const SubroutineSpec = struct {
-    kind: SubroutineKind = .none,
+    resolve: *const fn (*engine.Game, SubroutineContext) anyerror!bool,
     amount: u8 = 0,
     base_trace: u8 = 0,
+    label: ?[]const u8 = null,
 };
 
 pub const AgendaEffectKind = enum(u8) {
@@ -118,14 +101,14 @@ pub const AgendaEffectKind = enum(u8) {
     gain_credits,
     draw_cards,
     rez_ice_free,
-    give_runner_tag, // Tomorrow's Headline: give runner 1 tag on score/steal
-    gain_clicks, // Luminal Transubstantiation: gain N clicks on score
+    give_runner_tag,
+    gain_clicks,
 };
 
 pub const AgendaEffectSpec = struct {
     kind: AgendaEffectKind = .none,
     amount: u8 = 0,
-    hand_size_bonus: u8 = 0, // Superconducting Hub: gain N hand size on score
+    hand_size_bonus: u8 = 0,
 };
 
 
@@ -136,11 +119,24 @@ pub const InstallSpec = struct {
 
 pub const RunnerInstallSpec = struct {
     kind: RunnerInstallKind = .none,
-    install_cost_reduction_if_successful_run: u16 = 0, // Carmen: -2 if successful run this turn
+    install_cost_reduction_if_successful_run: u16 = 0,
     mu_cost: u8 = 1, // Memory units used (default 1 for programs, 0 for non-programs)
 };
 
-pub const EffectContext = anyopaque;
+pub const EffectContext = struct {
+    game_ptr: *engine.Game,
+    event: ?EventPayload = null,
+
+    pub const EventPayload = struct {
+        kind: GameEvent,
+        source_code: ?u32 = null,
+        source_instance_id: ?u32 = null,
+        target_instance_id: ?u32 = null,
+        server_index: ?u8 = null,
+        amount: u16 = 0,
+        is_central: bool = false,
+    };
+};
 
 pub const AbilityRef = struct {
     source_instance_id: u32,
@@ -172,7 +168,7 @@ pub const AbilitySpec = struct {
     pump_can_use: ?*const fn (*const EffectContext, *const CardInstance) bool = null,
     on_break: ?*const fn (*EffectContext, *CardInstance) anyerror!void = null,
     on_pump: ?*const fn (*EffectContext, *CardInstance) anyerror!void = null,
-    virus_strength_reduction: u8 = 0,
+    is_access_ability: bool = false,
 };
 
 pub const StaticAbilityKind = enum(u8) {
@@ -187,6 +183,9 @@ pub const StaticAbilityKind = enum(u8) {
     hq_access,
     rd_access,
     virus_install_bonus,
+    can_advance,
+    gain_subtype,
+    faceup_agenda_install,
 };
 
 pub const StaticAbility = struct {
@@ -204,20 +203,20 @@ pub const GameEvent = enum(u8) {
     access,
     runner_gain_tag,
     advance,
-    runner_trash_corp_card, // Loup: first trash-on-access
-    successful_run, // In-run successful run window before access begins
-    successful_run_ends, // Zahya: gain credits on HQ/R&D run end
+    runner_trash_corp_card,
+    successful_run,
+    successful_run_ends,
     run_ends,
     corp_turn_begins,
-    corp_end_turn, // Jinteki: Restoring Humanity
-    corp_rez_ice, // Barry: install on rez
-    operation_played, // Nebula, Zwicky: operation triggers
-    runner_turn_begins, // MuslihaT: top-of-deck peek
-    run_begins, // Side Hustle, Knickknack: triggers when any run begins
-    runner_lose_tag, // Synapse Global: corp installs on tag removal
-    corp_install, // BANGUN: faceup install option
-    runner_end_turn, // Bling: discard-phase cleanup and similar effects
-    ice_encountered, // Funhouse: on-encounter trigger
+    corp_end_turn,
+    corp_rez_ice,
+    operation_played,
+    runner_turn_begins,
+    run_begins,
+    runner_lose_tag,
+    corp_install,
+    runner_end_turn,
+    ice_encountered,
 };
 
 pub const EventAbility = struct {
@@ -259,7 +258,6 @@ pub const CardInstance = struct {
     subtypes: []const []const u8 = &.{},
     cost: ?u16 = null,
     strength: ?u8 = null,
-    remote_strength_bonus: u8 = 0, // Palisade: +N strength when protecting a remote
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
     install: InstallSpec = .{},
@@ -275,17 +273,10 @@ pub const CardInstance = struct {
     on_take: ?InstalledAbilityCallback = null,
     on_empty: ?InstalledAbilityCallback = null,
     click_draw_bonus: u8 = 0,
-    tags_on_agenda_steal_from_server: u8 = 0, // AMAZE Amusements
-    trojan_break_any: bool = false, // Botulus
-    trojan_derez_threshold: u8 = 0, // Tranquilizer
-    trojan_adds_all_subtypes: bool = false, // Chromatophores
-    auto_trash_at_credits: u8 = 0, // Side Hustle
-    draw_on_auto_trash: u8 = 0, // Side Hustle
-    trash_access_hand_cost: u8 = 0, // Carnivore
-    trash_access_self_trash: bool = false, // Gourmand
-    trash_access_draw: u8 = 0, // Gourmand
-    place_credits_per_turn: bool = false, // Smartware Distributor
-    auto_take_credits: bool = false, // Nico Campaign: start of corp turn
+    auto_trash_at_credits: u8 = 0,
+    draw_on_auto_trash: u8 = 0,
+    place_credits_per_turn: bool = false,
+    auto_take_credits: bool = false,
     subroutines: []const SubroutineSpec = &.{},
     rezzed: bool = false,
     current_strength: ?u8 = null, // Boosted strength during encounter
@@ -295,16 +286,11 @@ pub const CardInstance = struct {
     power_counter: u16 = 0,
     agenda_counter: u8 = 0,
     abilities_used_this_turn: u16 = 0,
-    installed_this_turn: bool = false, // Seamless Launch: cannot target cards installed this turn
-    used_break_this_run: bool = false, // Mayfly: did this icebreaker break anything this run?
+    installed_this_turn: bool = false,
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
-    tag_on_rez: u8 = 0, // Ping: give runner N tags when rezzed during a run
-    advanceable: bool = false, // Pharos, Clearinghouse: can be advanced (beyond agendas/Urtica)
-    advancement_strength_threshold: u8 = 0, // Pharos: str bonus starts at this many counters
-    advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
     hosted: []CardInstance = &.{}, // Cards hosted on this card (e.g., trojans on ICE)
-    flipped: bool = false, // Dewi, Nebula: dual-face identity flip state
-    seen: bool = false, // BANGUN: faceup-installed agenda
+    flipped: bool = false,
+    seen: bool = false,
 };
 
 pub const ServerState = struct {
@@ -322,6 +308,33 @@ pub const PendingInstall = struct {
     card_index: u8,
     runner_install_cost: u16 = 0,
     runner_spend_click: bool = true,
+};
+
+pub const FloatingEffectKind = enum(u8) {
+    ice_strength_modifier,
+    prevent_steal_or_trash,
+    run_credits,
+    access_bonus,
+    rez_cost_bonus,
+    successful_run_draw,
+    prevent_score,
+    tags_on_steal,
+    icebreaker_broke,
+    subroutine_resolved,
+    agenda_points_scored,
+};
+
+pub const FloatingEffectDuration = enum(u8) {
+    end_of_encounter,
+    end_of_run,
+    end_of_turn,
+};
+
+pub const FloatingEffect = struct {
+    kind: FloatingEffectKind,
+    duration: FloatingEffectDuration,
+    value: i16 = 0,
+    source_code: ?u32 = null,
 };
 
 pub const EncounterPhase = enum(u8) {
@@ -345,25 +358,15 @@ pub const RunState = struct {
     current_ice_index: ?u8 = null,
     corp_auto_no_action: bool = false,
     no_action: ?Side = null,
-    temporary_run_credits: u16 = 0,
     accesses_remaining: u8 = 0,
     accessed_count: u8 = 0,
     accessed_card_indexes: [4]?u8 = .{ null, null, null, null },
     access_card_index: ?u8 = null,
-    rez_cost_bonus: u16 = 0,
-    successful_run_effect: RunSuccessEffectKind = .none,
-    successful_run_draw_cards: u8 = 0,
-    access_bonus: u8 = 0,
     jack_out_available: bool = false,
     break_subs_selected: u8 = 0,
     break_subs_max: u8 = 0,
     pending_subroutine: ?PendingSubroutine = null,
-    source_card_code: ?u32 = null, // Red Team: track which card initiated the run
-    ice_strength_modifier: i8 = 0, // Leech: temporary ICE strength reduction
-    did_steal_this_run: bool = false, // AMAZE: track if agenda was stolen during run
-    tags_pending_on_steal: u8 = 0, // AMAZE: tags to give if agenda stolen (survives card trash)
-    no_steal_or_trash: bool = false, // Ansel 1.0: prevent stealing/trashing for rest of run
-    subroutines_fired: u8 = 0, // Ryō: count subroutines that resolved this run
+    source_instance_id: ?u32 = null,
 };
 
 pub const HandSize = struct {
@@ -426,12 +429,11 @@ pub const TurnEvents = struct {
     made_run_on_rnd: bool = false,
     made_run_on_archives: bool = false,
     programs_installed_this_turn: u8 = 0,
-    agenda_points_scored_this_turn: u8 = 0, // Neurospike: track AP scored this turn
-    // Generic event counters (replaces card-specific flags)
+    // Generic event counters
     runner_gain_tag_count: u8 = 0, // How many times runner gained tags this turn
     runner_trash_corp_card_count: u8 = 0, // How many times runner trashed corp cards on access this turn
     successful_run_ends_count: u8 = 0, // How many successful runs ended this turn (for HQ/R&D)
-    operation_played_count: u8 = 0, // How many operations played this turn (Zwicky)
+    operation_played_count: u8 = 0,
 };
 
 pub const LegalAction = struct {

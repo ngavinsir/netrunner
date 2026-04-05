@@ -14,7 +14,6 @@ pub const CardSpec = struct {
     subtypes: []const []const u8 = &.{},
     cost: ?u16 = null,
     strength: ?u8 = null,
-    remote_strength_bonus: u8 = 0, // Palisade: +N strength when protecting a remote
     agenda_points: ?u8 = null,
     advancement_requirement: ?u8 = null,
     // Run event fields (for run-target events)
@@ -37,29 +36,17 @@ pub const CardSpec = struct {
     on_take: ?state.InstalledAbilityCallback = null,
     on_empty: ?state.InstalledAbilityCallback = null,
     click_draw_bonus: u8 = 0,
-    tags_on_agenda_steal_from_server: u8 = 0,
-    trojan_break_any: bool = false,
-    trojan_derez_threshold: u8 = 0,
-    trojan_adds_all_subtypes: bool = false,
     auto_trash_at_credits: u8 = 0,
     draw_on_auto_trash: u8 = 0,
-    trash_access_hand_cost: u8 = 0,
-    trash_access_self_trash: bool = false,
-    trash_access_draw: u8 = 0,
     place_credits_per_turn: bool = false,
     auto_take_credits: bool = false,
     subroutines: []const state.SubroutineSpec = &.{},
     on_score: state.AgendaEffectSpec = .{},
     on_steal: state.AgendaEffectSpec = .{},
     trash_cost: ?u16 = null,
-    tag_on_rez: u8 = 0, // Ping: give runner N tags when rezzed during a run
-    advanceable: bool = false, // Pharos, Clearinghouse: explicitly advanceable
-    advancement_strength_threshold: u8 = 0, // Pharos: str bonus at N+ counters
-    advancement_strength_bonus: u8 = 0, // Pharos: str bonus amount
     on_access: ?*const fn (*Game, state.CardInstance) anyerror!bool = null,
     on_approach: ?*const fn (*Game, *const state.CardInstance) anyerror!bool = null,
     on_play_msg: ?[]const u8 = null, // logged after on_play fires (effect description, not "plays X")
-    installs_agendas_faceup: bool = false, // BANGUN: installed agendas enter faceup
 };
 
 /// Deferred effect for the async continuation queue.
@@ -88,18 +75,15 @@ pub const EventSource = struct {
 };
 
 pub const PendingEffect = union(enum) {
-    event_handler: EventSource, // source card info — find card and call on_event
-    on_score_gain_credits: u16,
-    on_score_draw_cards: struct { amount: u8, card_code: u32 },
-    on_score_give_runner_tag: u8,
-    on_score_gain_clicks: u8,
-    on_score_rez_ice_free: state.CardInstance, // the scored agenda
-    on_score_event_abilities: state.CardInstance, // the scored agenda — iterate event_abilities for .agenda_scored
-    finish_score: void, // terminal: updateTerminalState + return to corp actions
-    on_steal_rez_ice_free: state.CardInstance,
-    on_steal_give_runner_tag: u8,
+    event_handler: EventSource,
+    card_effect: struct { card: state.CardInstance, event: state.GameEvent, ability_index: u8 },
+    finish_score: void,
     finish_steal: struct { accessed: state.CardInstance, is_central: bool },
-    runner_discard_to_deck_prompt: state.CardInstance,
+    deferred_prompt: struct {
+        card: state.CardInstance,
+        on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
+        open_fn: *const fn (*Game, state.CardInstance, ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool,
+    },
 };
 
 const PendingAccessZone = enum(u8) {
@@ -233,7 +217,11 @@ const scrounge_on_choice: *const fn (*state.EffectContext, []const u8) anyerror!
         if (std.mem.eql(u8, prompt.prompt_type, "scrounge-install")) {
             const source_card = prompt.source_card orelse return error.MissingSourceCard;
             cg.runner_prompt_state = null;
-            try cg.pending_effects.append(cg.backing_allocator, .{ .runner_discard_to_deck_prompt = source_card });
+            try cg.pending_effects.append(cg.backing_allocator, .{ .deferred_prompt = .{
+                .card = source_card,
+                .on_choice = scrounge_on_choice,
+                .open_fn = &openRunnerDiscardToDeckPrompt,
+            } });
             if (std.mem.eql(u8, choice_text, "No action")) {
                 if (try resumePendingEffects(cg)) return;
                 try restorePriorityAfterPrompt(cg);
@@ -553,7 +541,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only }, .on_access = &struct {
+    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .static_abilities = &.{.{ .kind = .can_advance }}, .install = .{ .kind = .corp_remote_only }, .on_access = &struct {
         fn access(g: *Game, accessed: state.CardInstance) anyerror!bool {
             return try beginNetDamageOnAccessPrompt(g, accessed);
         }
@@ -825,7 +813,16 @@ pub const all_cards = [_]CardSpec{
             }
         }.approach,
     },
-    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .tags_on_agenda_steal_from_server = 2 },
+    .{ .title = "AMAZE Amusements", .side = .corp, .code = 30058, .card_type = "Upgrade", .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_server_choice }, .on_access = &struct {
+        fn access(g: *Game, _: state.CardInstance) anyerror!bool {
+            try addFloatingEffect(g, .{
+                .kind = .tags_on_steal,
+                .duration = .end_of_run,
+                .value = 2,
+            });
+            return false;
+        }
+    }.access },
     .{
         .title = "Brân 1.0",
         .side = .corp,
@@ -836,29 +833,40 @@ pub const all_cards = [_]CardSpec{
         .strength = 6,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .install_ice_from_hq_archives },
-            .{ .kind = .end_the_run },
-            .{ .kind = .end_the_run },
+            .{ .resolve = &resolveInstallIceFromHqArchives, .label = "Install a card from HQ or Archives" },
+            .{ .resolve = &resolveEndTheRun, .label = "End the run" },
+            .{ .resolve = &resolveEndTheRun, .label = "End the run" },
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
     },
-    .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .remote_strength_bonus = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
+    .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .install = .{ .kind = .corp_server_choice }, .static_abilities = &.{.{ .kind = .self_strength, .value = 2, .req = &struct {
+        fn check(ctx: *const state.EffectContext, card: *const state.CardInstance, _: ?*const state.CardInstance) i16 {
+            const g = gameFromConstEffectContext(ctx);
+            for (g.corp_servers.items) |server| {
+                if (!std.mem.startsWith(u8, server.name, "remote")) continue;
+                for (server.ices.items) |ice| {
+                    if (ice.instance_id == card.instance_id) return 1;
+                }
+            }
+            return 0;
+        }
+    }.check }}, .subroutines = &.{
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
     } },
     .{ .title = "Diviner", .side = .corp, .code = 30046, .card_type = "ICE", .subtypes = &.{ "Code Gate", "AP" }, .cost = 2, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage_conditional_etr, .amount = 1 },
+        .{ .resolve = &resolveNetDamageConditionalEtr, .amount = 1, .label = "Sub 0" },
     } },
     .{ .title = "Whitespace", .side = .corp, .code = 30074, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .runner_loses_credits, .amount = 3 },
-        .{ .kind = .runner_loses_credits_or_etr, .amount = 6 },
+        .{ .resolve = &resolveRunnerLosesCredits, .amount = 3, .label = "Runner loses 3 [Credits]" },
+        .{ .resolve = &resolveRunnerLosesCreditsOrEtr, .amount = 6, .label = "Sub 1" },
     } },
     .{ .title = "Karunā", .side = .corp, .code = 30047, .card_type = "ICE", .subtypes = &.{ "Sentry", "AP" }, .cost = 4, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage_then_jack_out, .amount = 2 },
-        .{ .kind = .do_net_damage, .amount = 2 },
+        .{ .resolve = &resolveNetDamageThenJackOut, .amount = 2, .label = "Sub 0" },
+        .{ .resolve = &resolveNetDamage, .amount = 2, .label = "Do 2 net damage" },
     } },
     .{ .title = "Tithe", .side = .corp, .code = 30073, .card_type = "ICE", .subtypes = &.{ "Sentry", "AP" }, .cost = 1, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage, .amount = 1 },
-        .{ .kind = .corp_gains_credits, .amount = 1 },
+        .{ .resolve = &resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
+        .{ .resolve = &resolveCorpGainsCredits, .amount = 1, .label = "Corp gains 1 [Credits]" },
     } },
     .{
         .title = "Funhouse",
@@ -870,7 +878,7 @@ pub const all_cards = [_]CardSpec{
         .strength = 4,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .give_tag_or_pay_credits, .amount = 4 },
+            .{ .resolve = &resolveGiveTagOrPayCredits, .amount = 4, .label = "Sub 0" },
         },
         .event_abilities = &.{.{ .event = .ice_encountered, .handler = &struct {
             fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
@@ -1110,14 +1118,14 @@ pub const all_cards = [_]CardSpec{
         .event = .run_ends,
         .handler = &struct {
             fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                if (!self_card.used_break_this_run) return;
                 const g = gameFromEffectContext(ctx);
+                if (!hasFloatingEffectFromSource(g, .icebreaker_broke, self_card.instance_id)) return;
                 var i: usize = 0;
                 while (i < g.runner_rig_program.items.len) : (i += 1) {
                     const card = g.runner_rig_program.items[i];
                     if (card.code == null or self_card.code == null) continue;
                     if (card.code.? != self_card.code.?) continue;
-                    if (!card.used_break_this_run) continue;
+                    if (!hasFloatingEffectFromSource(g, .icebreaker_broke, card.instance_id)) continue;
                     const trashed = g.runner_rig_program.orderedRemove(i);
                     try appendDiscardCard(g, .runner, trashed);
                     return;
@@ -1146,7 +1154,7 @@ pub const all_cards = [_]CardSpec{
         .label = "Run on R&D",
         .on_use = &struct {
             fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                try applyRunFromAbility(gameFromEffectContext(ctx), "R&D", card.code);
+                try applyRunFromAbility(gameFromEffectContext(ctx), "R&D", card.instance_id);
             }
         }.handle,
     }}, .event_abilities = &.{.{
@@ -1172,7 +1180,6 @@ pub const all_cards = [_]CardSpec{
         }.handle,
     }}, .abilities = &.{.{
         .on_use = &encounterLeechHandler,
-        .virus_strength_reduction = 1,
         .req = &struct {
             fn check(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
                 if (card.virus_counter == 0) return false;
@@ -1228,12 +1235,19 @@ pub const all_cards = [_]CardSpec{
         .on_score = .{ .kind = .give_runner_tag, .amount = 1 },
         .on_steal = .{ .kind = .give_runner_tag, .amount = 1 },
     },
-    .{ .title = "Ping", .side = .corp, .code = 30055, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .tag_on_rez = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
+    .{ .title = "Ping", .side = .corp, .code = 30055, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .event_abilities = &.{.{
+        .event = .corp_rez_ice,
+        .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                _ = try addRunnerTag(gameFromEffectContext(ctx), 1);
+            }
+        }.handle,
+    }}, .subroutines = &.{
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
     } },
     .{ .title = "Ballista", .side = .corp, .code = 30062, .card_type = "ICE", .subtypes = &.{"Sentry"}, .cost = 5, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .trash_program_or_etr },
-        .{ .kind = .trash_program_or_etr },
+        .{ .resolve = &resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" },
+        .{ .resolve = &resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" },
     } },
     .{
         .title = "Sprint",
@@ -1414,10 +1428,14 @@ pub const all_cards = [_]CardSpec{
         }.handle }},
     },
     // --- Phase 1: Pharos, Fermenter, Neurospike, Luminal Transubstantiation, Cookbook ---
-    .{ .title = "Pharos", .side = .corp, .code = 30063, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 7, .strength = 5, .advanceable = true, .advancement_strength_threshold = 3, .advancement_strength_bonus = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .give_runner_tags, .amount = 1 },
-        .{ .kind = .end_the_run },
-        .{ .kind = .end_the_run },
+    .{ .title = "Pharos", .side = .corp, .code = 30063, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 7, .strength = 5, .install = .{ .kind = .corp_server_choice }, .static_abilities = &.{ .{ .kind = .can_advance }, .{ .kind = .self_strength, .value = 5, .req = &struct {
+        fn check(_: *const state.EffectContext, card: *const state.CardInstance, _: ?*const state.CardInstance) i16 {
+            return if (card.advancement_counter >= 3) 1 else 0;
+        }
+    }.check } }, .subroutines = &.{
+        .{ .resolve = &resolveGiveRunnerTags, .amount = 1, .label = "Give the Runner 1 tags" },
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
     } },
     .{ .title = "Fermenter", .side = .runner, .code = 30007, .card_type = "Program", .subtypes = &.{"Virus"}, .cost = 1, .runner_install = .{ .kind = .program },
         .on_install = &struct {
@@ -1462,7 +1480,7 @@ pub const all_cards = [_]CardSpec{
         .abilities = &.{.{ .is_play = true, .on_use = &struct {
             fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
-                const damage = g.turn_events.agenda_points_scored_this_turn;
+                const damage: u8 = @intCast(@max(0, sumFloatingEffects(g, .agenda_points_scored)));
                 if (damage > 0) {
                     try trashRandomRunnerHandCards(g, damage);
                     g.systemMsg(.corp, 30049, "Corp uses Neurospike to do {d} net damage.", .{damage});
@@ -1496,7 +1514,7 @@ pub const all_cards = [_]CardSpec{
         }.req,
     }} },
     // --- Phase 2: Clearinghouse, Longevity Serum, Malapert Data Vault, Spin Doctor ---
-    .{ .title = "Clearinghouse", .side = .corp, .code = 30061, .card_type = "Asset", .subtypes = &.{"Hostile"}, .cost = 0, .trash_cost = 3, .advanceable = true, .install = .{ .kind = .corp_remote_only }, .abilities = &.{.{
+    .{ .title = "Clearinghouse", .side = .corp, .code = 30061, .card_type = "Asset", .subtypes = &.{"Hostile"}, .cost = 0, .trash_cost = 3, .static_abilities = &.{.{ .kind = .can_advance }}, .install = .{ .kind = .corp_remote_only }, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Trash to do meat damage",
         .req = &struct {
@@ -1748,7 +1766,38 @@ pub const all_cards = [_]CardSpec{
         // Spin Doctor ability not yet wired (was dead in legacy too)
     },
     // --- Phase 3: Consoles ---
-    .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }}, .trash_access_hand_cost = 2 },
+    .{ .title = "Carnivore", .side = .runner, .code = 30003, .card_type = "Hardware", .subtypes = &.{"Console"}, .cost = 4, .runner_install = .{ .kind = .hardware }, .static_abilities = &.{.{ .kind = .mu, .value = 1 }}, .abilities = &.{.{
+        .is_access_ability = true,
+        .label = "Trash card",
+        .side = .runner,
+        .once_per_turn = true,
+        .on_use = &struct {
+            fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                const accessed = (if (g.runner_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
+                markAbilityUsedThisTurn(card, 0);
+                // Trash 2 cards from runner hand
+                var trashed: u8 = 0;
+                while (trashed < 2 and g.runner_hand.items.len > 0) : (trashed += 1) {
+                    const c = g.runner_hand.orderedRemove(0);
+                    try g.runner_discard.append(g.backing_allocator, c);
+                }
+                g.runner_prompt_state = null;
+                g.turn_events.runner_trash_corp_card_count += 1;
+                if (try fireEvent(g, .runner_trash_corp_card)) return;
+                try removeCurrentAccessedCard(g);
+                try appendDiscardCard(g, .corp, accessed);
+                try finishAccessCard(g);
+            }
+        }.handle,
+        .req = &struct {
+            fn check(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
+                const g = gameFromConstEffectContext(ctx);
+                if (isAbilityUsedThisTurn(card, 0)) return false;
+                return g.runner_hand.items.len >= 2;
+            }
+        }.check,
+    }} },
     .{
         .title = "Pantograph",
         .side = .runner,
@@ -1812,7 +1861,6 @@ pub const all_cards = [_]CardSpec{
     },
     // --- Phase 4: Trojans ---
     .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program },
-        .trojan_break_any = true,
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
@@ -1835,7 +1883,6 @@ pub const all_cards = [_]CardSpec{
         }.handle,
     }} },
     .{ .title = "Tranquilizer", .side = .runner, .code = 30017, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program },
-        .trojan_derez_threshold = 3,
         .on_install = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
@@ -1847,11 +1894,11 @@ pub const all_cards = [_]CardSpec{
             fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.virus_counter += 1;
                 const g = gameFromEffectContext(ctx);
-                if (card.virus_counter < card.trojan_derez_threshold) return;
+                if (card.virus_counter < 3) return;
                 for (g.corp_servers.items) |*server| {
                     for (server.ices.items) |*ice| {
                         for (ice.hosted) |hosted| {
-                            if (hosted.code != null and card.code != null and hosted.code.? == card.code.?) {
+                            if (hosted.instance_id == card.instance_id) {
                                 ice.rezzed = false;
                                 return;
                             }
@@ -1872,9 +1919,9 @@ pub const all_cards = [_]CardSpec{
         .strength = 4,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .trash_program_or_etr }, // trash 1 installed Runner card
-            .{ .kind = .corp_install_from_hq_archives }, // install a card from HQ or Archives
-            .{ .kind = .prevent_steal_trash }, // prevent stealing/trashing for rest of run
+            .{ .resolve = &resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" }, // trash 1 installed Runner card
+            .{ .resolve = &resolveCorpInstallFromHqArchives, .label = "Install a card from HQ or Archives" }, // install a card from HQ or Archives
+            .{ .resolve = &resolvePreventStealTrash, .label = "The Runner cannot steal or trash Corp cards for the remainder of this run" }, // prevent stealing/trashing for rest of run
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
     },
@@ -1977,7 +2024,7 @@ pub const all_cards = [_]CardSpec{
                 fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     if (g.run == null) return;
-                    if (g.run.?.subroutines_fired == 0) return;
+                    if (sumFloatingEffects(g, .subroutine_resolved) == 0) return;
                     if (isAbilityUsedThisTurn(self_card, 0)) return;
                     markAbilityUsedThisTurn(self_card, 0);
                     g.runner_credit += 1;
@@ -2538,7 +2585,7 @@ pub const all_cards = [_]CardSpec{
         .code = 35068,
         .card_type = "Identity",
         .subtypes = &.{"Corp"},
-        .installs_agendas_faceup = true,
+        .static_abilities = &.{.{ .kind = .faceup_agenda_install }},
         // "Install agendas faceup. On access of faceup agenda: 2 meat damage + 1 tag."
         .event_abilities = &.{.{
             .event = .access,
@@ -2762,8 +2809,8 @@ pub const all_cards = [_]CardSpec{
         .strength = 3,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .trash_program_or_etr },
-            .{ .kind = .do_brain_damage, .amount = 1 },
+            .{ .resolve = &resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" },
+            .{ .resolve = &resolveBrainDamage, .amount = 1, .label = "Do 1 brain damage" },
         },
         .abilities = &.{.{ .on_use = &encounterBioroidHandler, .allow_opponent_use = true, .req = &isInEncounter, .cost = .{ .clicks = 1 }, .break_count = 1 }},
         // "When you rez this ice during a run against this server, you may trash 1 installed trojan program."
@@ -2815,8 +2862,8 @@ pub const all_cards = [_]CardSpec{
         }.handle }},
     },
     .{ .title = "Scatter Field", .side = .corp, .code = 35042, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 3, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .corp_install_from_hq_archives },
-        .{ .kind = .end_the_run },
+        .{ .resolve = &resolveCorpInstallFromHqArchives, .label = "Install a card from HQ or Archives" },
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
     } },
     .{
         .title = "Empiricist",
@@ -2830,9 +2877,9 @@ pub const all_cards = [_]CardSpec{
         .subroutines = &.{
             // Sub 1: "Corp draws 1 card. Corp may add 1 card from HQ to top of R&D."
             // Draw is automatic; add-to-top is optional (auto-declined in oracle)
-            .{ .kind = .corp_gains_credits, .amount = 0 }, // Sub 1: draw (simplified, handler removed)
-            .{ .kind = .do_net_damage, .amount = 1 },
-            .{ .kind = .do_net_damage, .amount = 2 },
+            .{ .resolve = &resolveCorpGainsCredits, .amount = 0, .label = "Corp draws 1 card" }, // Sub 1: draw (simplified, handler removed)
+            .{ .resolve = &resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
+            .{ .resolve = &resolveNetDamage, .amount = 2, .label = "Do 2 net damage" },
         },
     },
     .{
@@ -2850,24 +2897,24 @@ pub const all_cards = [_]CardSpec{
             // Sub 3: Resolve a sentry subroutine on another rezzed ice
             // Sub 4: Resolve a code gate subroutine on another rezzed ice
             // Subs 3+4 need cross-ICE subroutine resolution (most complex card in set)
-            .{ .kind = .corp_install_from_hq_archives },
-            .{ .kind = .none }, // rez ice -2 (needs rez prompt with discount)
-            .{ .kind = .none }, // resolve sentry sub (needs cross-ICE resolution)
-            .{ .kind = .none }, // resolve code gate sub (needs cross-ICE resolution)
+            .{ .resolve = &resolveCorpInstallFromHqArchives, .label = "Install a card from HQ or Archives" },
+            .{ .resolve = &resolveRezIceWithDiscount, .label = "Rez a piece of ice, paying 2 less" },
+            .{ .resolve = &resolveOtherIceSubroutine, .label = "Resolve a sentry subroutine on another rezzed ice" },
+            .{ .resolve = &resolveOtherIceSubroutine, .label = "Resolve a code gate subroutine on another rezzed ice" },
         },
     },
     .{ .title = "Semak-samun", .side = .corp, .code = 35054, .card_type = "ICE", .subtypes = &.{ "AP", "Barrier" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .net_damage_unless_etr, .amount = 3 },
+        .{ .resolve = &resolveNetDamageUnlessEtr, .amount = 3, .label = "End the run unless the Runner suffers 3 net damage" },
     } },
     .{ .title = "Doomscroll", .side = .corp, .code = 35063, .card_type = "ICE", .subtypes = &.{ "AP", "Observer", "Sentry" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .tag_runner },
-        .{ .kind = .do_net_damage, .amount = 1 },
-        .{ .kind = .conditional_net_damage_if_tagged, .amount = 2 },
+        .{ .resolve = &resolveTagRunner, .label = "Give the Runner 1 tag" },
+        .{ .resolve = &resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
+        .{ .resolve = &resolveConditionalNetDamageIfTagged, .amount = 2, .label = "Do 2 net damage if the Runner is tagged" },
     } },
     .{ .title = "N-Pot", .side = .corp, .code = 35064, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 4, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
-        .{ .kind = .conditional_etr_threat, .amount = 2 },
-        .{ .kind = .conditional_etr_threat, .amount = 4 },
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
+        .{ .resolve = &resolveConditionalEtrThreat, .amount = 2, .label = "End the run if threat >= 2" },
+        .{ .resolve = &resolveConditionalEtrThreat, .amount = 4, .label = "End the run if threat >= 4" },
     } },
     .{
         .title = "Biawak",
@@ -2879,19 +2926,19 @@ pub const all_cards = [_]CardSpec{
         .strength = 6,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .trash_program_or_resource_or_etr, .amount = 0 }, // trash 1 program or ETR
-            .{ .kind = .trash_program_or_resource_or_etr, .amount = 1 }, // trash 1 resource or ETR
-            .{ .kind = .end_the_run },
+            .{ .resolve = &resolveTrashProgramOrResourceOrEtr, .amount = 0, .label = "Trash 1 installed card or end the run" }, // trash 1 program or ETR
+            .{ .resolve = &resolveTrashProgramOrResourceOrEtr, .amount = 1, .label = "Trash 1 installed card or end the run" }, // trash 1 resource or ETR
+            .{ .resolve = &resolveEndTheRun, .label = "End the run" },
         },
     },
     .{ .title = "Kessleroid", .side = .corp, .code = 35075, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
-        .{ .kind = .end_the_run },
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
+        .{ .resolve = &resolveEndTheRun, .label = "End the run" },
     } },
-    .{ .title = "Syailendra", .side = .corp, .code = 35076, .card_type = "ICE", .subtypes = &.{ "AP", "Code Gate" }, .cost = 4, .strength = 5, .advanceable = true, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .place_advancement_counter, .amount = 1 },
-        .{ .kind = .runner_loses_credits, .amount = 2 },
-        .{ .kind = .do_net_damage, .amount = 1 },
+    .{ .title = "Syailendra", .side = .corp, .code = 35076, .card_type = "ICE", .subtypes = &.{ "AP", "Code Gate" }, .cost = 4, .strength = 5, .static_abilities = &.{.{ .kind = .can_advance }}, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
+        .{ .resolve = &resolvePlaceAdvancementCounter, .amount = 1, .label = "Place 1 advancement counter" },
+        .{ .resolve = &resolveRunnerLosesCredits, .amount = 2, .label = "Runner loses 2 [Credits]" },
+        .{ .resolve = &resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
     } },
     .{
         .title = "Flyswatter",
@@ -2903,7 +2950,7 @@ pub const all_cards = [_]CardSpec{
         .strength = 0,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .end_the_run },
+            .{ .resolve = &resolveEndTheRun, .label = "End the run" },
         },
         .event_abilities = &.{.{ .event = .corp_rez_ice, .handler = &struct {
             fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
@@ -2924,8 +2971,8 @@ pub const all_cards = [_]CardSpec{
         .strength = 3,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .tag_or_pay_credits_etr, .amount = 3 },
-            .{ .kind = .none }, // ETR if tagged (custom)
+            .{ .resolve = &resolveTagOrPayCreditsEtr, .amount = 3, .label = "Sub 0" },
+            .{ .resolve = &resolveEtrIfTagged, .label = "End the run if the Runner is tagged" }
         },
     },
     // --- Elevation Assets ---
@@ -2972,7 +3019,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Hostile"},
         .cost = 1,
         .trash_cost = 2,
-        .advanceable = true,
+        .static_abilities = &.{.{ .kind = .can_advance }},
         .install = .{ .kind = .corp_remote_only },
         // "When your turn begins, you may trash this asset. If you do, for each hosted advancement counter, gain 3cr and the Runner loses 2cr."
         // This is a start-of-turn optional effect - implemented as auto-trigger when advancement counters > 0
@@ -3638,7 +3685,11 @@ pub const all_cards = [_]CardSpec{
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 } else {
-                    try g.pending_effects.append(g.backing_allocator, .{ .runner_discard_to_deck_prompt = card.* });
+                    try g.pending_effects.append(g.backing_allocator, .{ .deferred_prompt = .{
+                        .card = card.*,
+                        .on_choice = scrounge_on_choice,
+                        .open_fn = &openRunnerDiscardToDeckPrompt,
+                    } });
                     if (try resumePendingEffects(g)) return;
                     g.decision_side = .runner;
                     g.legal_actions = try runnerOpeningActionsForState(allocator, g);
@@ -4192,7 +4243,54 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Program",
         .cost = 0,
         .runner_install = .{ .kind = .program },
-        .trash_access_self_trash = true, .trash_access_draw = 1,
+        .abilities = &.{.{
+            .is_access_ability = true,
+            .label = "Use Gourmand",
+            .side = .runner,
+            .on_use = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const accessed = (if (g.runner_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
+                    const trash_title = card.title;
+                    const trash_code = card.code orelse 0;
+                    // Find and remove self from rig
+                    for (g.runner_rig_program.items, 0..) |prog, idx| {
+                        if (prog.instance_id == card.instance_id) {
+                            const trashed_prog = g.runner_rig_program.orderedRemove(idx);
+                            try appendDiscardCard(g, .runner, trashed_prog);
+                            if (g.runner_memory) |*mem| {
+                                const mu = trashed_prog.runner_install.mu_cost;
+                                mem.used = if (mem.used >= mu) mem.used - mu else 0;
+                                mem.available = mem.base - mem.used;
+                            }
+                            break;
+                        }
+                    }
+                    g.systemMsg(.runner, trash_code, "Runner uses {s} to trash {s}.", .{ trash_title, accessed.title });
+                    g.runner_prompt_state = null;
+                    g.turn_events.runner_trash_corp_card_count += 1;
+                    if (try fireEvent(g, .runner_trash_corp_card)) return;
+                    try removeCurrentAccessedCard(g);
+                    try appendDiscardCard(g, .corp, accessed);
+                    // Draw 1 card
+                    try drawCards(g, .runner, 1);
+                    try finishAccessCard(g);
+                }
+            }.handle,
+            .req = &struct {
+                fn check(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                    const g = gameFromConstEffectContext(ctx);
+                    // Can't use on agendas
+                    if (g.runner_prompt_state) |ps| {
+                        if (ps.source_card) |accessed| {
+                            const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
+                            if (is_agenda) return false;
+                        }
+                    }
+                    return true;
+                }
+            }.check,
+        }},
     },
     .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program },
         .on_install = &struct {
@@ -4258,7 +4356,7 @@ pub const all_cards = [_]CardSpec{
             }.handle,
         }},
     },
-    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .trojan_adds_all_subtypes = true },
+    .{ .title = "Chromatophores", .side = .runner, .code = 35030, .card_type = "Program", .subtypes = &.{"Trojan"}, .cost = 1, .runner_install = .{ .kind = .program }, .static_abilities = &.{.{ .kind = .gain_subtype }} },
     .{
         .title = "Devadatta Drone",
         .side = .runner,
@@ -4282,7 +4380,7 @@ pub const all_cards = [_]CardSpec{
                     if (server.len == 0 or !std.mem.eql(u8, server[0], "rnd")) return;
                     if (card.power_counter == 0) return;
                     card.power_counter -= 1;
-                    g.run.?.access_bonus += 1;
+                    try addFloatingEffect(g, .{ .kind = .access_bonus, .duration = .end_of_run, .value = 1 });
                     g.systemMsg(.runner, 35031, "Runner uses Devadatta Drone to access 1 additional card from R&D.", .{});
                 }
             }.handle,
@@ -5195,10 +5293,11 @@ pub const Game = struct {
     pending_install: ?state.PendingInstall = null,
     pending_access: ?PendingAccess = null,
     corp_phase_12: bool = false,
-    cannot_score_agendas_this_turn: bool = false, // Luminal Transubstantiation
     last_scored_server_index: ?usize = null, // Server from which last agenda was scored
+    // cannot_score_agendas_this_turn replaced by floating effect .prevent_score
     tao_first_ice: ?[]const u8 = null, // Tao: first ICE selection (server_idx|ice_idx|title)
     pending_effects: std.ArrayListUnmanaged(PendingEffect) = .empty, // Async effect continuation queue
+    floating_effects: std.ArrayListUnmanaged(state.FloatingEffect) = .empty, // Duration-scoped runtime effects
     pending_sprint_selections: std.ArrayListUnmanaged([]const u8) = .empty, // Sprint batched card selections
     runner_install_context: ?RunnerInstallContext = null,
 
@@ -5242,6 +5341,9 @@ pub const Game = struct {
     // Instance ID allocator (monotonically increasing, never reused)
     next_instance_id: u32 = 1,
 
+    // Typed effect context (replaces @ptrCast to anyopaque)
+    effect_ctx: state.EffectContext = .{ .game_ptr = undefined },
+
     pub fn deinit(self: *Game) void {
         for (self.corp_servers.items) |*server| {
             server.ices.deinit(self.backing_allocator);
@@ -5260,6 +5362,7 @@ pub const Game = struct {
         self.runner_rig_program.deinit(self.backing_allocator);
         self.runner_rig_resources.deinit(self.backing_allocator);
         self.pending_effects.deinit(self.backing_allocator);
+        self.floating_effects.deinit(self.backing_allocator);
         self.pending_sprint_selections.deinit(self.backing_allocator);
         for (self.log_entries.items) |entry| {
             self.backing_allocator.free(entry.text);
@@ -5417,23 +5520,70 @@ const prompt_discard = "discard";
 const prompt_manegarm_tax = "manegarm-tax";
 
 fn effectContext(game: *Game) *state.EffectContext {
-    return @ptrCast(game);
+    game.effect_ctx = .{ .game_ptr = game };
+    return &game.effect_ctx;
+}
+
+fn effectContextWithEvent(game: *Game, payload: state.EffectContext.EventPayload) *state.EffectContext {
+    game.effect_ctx = .{ .game_ptr = game, .event = payload };
+    return &game.effect_ctx;
 }
 
 fn constEffectContext(game: *const Game) *const state.EffectContext {
-    return @ptrCast(game);
+    const mutable = @constCast(game);
+    mutable.effect_ctx = .{ .game_ptr = mutable };
+    return &mutable.effect_ctx;
 }
 
 fn effectContextConst(game: *const Game) *const state.EffectContext {
-    return @ptrCast(game);
+    const mutable = @constCast(game);
+    mutable.effect_ctx = .{ .game_ptr = mutable };
+    return &mutable.effect_ctx;
 }
 
 fn gameFromEffectContext(ctx: *state.EffectContext) *Game {
-    return @ptrCast(@alignCast(ctx));
+    return ctx.game_ptr;
 }
 
 fn gameFromConstEffectContext(ctx: *const state.EffectContext) *const Game {
-    return @ptrCast(@alignCast(ctx));
+    return ctx.game_ptr;
+}
+
+pub fn addFloatingEffect(game: *Game, effect: state.FloatingEffect) !void {
+    try game.floating_effects.append(game.backing_allocator, effect);
+}
+
+pub fn sumFloatingEffects(game: *const Game, kind: state.FloatingEffectKind) i16 {
+    var total: i16 = 0;
+    for (game.floating_effects.items) |fe| {
+        if (fe.kind == kind) total += fe.value;
+    }
+    return total;
+}
+
+fn hasFloatingEffect(game: *const Game, kind: state.FloatingEffectKind) bool {
+    for (game.floating_effects.items) |fe| {
+        if (fe.kind == kind) return true;
+    }
+    return false;
+}
+
+pub fn hasFloatingEffectFromSource(game: *const Game, kind: state.FloatingEffectKind, source: u32) bool {
+    for (game.floating_effects.items) |fe| {
+        if (fe.kind == kind and fe.source_code != null and fe.source_code.? == source) return true;
+    }
+    return false;
+}
+
+fn expireFloatingEffects(game: *Game, duration: state.FloatingEffectDuration) void {
+    var i: usize = 0;
+    while (i < game.floating_effects.items.len) {
+        if (game.floating_effects.items[i].duration == duration) {
+            _ = game.floating_effects.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 fn clampStaticTotal(value: i16) u8 {
@@ -6093,7 +6243,7 @@ fn applyPromptChoice(
 
     if (std.mem.eql(u8, prompt.prompt_type, prompt_run_central)) {
         // Red Team: click already spent in run_central handler, just start the run
-        try applyRunFromAbility(generated, choice_text, if (prompt.source_card) |sc| sc.code else null);
+        try applyRunFromAbility(generated, choice_text, if (prompt.source_card) |sc| sc.instance_id else null);
         return;
     }
 
@@ -6367,8 +6517,8 @@ fn applyScoreAgendaChoice(
         if (agenda_points != 1) "s" else "",
     });
 
-    // Track agenda points scored this turn (Neurospike)
-    generated.turn_events.agenda_points_scored_this_turn += agenda_points;
+    // Track agenda points scored this turn
+    try addFloatingEffect(generated, .{ .kind = .agenda_points_scored, .duration = .end_of_turn, .value = @intCast(agenda_points) });
 
     // Queue all score effects + event handlers into the pending effects queue.
     // They will be processed one at a time via drainPendingEffects, pausing
@@ -6377,19 +6527,56 @@ fn applyScoreAgendaChoice(
 
     if (lookupCardSpec(scored_agenda)) |spec| {
         // Queue on_score event_abilities (e.g. Orbital Superiority meat damage)
-        for (spec.event_abilities) |ea| {
+        for (spec.event_abilities, 0..) |ea, ea_idx| {
             if (ea.event == .agenda_scored) {
-                try generated.pending_effects.append(allocator, .{ .on_score_event_abilities = scored_agenda });
+                try generated.pending_effects.append(allocator, .{ .card_effect = .{
+                    .card = scored_agenda,
+                    .event = .agenda_scored,
+                    .ability_index = @intCast(ea_idx),
+                } });
                 break;
             }
         }
-        // Queue on-score effects
+        // Apply simple on-score effects inline; queue prompt-opening ones
         switch (spec.on_score.kind) {
-            .gain_credits => try generated.pending_effects.append(allocator, .{ .on_score_gain_credits = spec.on_score.amount }),
-            .draw_cards => try generated.pending_effects.append(allocator, .{ .on_score_draw_cards = .{ .amount = spec.on_score.amount, .card_code = spec.code } }),
-            .give_runner_tag => try generated.pending_effects.append(allocator, .{ .on_score_give_runner_tag = spec.on_score.amount }),
-            .gain_clicks => try generated.pending_effects.append(allocator, .{ .on_score_gain_clicks = spec.on_score.amount }),
-            .rez_ice_free => try generated.pending_effects.append(allocator, .{ .on_score_rez_ice_free = scored_agenda }),
+            .gain_credits => {
+                const amount = spec.on_score.amount;
+                generated.corp_credit += amount;
+                generated.systemMsg(.corp, 0, "Corp gains {d} [credit{s}].", .{ amount, if (amount != 1) @as([]const u8, "s") else "" });
+            },
+            .draw_cards => {
+                try drawCards(generated, .corp, spec.on_score.amount);
+                generated.systemMsg(.corp, spec.code, "Corp draws {d} card{s}.", .{ spec.on_score.amount, if (spec.on_score.amount != 1) @as([]const u8, "s") else "" });
+            },
+            .give_runner_tag => {
+                const amount = spec.on_score.amount;
+                if (generated.runner_tag == null) {
+                    generated.runner_tag = .{ .base = 0, .total = amount, .is_tagged = amount > 0 };
+                } else {
+                    generated.runner_tag.?.total += amount;
+                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
+                }
+                generated.systemMsg(.corp, 0, "Runner gains {d} tag{s}.", .{ amount, if (amount != 1) @as([]const u8, "s") else "" });
+                if (amount > 0) {
+                    generated.turn_events.runner_gain_tag_count += 1;
+                    try collectEventHandlers(generated, .runner_gain_tag);
+                }
+            },
+            .gain_clicks => {
+                const amount = spec.on_score.amount;
+                generated.corp_click += amount;
+                try addFloatingEffect(generated, .{
+                    .kind = .prevent_score,
+                    .duration = .end_of_turn,
+                    .value = 1,
+                });
+                generated.systemMsg(.corp, 0, "Corp gains {d} [click{s}].", .{ amount, if (amount != 1) @as([]const u8, "s") else "" });
+            },
+            .rez_ice_free => try generated.pending_effects.append(allocator, .{ .deferred_prompt = .{
+                .card = scored_agenda,
+                .on_choice = null,
+                .open_fn = &openRezIceFreeForScore,
+            } }),
             .none => {},
         }
     }
@@ -6438,8 +6625,10 @@ fn isAdvanceable(card: state.CardInstance) bool {
     if (card.card_type) |ct| {
         if (std.mem.eql(u8, ct, "Agenda")) return true;
     }
-    // Explicitly advanceable cards (Urtica Cipher, Pharos, Clearinghouse)
-    if (card.advanceable) return true;
+    // Check can_advance static ability (Urtica Cipher, Pharos, Clearinghouse, etc.)
+    for (card.static_abilities) |sa| {
+        if (sa.kind == .can_advance) return true;
+    }
     return false;
 }
 
@@ -6805,69 +6994,34 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                 try ability.handler(effectContext(generated), card);
                 if (hasActivePrompt(generated)) return true;
             },
-            .on_score_gain_credits => |amount| {
-                generated.corp_credit += amount;
-                generated.systemMsg(.corp, 0, "Corp gains {d} [credit{s}].", .{ amount, if (amount != 1) "s" else "" });
-            },
-            .on_score_draw_cards => |info| {
-                try drawCards(generated, .corp, info.amount);
-                generated.systemMsg(.corp, info.card_code, "Corp draws {d} card{s}.", .{ info.amount, if (info.amount != 1) "s" else "" });
-            },
-            .on_score_give_runner_tag => |amount| {
-                // Add tag directly (don't use addRunnerTag which calls fireEvent recursively)
-                if (generated.runner_tag == null) {
-                    generated.runner_tag = .{ .base = 0, .total = amount, .is_tagged = amount > 0 };
-                } else {
-                    generated.runner_tag.?.total += amount;
-                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
-                }
-                generated.systemMsg(.corp, 0, "Runner gains {d} tag{s}.", .{ amount, if (amount != 1) "s" else "" });
-                if (amount > 0) {
-                    generated.turn_events.runner_gain_tag_count += 1;
-                    // Queue event handlers for runner_gain_tag (instead of calling fireEvent)
-                    try collectEventHandlers(generated, .runner_gain_tag);
-                }
-            },
-            .on_score_gain_clicks => |amount| {
-                generated.corp_click += amount;
-                generated.cannot_score_agendas_this_turn = true;
-                generated.systemMsg(.corp, 0, "Corp gains {d} [click{s}].", .{ amount, if (amount != 1) "s" else "" });
-            },
-            .on_score_rez_ice_free => |scored_agenda| {
-                if (try beginRezIceFreePromptForScore(generated, scored_agenda)) return true;
-            },
-            .on_score_event_abilities => |scored_agenda| {
-                if (lookupCardSpec(scored_agenda)) |spec| {
-                    for (spec.event_abilities) |ea| {
-                        if (ea.event == .agenda_scored) {
-                            // Get a mutable pointer to the scored agenda in corp_scored
-                            var mutable_card: *state.CardInstance = undefined;
-                            if (generated.corp_scored.items.len > 0) {
-                                mutable_card = &generated.corp_scored.items[generated.corp_scored.items.len - 1];
-                            } else break;
-                            try ea.handler(effectContext(generated), mutable_card);
-                            if (generated.game_over) return true;
-                            if (hasActivePrompt(generated)) return true;
-                            break;
-                        }
+            .card_effect => |ce| {
+                // Find the card in corp_scored (for agenda_scored) and call the event ability
+                if (ce.event == .agenda_scored) {
+                    if (lookupCardSpecByCode(ce.card.code orelse continue)) |spec| {
+                        if (ce.ability_index >= spec.event_abilities.len) continue;
+                        const ea = spec.event_abilities[ce.ability_index];
+                        if (ea.event != ce.event) continue;
+                        // Get a mutable pointer to the scored agenda in corp_scored
+                        var mutable_card: *state.CardInstance = undefined;
+                        if (generated.corp_scored.items.len > 0) {
+                            mutable_card = &generated.corp_scored.items[generated.corp_scored.items.len - 1];
+                        } else continue;
+                        const old_corp_prompt = generated.corp_prompt_state;
+                        const old_runner_prompt = generated.runner_prompt_state;
+                        try ea.handler(effectContext(generated), mutable_card);
+                        if (generated.game_over) return true;
+                        // Check if a new prompt was opened
+                        if (generated.corp_prompt_state != null and
+                            (old_corp_prompt == null or @intFromPtr(generated.corp_prompt_state.?.prompt_type.ptr) != @intFromPtr(old_corp_prompt.?.prompt_type.ptr)))
+                            return true;
+                        if (generated.runner_prompt_state != null and
+                            (old_runner_prompt == null or @intFromPtr(generated.runner_prompt_state.?.prompt_type.ptr) != @intFromPtr(old_runner_prompt.?.prompt_type.ptr)))
+                            return true;
                     }
                 }
             },
-            .on_steal_rez_ice_free => |stolen_agenda| {
-                if (try beginRezIceFreePrompt(generated, stolen_agenda)) return true;
-            },
-            .on_steal_give_runner_tag => |amount| {
-                if (generated.runner_tag == null) {
-                    generated.runner_tag = .{ .base = 0, .total = amount, .is_tagged = amount > 0 };
-                } else {
-                    generated.runner_tag.?.total += amount;
-                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
-                }
-                generated.systemMsg(.corp, 0, "Runner gains {d} tag{s}.", .{ amount, if (amount != 1) "s" else "" });
-                if (amount > 0) {
-                    generated.turn_events.runner_gain_tag_count += 1;
-                    try collectEventHandlers(generated, .runner_gain_tag);
-                }
+            .deferred_prompt => |dp| {
+                if (try dp.open_fn(generated, dp.card, dp.on_choice)) return true;
             },
             .finish_steal => |info| {
                 try removeCurrentAccessedCard(generated);
@@ -6901,11 +7055,6 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                     generated.corp_prompt_state.?,
                 );
                 return true;
-            },
-            .runner_discard_to_deck_prompt => |source_card| {
-                // Scrounge (35004) needs its on_choice handler propagated to the bottom-program prompt
-                const choice_handler: ?*const fn (*state.EffectContext, []const u8) anyerror!void = if (source_card.code != null and source_card.code.? == 35004) scrounge_on_choice else null;
-                if (try beginRunnerDiscardProgramToDeckPromptWithChoice(generated, source_card, choice_handler)) return true;
             },
             .finish_score => {
                 updateTerminalState(generated);
@@ -7070,10 +7219,9 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
         mem.used += pending.card.runner_install.mu_cost;
         mem.available = if (mem.base > mem.used) mem.base - mem.used else 0;
     }
-    // Tranquilizer: check derez threshold immediately after install
-    if (ice.hosted[ice.hosted.len - 1].trojan_derez_threshold > 0 and
-        ice.hosted[ice.hosted.len - 1].virus_counter >= ice.hosted[ice.hosted.len - 1].trojan_derez_threshold)
-    {
+    // Tranquilizer: check derez threshold (3) immediately after install
+    const hosted_card = ice.hosted[ice.hosted.len - 1];
+    if (hosted_card.code != null and hosted_card.code.? == 30017 and hosted_card.virus_counter >= 3) {
         ice.rezzed = false;
     }
     generated.pending_install = null;
@@ -7160,9 +7308,11 @@ fn isIcebreaker(card: state.CardInstance) bool {
 
 fn iceHasSubtype(ice: state.CardInstance, subtype: []const u8) bool {
     if (hasSubtype(ice, subtype)) return true;
-    // Chromatophores: hosted trojan adds all subtypes to host ICE
+    // Chromatophores: hosted trojan with gain_subtype adds all subtypes to host ICE
     for (ice.hosted) |hosted| {
-        if (hosted.trojan_adds_all_subtypes) return true;
+        for (hosted.static_abilities) |sa| {
+            if (sa.kind == .gain_subtype) return true;
+        }
     }
     return false;
 }
@@ -7179,18 +7329,11 @@ pub fn effectiveStrength(card: state.CardInstance) u8 {
     return card.current_strength orelse card.strength orelse 0;
 }
 
-fn effectiveIceStrength(card: state.CardInstance, server_path: []const []const u8, ice_strength_modifier: i8) u8 {
+fn effectiveIceStrength(g: *const Game, card: state.CardInstance, server_path: []const []const u8, ice_strength_modifier: i8) u8 {
+    _ = server_path;
     const base = card.strength orelse 0;
-    var bonus: u8 = 0;
-    // Palisade: +N strength on remote servers
-    if (card.remote_strength_bonus > 0 and isRemoteServerPath(server_path)) {
-        bonus += card.remote_strength_bonus;
-    }
-    // Pharos: +N strength at M+ advancement counters
-    if (card.advancement_strength_threshold > 0 and card.advancement_counter >= card.advancement_strength_threshold) {
-        bonus += card.advancement_strength_bonus;
-    }
-    const total = @as(i16, base) + @as(i16, bonus) + @as(i16, ice_strength_modifier);
+    const static_bonus = sumCardStaticEffects(g, &card, .self_strength, null);
+    const total = @as(i16, base) + static_bonus + @as(i16, ice_strength_modifier);
     return if (total > 0) @intCast(total) else 0;
 }
 
@@ -7210,7 +7353,7 @@ pub fn effectiveIceStrengthForDisplay(generated: *const Game, server_index: usiz
                 if (current_ice_idx < ice_count) {
                     const actual_ice_idx = ice_count - 1 - current_ice_idx;
                     if (actual_ice_idx == ice_index) {
-                        modifier = run.ice_strength_modifier;
+                        modifier = @intCast(@as(i16, @truncate(sumFloatingEffects(generated, .ice_strength_modifier))));
                     }
                 }
             }
@@ -7218,7 +7361,7 @@ pub fn effectiveIceStrengthForDisplay(generated: *const Game, server_index: usiz
     }
 
     const server_path = [_][]const u8{server.name};
-    return effectiveIceStrength(ice, &server_path, modifier);
+    return effectiveIceStrength(generated, ice, &server_path, modifier);
 }
 
 fn isRemoteServerPath(server_path: []const []const u8) bool {
@@ -7348,14 +7491,8 @@ fn applyAccessPromptChoice(
         try applyTrashOnAccess(generated, accessed);
         return;
     }
-    // Carnivore: trash 2 from hand to trash accessed card at no cost
-    if (std.mem.eql(u8, choice_text, "Trash card")) {
-        try applyCarnivoreTrash(generated, accessed);
-        return;
-    }
-    // Self-trash access ability (Gourmand): trash self to trash accessed non-agenda + draw
-    if (std.mem.eql(u8, choice_text, "Use Gourmand")) {
-        try applySelfTrashAccess(generated, accessed);
+    // Generic access ability dispatch (Carnivore, Gourmand, etc.)
+    if (try applyAccessAbilityChoice(generated, choice_text)) {
         return;
     }
     const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
@@ -7366,66 +7503,28 @@ fn applyAccessPromptChoice(
     }
 }
 
-fn applyCarnivoreTrash(generated: *Game, accessed: state.CardInstance) !void {
-    // Find the card with trash_access_hand_cost and use it
-    var hand_cost: u8 = 2; // default
-    for (generated.runner_rig_hardware.items) |*hw| {
-        if (hw.trash_access_hand_cost > 0 and !isAbilityUsedThisTurn(hw, 0)) {
-            hand_cost = hw.trash_access_hand_cost;
-            markAbilityUsedThisTurn(hw, 0);
-            break;
-        }
-    }
-    // Trash N cards from runner hand (front of hand, deterministic)
-    var trashed: u8 = 0;
-    while (trashed < hand_cost and generated.runner_hand.items.len > 0) : (trashed += 1) {
-        const card = generated.runner_hand.orderedRemove(0);
-        try generated.runner_discard.append(generated.backing_allocator, card);
-    }
-    // Clear access prompt before firing event
-    generated.runner_prompt_state = null;
-    // Trash the accessed card at no credit cost
-    generated.turn_events.runner_trash_corp_card_count += 1;
-    if (try fireEvent(generated, .runner_trash_corp_card)) return;
-    try removeCurrentAccessedCard(generated);
-    try appendDiscardCard(generated, .corp, accessed);
-    try finishAccessCard(generated);
-}
-
-fn applySelfTrashAccess(generated: *Game, accessed: state.CardInstance) !void {
-    // Find and trash the card with trash_access_self_trash from rig
-    var draw_count: u8 = 0;
-    var trash_title: []const u8 = "";
-    var trash_code: u32 = 0;
-    // Check programs first, then hardware
-    for (generated.runner_rig_program.items, 0..) |prog, idx| {
-        if (prog.trash_access_self_trash) {
-            draw_count = prog.trash_access_draw;
-            trash_title = prog.title;
-            trash_code = prog.code orelse 0;
-            const trashed_prog = generated.runner_rig_program.orderedRemove(idx);
-            try appendDiscardCard(generated, .runner, trashed_prog);
-            if (generated.runner_memory) |*mem| {
-                const mu = trashed_prog.runner_install.mu_cost;
-                mem.used = if (mem.used >= mu) mem.used - mu else 0;
-                mem.available = mem.base - mem.used;
+/// Generic access ability dispatch: find an access ability whose label matches choice_text, invoke it.
+fn applyAccessAbilityChoice(generated: *Game, choice_text: []const u8) !bool {
+    // Search all runner rig zones for cards with is_access_ability
+    const rig_zones = [_]*std.ArrayListUnmanaged(state.CardInstance){
+        &generated.runner_rig_hardware,
+        &generated.runner_rig_program,
+        &generated.runner_rig_resources,
+    };
+    for (rig_zones) |zone| {
+        for (zone.items) |*card| {
+            for (card.abilities) |ability| {
+                if (!ability.is_access_ability) continue;
+                const label = ability.label orelse continue;
+                if (!std.mem.eql(u8, label, choice_text)) continue;
+                if (ability.on_use) |handler| {
+                    try handler(effectContext(generated), card);
+                    return true;
+                }
             }
-            break;
         }
     }
-    generated.systemMsg(.runner, trash_code, "Runner uses {s} to trash {s}.", .{ trash_title, accessed.title });
-    // Clear access prompt before firing event
-    generated.runner_prompt_state = null;
-    // Trash the accessed card
-    generated.turn_events.runner_trash_corp_card_count += 1;
-    if (try fireEvent(generated, .runner_trash_corp_card)) return;
-    try removeCurrentAccessedCard(generated);
-    try appendDiscardCard(generated, .corp, accessed);
-    // Draw cards
-    if (draw_count > 0) {
-        try drawCards(generated, .runner, draw_count);
-    }
-    try finishAccessCard(generated);
+    return false;
 }
 
 fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
@@ -7445,12 +7544,6 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
     // Fire runner_trash_corp_card event (Loup trigger)
     generated.turn_events.runner_trash_corp_card_count += 1;
     if (try fireEvent(generated, .runner_trash_corp_card)) return;
-    // AMAZE Amusements: if trashed during a run, record pending tags
-    if (accessed.tags_on_agenda_steal_from_server > 0) {
-        if (generated.run) |*mutable_run| {
-            mutable_run.tags_pending_on_steal += accessed.tags_on_agenda_steal_from_server;
-        }
-    }
     try removeCurrentAccessedCard(generated);
     // Move to corp discard
     try appendDiscardCard(generated, .corp, accessed);
@@ -7507,8 +7600,10 @@ fn applyStealAgendaChoice(
         accessed.title, stolen_points, if (stolen_points != 1) "s" else "",
     });
     const is_central = if (generated.run) |run| isCentralRunServer(run.server) else false;
-    if (generated.run) |*mutable_run| {
-        mutable_run.did_steal_this_run = true;
+    // Apply tags_on_steal floating effects immediately on steal
+    const tags_from_effects = sumFloatingEffects(generated, .tags_on_steal);
+    if (tags_from_effects > 0) {
+        _ = addRunnerTag(generated, @intCast(tags_from_effects)) catch {};
     }
     try collectEventHandlers(generated, .agenda_stolen);
 
@@ -7517,10 +7612,25 @@ fn applyStealAgendaChoice(
     if (lookupCardSpec(accessed)) |spec| {
         switch (spec.on_steal.kind) {
             .rez_ice_free => {
-                try generated.pending_effects.append(pending_allocator, .{ .on_steal_rez_ice_free = accessed });
+                try generated.pending_effects.append(pending_allocator, .{ .deferred_prompt = .{
+                    .card = accessed,
+                    .on_choice = null,
+                    .open_fn = &openRezIceFreeForSteal,
+                } });
             },
             .give_runner_tag => {
-                try generated.pending_effects.append(pending_allocator, .{ .on_steal_give_runner_tag = spec.on_steal.amount });
+                const amount = spec.on_steal.amount;
+                if (generated.runner_tag == null) {
+                    generated.runner_tag = .{ .base = 0, .total = amount, .is_tagged = amount > 0 };
+                } else {
+                    generated.runner_tag.?.total += amount;
+                    generated.runner_tag.?.is_tagged = generated.runner_tag.?.total > 0;
+                }
+                generated.systemMsg(.corp, 0, "Runner gains {d} tag{s}.", .{ amount, if (amount != 1) @as([]const u8, "s") else "" });
+                if (amount > 0) {
+                    generated.turn_events.runner_gain_tag_count += 1;
+                    try collectEventHandlers(generated, .runner_gain_tag);
+                }
             },
             .none => {},
             else => {},
@@ -7585,6 +7695,21 @@ fn beginRezIceFreePromptForScore(
         generated.corp_prompt_state.?,
     );
     return true;
+}
+
+/// Wrapper for deferred_prompt: open rez-ice-free prompt after scoring
+fn openRezIceFreeForScore(g: *Game, card: state.CardInstance, _: ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool {
+    return beginRezIceFreePromptForScore(g, card);
+}
+
+/// Wrapper for deferred_prompt: open rez-ice-free prompt after stealing
+fn openRezIceFreeForSteal(g: *Game, card: state.CardInstance, _: ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool {
+    return beginRezIceFreePrompt(g, card);
+}
+
+/// Wrapper for deferred_prompt: open runner discard-program-to-deck prompt
+fn openRunnerDiscardToDeckPrompt(g: *Game, card: state.CardInstance, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool {
+    return beginRunnerDiscardProgramToDeckPromptWithChoice(g, card, on_choice);
 }
 
 fn applyRezIceFreeChoice(
@@ -7761,7 +7886,8 @@ fn applyUseSubroutine(
             // Validate subtype matching
             if (!canBreakIceType(icebreaker, ice.*)) return error.CannotBreakIceType;
             // Validate strength (ICE strength includes remote bonus)
-            const ice_str = effectiveIceStrength(ice.*, run.server, run.ice_strength_modifier);
+            const ice_str_mod: i8 = @intCast(@as(i16, @truncate(sumFloatingEffects(generated, .ice_strength_modifier))));
+            const ice_str = effectiveIceStrength(generated, ice.*, run.server, ice_str_mod);
             if (effectiveStrength(icebreaker) < ice_str) return error.InsufficientStrength;
 
             // Check which subroutine to break based on subroutine_index
@@ -7780,8 +7906,8 @@ fn applyUseSubroutine(
             // Mark subroutine as broken
             ice.broken_subroutines |= (@as(u16, 1) << @as(u4, @intCast(sub_idx)));
 
-            // Track that this breaker was used (for Mayfly end-of-run trash)
-            generated.runner_rig_program.items[icebreaker_idx].used_break_this_run = true;
+            // Track that this breaker was used
+            try addFloatingEffect(generated, .{ .kind = .icebreaker_broke, .duration = .end_of_run, .source_code = generated.runner_rig_program.items[icebreaker_idx].instance_id });
         } else {
             return error.NotAnIcebreaker;
         }
@@ -8198,17 +8324,25 @@ fn applyRunnerRunTargetChoice(
         .current_ice_index = null,
         .corp_auto_no_action = false,
         .no_action = null,
-        .temporary_run_credits = spec.run_credits,
         .accesses_remaining = 0,
         .accessed_count = 0,
         .accessed_card_indexes = .{ null, null, null, null },
         .access_card_index = null,
-        .rez_cost_bonus = spec.run_rez_cost_bonus,
-        .successful_run_effect = spec.successful_run_effect,
-        .successful_run_draw_cards = spec.successful_run_draw_cards,
-        .access_bonus = spec.successful_run_access_bonus,
         .jack_out_available = false,
     };
+    // Add run-scoped floating effects from card spec
+    if (spec.run_credits > 0) {
+        try addFloatingEffect(generated, .{ .kind = .run_credits, .duration = .end_of_run, .value = @intCast(spec.run_credits) });
+    }
+    if (spec.run_rez_cost_bonus > 0) {
+        try addFloatingEffect(generated, .{ .kind = .rez_cost_bonus, .duration = .end_of_run, .value = @intCast(spec.run_rez_cost_bonus) });
+    }
+    if (spec.successful_run_access_bonus > 0) {
+        try addFloatingEffect(generated, .{ .kind = .access_bonus, .duration = .end_of_run, .value = @intCast(spec.successful_run_access_bonus) });
+    }
+    if (spec.successful_run_effect == .draw_cards and spec.successful_run_draw_cards > 0) {
+        try addFloatingEffect(generated, .{ .kind = .successful_run_draw, .duration = .end_of_run, .value = @intCast(spec.successful_run_draw_cards) });
+    }
     // Fire run_begins event (Side Hustle: place credit)
     if (try fireEvent(generated, .run_begins)) return;
     generated.decision_side = .corp;
@@ -8250,15 +8384,10 @@ fn applyRun(
         .current_ice_index = null,
         .corp_auto_no_action = false,
         .no_action = null,
-        .temporary_run_credits = 0,
         .accesses_remaining = 0,
         .accessed_count = 0,
         .accessed_card_indexes = .{ null, null, null, null },
         .access_card_index = null,
-        .rez_cost_bonus = 0,
-        .successful_run_effect = .none,
-        .successful_run_draw_cards = 0,
-        .access_bonus = 0,
         .jack_out_available = false,
     };
     // Fire run_begins event (Side Hustle: place credit)
@@ -8270,7 +8399,7 @@ fn applyRun(
 fn applyRunFromAbility(
     generated: *Game,
     server: []const u8,
-    source_card_code: ?u32,
+    source_instance_id: ?u32,
 ) !void {
     const allocator = generated.arena.allocator();
     const run_server = try canonicalRunServer(allocator, server);
@@ -8298,17 +8427,12 @@ fn applyRunFromAbility(
         .current_ice_index = null,
         .corp_auto_no_action = false,
         .no_action = null,
-        .temporary_run_credits = 0,
         .accesses_remaining = 0,
         .accessed_count = 0,
         .accessed_card_indexes = .{ null, null, null, null },
         .access_card_index = null,
-        .rez_cost_bonus = 0,
-        .successful_run_effect = .none,
-        .successful_run_draw_cards = 0,
-        .access_bonus = 0,
         .jack_out_available = false,
-        .source_card_code = source_card_code,
+        .source_instance_id = source_instance_id,
     };
     // Fire run_begins event (Side Hustle: place credit)
     if (try fireEvent(generated, .run_begins)) return;
@@ -8366,8 +8490,9 @@ fn applyRezApproachedIce(generated: *Game) !void {
     const target = (try currentApproachedIce(generated)) orelse return error.UnsupportedChoice;
     if (target.ice.rezzed) return error.UnsupportedChoice;
     const rez_cost = target.ice.cost orelse 0;
-    const run_val = generated.run orelse return error.NoRunInProgress;
-    const adjusted_cost = applyCostModifier(rez_cost + run_val.rez_cost_bonus, sumStaticEffects(generated, .runner, .rez_cost, &target.ice));
+    _ = generated.run orelse return error.NoRunInProgress;
+    const floating_rez_bonus: u16 = @intCast(@max(0, sumFloatingEffects(generated, .rez_cost_bonus)));
+    const adjusted_cost = applyCostModifier(rez_cost + floating_rez_bonus, sumStaticEffects(generated, .runner, .rez_cost, &target.ice));
     try spendCredits(generated, .corp, adjusted_cost);
     generated.corp_servers.items[target.server_index].ices.items[target.ice_index].rezzed = true;
     if (adjusted_cost > 0) {
@@ -8376,10 +8501,6 @@ fn applyRezApproachedIce(generated: *Game) !void {
         });
     } else {
         generated.systemMsg(.corp, target.ice.code orelse 0, "Corp rezzes {s}.", .{target.ice.title});
-    }
-    // Ping: give runner tags when rezzed during a run
-    if (target.ice.tag_on_rez > 0) {
-        if (try addRunnerTag(generated, target.ice.tag_on_rez)) return;
     }
     // On-rez trigger: iterate event_abilities for corp_rez_ice
     const ice = &generated.corp_servers.items[target.server_index].ices.items[target.ice_index];
@@ -8589,9 +8710,9 @@ fn advanceApproachIcePhase(generated: *Game) !void {
             // Store runner-perspective ice index for applyUseSubroutine
             const ice_count = generated.corp_servers.items[target.server_index].ices.items.len;
             run.current_ice_index = @intCast(ice_count - 1 - target.ice_index);
-            // Reset broken_subroutines and ice_strength_modifier for this encounter
+            // Reset broken_subroutines and expire encounter-scoped floating effects
             generated.corp_servers.items[target.server_index].ices.items[target.ice_index].broken_subroutines = 0;
-            run.ice_strength_modifier = 0;
+            expireFloatingEffects(generated, .end_of_encounter);
 
             // Dynamic strength bonuses for encounter
             for (generated.runner_rig_program.items) |*prog| {
@@ -8628,32 +8749,10 @@ fn advanceApproachIcePhase(generated: *Game) !void {
 const prompt_break_sub = "break-sub";
 
 fn subroutineLabel(allocator: std.mem.Allocator, sub: state.SubroutineSpec, idx: usize) ![]const u8 {
-    return switch (sub.kind) {
-        .end_the_run => std.fmt.allocPrint(allocator, "End the run", .{}),
-        .do_net_damage => std.fmt.allocPrint(allocator, "Do {d} net damage", .{sub.amount}),
-        .do_brain_damage => std.fmt.allocPrint(allocator, "Do {d} brain damage", .{sub.amount}),
-        .tag_runner => std.fmt.allocPrint(allocator, "Give the Runner 1 tag", .{}),
-        .give_runner_tags => std.fmt.allocPrint(allocator, "Give the Runner {d} tags", .{sub.amount}),
-        .runner_loses_credits => std.fmt.allocPrint(allocator, "Runner loses {d} [Credits]", .{sub.amount}),
-        .give_tag_or_pay_credits => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
-        .corp_gains_credits => std.fmt.allocPrint(allocator, "Corp gains {d} [Credits]", .{sub.amount}),
-        .install_ice_from_hq_archives => std.fmt.allocPrint(allocator, "Install a card from HQ or Archives", .{}),
-        .trace_tag => std.fmt.allocPrint(allocator, "Trace[{d}] - Give the Runner 1 tag", .{sub.base_trace}),
-        .do_net_damage_conditional_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
-        .runner_loses_credits_or_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
-        .do_net_damage_then_jack_out => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
-        .trash_program_or_etr => std.fmt.allocPrint(allocator, "Trash 1 program or end the run", .{}),
-        .corp_install_from_hq_archives => std.fmt.allocPrint(allocator, "Install a card from HQ or Archives", .{}),
-        .prevent_steal_trash => std.fmt.allocPrint(allocator, "The Runner cannot steal or trash Corp cards for the remainder of this run", .{}),
-        .conditional_net_damage_if_tagged => std.fmt.allocPrint(allocator, "Do {d} net damage if the Runner is tagged", .{sub.amount}),
-        .conditional_etr_threat => std.fmt.allocPrint(allocator, "End the run if threat >= {d}", .{sub.amount}),
-        .net_damage_unless_etr => std.fmt.allocPrint(allocator, "End the run unless the Runner suffers {d} net damage", .{sub.amount}),
-        .trash_program_or_resource_or_etr => std.fmt.allocPrint(allocator, "Trash 1 installed card or end the run", .{}),
-        .runner_loses_credits_and_net_damage => std.fmt.allocPrint(allocator, "The Runner loses {d} [Credits]", .{sub.amount}),
-        .tag_or_pay_credits_etr => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
-        .place_advancement_counter => std.fmt.allocPrint(allocator, "Place {d} advancement counter{s}", .{ sub.amount, if (sub.amount != 1) "s" else "" }),
-        .none => std.fmt.allocPrint(allocator, "Sub {d}", .{idx}),
-    };
+    if (sub.label) |label| {
+        return std.fmt.allocPrint(allocator, "{s}", .{label});
+    }
+    return std.fmt.allocPrint(allocator, "Sub {d}", .{idx});
 }
 
 fn openBreakSubPrompt(
@@ -8787,6 +8886,389 @@ fn advanceEncounterPhase(generated: *Game) !void {
     generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
 }
 
+// --- Subroutine resolve handlers ---
+// Each returns true to stop processing further subroutines, false to continue.
+
+pub fn resolveEndTheRun(generated: *Game, _: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    endOfRunCleanup(generated);
+    generated.run = null;
+    generated.corp_prompt_state = null;
+    generated.runner_prompt_state = null;
+    generated.runner_run_credit = 0;
+    generated.decision_side = .runner;
+    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+    return true;
+}
+
+pub fn resolveNetDamage(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    try trashRandomRunnerHandCards(generated, ctx.amount);
+    updateTerminalState(generated);
+    return generated.game_over;
+}
+
+pub fn resolveBrainDamage(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    generated.runner_brain_damage += ctx.amount;
+    try trashRandomRunnerHandCards(generated, ctx.amount);
+    updateTerminalState(generated);
+    return generated.game_over;
+}
+
+pub fn resolveTagRunner(generated: *Game, _: state.SubroutineContext) anyerror!bool {
+    _ = try addRunnerTag(generated, 1);
+    return false;
+}
+
+pub fn resolveTraceTag(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    const run = &(generated.run orelse return error.NoRunInProgress);
+    run.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index + 1,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    try choices.append(allocator, stringChoice("Take 1 tag"));
+    if (generated.runner_credit >= ctx.base_trace) {
+        const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{ctx.base_trace});
+        try choices.append(allocator, stringChoice(text));
+    }
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "trace"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+    return true;
+}
+
+pub fn resolveGiveRunnerTags(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    _ = try addRunnerTag(generated, ctx.amount);
+    return false;
+}
+
+pub fn resolveRunnerLosesCredits(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const loss = @min(ctx.amount, @as(u8, @intCast(generated.runner_credit)));
+    generated.runner_credit -= loss;
+    return false;
+}
+
+pub fn resolveCorpGainsCredits(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    generated.corp_credit += ctx.amount;
+    return false;
+}
+
+pub fn resolveNetDamageConditionalEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    // Diviner: do N net damage, if trashed card has odd cost, end the run
+    const hand_before = generated.runner_hand.items.len;
+    try trashRandomRunnerHandCards(generated, ctx.amount);
+    updateTerminalState(generated);
+    if (generated.game_over) return true;
+    // Check if a card was trashed and if it has odd cost
+    if (generated.runner_hand.items.len < hand_before) {
+        if (generated.runner_discard.items.len > 0) {
+            const trashed_card = generated.runner_discard.items[generated.runner_discard.items.len - 1];
+            const card_cost = trashed_card.cost orelse 0;
+            if (card_cost % 2 == 1) {
+                endOfRunCleanup(generated);
+                generated.run = null;
+                generated.corp_prompt_state = null;
+                generated.runner_prompt_state = null;
+                generated.runner_run_credit = 0;
+                generated.decision_side = .runner;
+                generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+pub fn resolveRunnerLosesCreditsOrEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    // Whitespace sub2: end the run if runner has N credits or less
+    const total_credits = generated.runner_credit + generated.runner_run_credit;
+    if (total_credits <= ctx.amount) {
+        endOfRunCleanup(generated);
+        generated.run = null;
+        generated.corp_prompt_state = null;
+        generated.runner_prompt_state = null;
+        generated.runner_run_credit = 0;
+        generated.decision_side = .runner;
+        generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+        return true;
+    }
+    return false;
+}
+
+pub fn resolveNetDamageThenJackOut(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    // Karunā sub1: do N net damage, then runner may jack out
+    try trashRandomRunnerHandCards(generated, ctx.amount);
+    updateTerminalState(generated);
+    if (generated.game_over) return true;
+    // Offer jack out - pause subroutines and show jack-out prompt
+    const run = &(generated.run orelse return error.NoRunInProgress);
+    run.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index + 1,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    try choices.append(allocator, stringChoice("Jack out"));
+    try choices.append(allocator, stringChoice("Continue"));
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "jack-out"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "waiting"),
+        .choices = &.{},
+        .source_card = null,
+    };
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+    return true;
+}
+
+pub fn resolveGiveTagOrPayCredits(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    // Funhouse sub: give 1 tag unless runner pays N credits
+    const run = &(generated.run orelse return error.NoRunInProgress);
+    run.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index + 1,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    try choices.append(allocator, stringChoice("Take 1 tag"));
+    if (generated.runner_credit >= ctx.amount) {
+        const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{ctx.amount});
+        try choices.append(allocator, stringChoice(text));
+    }
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "trace"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+    return true;
+}
+
+pub fn resolveInstallIceFromHqArchives(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    try beginBranInstallIcePrompt(generated, ctx.server_index, ctx.ice_index, ctx.subroutine_index);
+    return true;
+}
+
+pub fn resolveTrashProgramOrEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    if (generated.runner_rig_program.items.len == 0) {
+        try completeUnsuccessfulRun(generated);
+        return true;
+    }
+    generated.run.?.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    for (generated.runner_rig_program.items, 0..) |prog, pidx| {
+        const label = try std.fmt.allocPrint(allocator, "p|{d}", .{pidx});
+        try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
+    }
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "ballista-trash"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+    return true;
+}
+
+pub fn resolveCorpInstallFromHqArchives(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    try beginAnselInstallPrompt(generated, ctx.server_index, ctx.ice_index, ctx.subroutine_index);
+    return true;
+}
+
+pub fn resolvePreventStealTrash(generated: *Game, _: state.SubroutineContext) anyerror!bool {
+    if (generated.run != null) {
+        try addFloatingEffect(generated, .{
+            .kind = .prevent_steal_or_trash,
+            .duration = .end_of_run,
+            .value = 1,
+        });
+    }
+    return false;
+}
+
+pub fn resolveConditionalNetDamageIfTagged(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    // Doomscroll: do N net damage if runner has N+ tags
+    const tag_count = if (generated.runner_tag) |t| t.base else 0;
+    if (tag_count >= ctx.amount) {
+        try trashRandomRunnerHandCards(generated, ctx.amount);
+        updateTerminalState(generated);
+        if (generated.game_over) return true;
+    }
+    return false;
+}
+
+pub fn resolveConditionalEtrThreat(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    // N-Pot: ETR if threat level >= amount
+    if (threatLevel(generated) >= ctx.amount) {
+        try completeUnsuccessfulRun(generated);
+        return true;
+    }
+    return false;
+}
+
+pub fn resolveNetDamageUnlessEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    // Semak-samun: ETR unless runner suffers N net damage
+    const run = &(generated.run orelse return error.NoRunInProgress);
+    run.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index + 1,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    try choices.append(allocator, stringChoice("End the run"));
+    const text = try std.fmt.allocPrint(allocator, "Suffer {d} net damage", .{ctx.amount});
+    try choices.append(allocator, stringChoice(text));
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "net-damage-or-etr"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+    return true;
+}
+
+pub fn resolveTrashProgramOrResourceOrEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    // Biawak: trash 1 program or 1 resource, or ETR if none
+    const has_programs = generated.runner_rig_program.items.len > 0;
+    const has_resources = generated.runner_rig_resources.items.len > 0;
+    if (!has_programs and !has_resources) {
+        try completeUnsuccessfulRun(generated);
+        return true;
+    }
+    generated.run.?.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index + 1,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    // Use ctx.amount to distinguish: 0 = programs only, 1 = resources only
+    if (ctx.amount == 0 or ctx.amount == 2) {
+        for (generated.runner_rig_program.items, 0..) |prog, pidx| {
+            const label = try std.fmt.allocPrint(allocator, "p|{d}", .{pidx});
+            try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
+        }
+    }
+    if (ctx.amount == 1 or ctx.amount == 2) {
+        for (generated.runner_rig_resources.items, 0..) |res, ridx| {
+            const label = try std.fmt.allocPrint(allocator, "r|{d}", .{ridx});
+            try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = res.title, .side = .runner, .index = @intCast(ridx) } });
+        }
+    }
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "ballista-trash"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+    return true;
+}
+
+pub fn resolveRunnerLosesCreditsAndNetDamage(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    // Syailendra: runner loses N credits
+    const loss = @min(ctx.amount, @as(u8, @intCast(generated.runner_credit)));
+    generated.runner_credit -= loss;
+    return false;
+}
+
+pub fn resolveTagOrPayCreditsEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const allocator = generated.arena.allocator();
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    // Lamplighter: give 1 tag unless runner pays N; then ETR if tagged
+    const run = &(generated.run orelse return error.NoRunInProgress);
+    run.pending_subroutine = .{
+        .server_index = ctx.server_index,
+        .ice_index = ctx.ice_index,
+        .subroutine_index = ctx.subroutine_index + 1,
+    };
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    try choices.append(allocator, stringChoice("Take 1 tag"));
+    if (generated.runner_credit >= ctx.amount) {
+        const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{ctx.amount});
+        try choices.append(allocator, stringChoice(text));
+    }
+    generated.runner_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "trace"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = ice,
+    };
+    generated.decision_side = .runner;
+    generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
+    return true;
+}
+
+pub fn resolvePlaceAdvancementCounter(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
+    generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index].advancement_counter += ctx.amount;
+    generated.systemMsg(.corp, ice.code orelse 0, "Corp places {d} advancement counter{s} on {s}.", .{
+        ctx.amount, if (ctx.amount != 1) @as([]const u8, "s") else @as([]const u8, ""), ice.title,
+    });
+    return false;
+}
+
+pub fn resolveEtrIfTagged(generated: *Game, _: state.SubroutineContext) anyerror!bool {
+    // Lamplighter sub 2: ETR if runner is tagged
+    const tag_count = if (generated.runner_tag) |t| t.base else 0;
+    if (tag_count > 0) {
+        return resolveEndTheRun(generated, undefined_ctx);
+    }
+    return false;
+}
+
+const undefined_ctx = state.SubroutineContext{ .server_index = 0, .ice_index = 0, .subroutine_index = 0 };
+
+pub fn resolveRezIceWithDiscount(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    // Mycoweb sub 2: rez a piece of ice, paying 2cr less
+    // Currently a no-op placeholder (needs rez prompt with discount)
+    _ = generated;
+    _ = ctx;
+    return false;
+}
+
+pub fn resolveOtherIceSubroutine(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
+    // Mycoweb subs 3+4: resolve a subroutine on another rezzed ice
+    // Currently a no-op placeholder (needs cross-ICE resolution)
+    _ = generated;
+    _ = ctx;
+    return false;
+}
+
 fn resolveEncounteredIceSubroutines(
     generated: *Game,
     ice: state.CardInstance,
@@ -8794,7 +9276,6 @@ fn resolveEncounteredIceSubroutines(
     ice_index: usize,
     start_subroutine: u8,
 ) !void {
-    const allocator = generated.arena.allocator();
     const subroutines = ice.subroutines;
 
     for (subroutines, 0..) |sub, idx| {
@@ -8802,326 +9283,18 @@ fn resolveEncounteredIceSubroutines(
         const is_broken = (ice.broken_subroutines & (@as(u16, 1) << @intCast(idx))) != 0;
         if (is_broken) continue;
 
-        // Track subroutines fired this run (Ryō: gains credits when subs fire)
-        if (generated.run) |*run| {
-            run.subroutines_fired += 1;
-        }
+        // Track subroutines resolved this run
+        try addFloatingEffect(generated, .{ .kind = .subroutine_resolved, .duration = .end_of_run, .value = 1 });
 
-        switch (sub.kind) {
-            .end_the_run => {
-                endOfRunCleanup(generated);
-                generated.run = null;
-                generated.corp_prompt_state = null;
-                generated.runner_prompt_state = null;
-                generated.runner_run_credit = 0;
-                generated.decision_side = .runner;
-                generated.legal_actions = try runnerOpeningActionsForState(
-                    allocator,
-                    generated,
-                );
-                return;
-            },
-            .do_net_damage => {
-                const damage = sub.amount;
-                try trashRandomRunnerHandCards(generated, damage);
-                updateTerminalState(generated);
-                if (generated.game_over) return;
-            },
-            .do_brain_damage => {
-                const damage = sub.amount;
-                generated.runner_brain_damage += damage;
-                try trashRandomRunnerHandCards(generated, damage);
-                updateTerminalState(generated);
-                if (generated.game_over) return;
-            },
-            .tag_runner => {
-                _ = try addRunnerTag(generated, 1);
-            },
-            .trace_tag => {
-                const run = &(generated.run orelse return error.NoRunInProgress);
-                run.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx + 1),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                try choices.append(allocator, stringChoice("Take 1 tag"));
-                if (generated.runner_credit >= sub.base_trace) {
-                    const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{sub.base_trace});
-                    try choices.append(allocator, stringChoice(text));
-                }
-                generated.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "trace"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.decision_side = .runner;
-                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-                return;
-            },
-            .give_runner_tags => {
-                _ = try addRunnerTag(generated, sub.amount);
-            },
-            .runner_loses_credits => {
-                const loss = @min(sub.amount, @as(u8, @intCast(generated.runner_credit)));
-                generated.runner_credit -= loss;
-            },
-            .corp_gains_credits => {
-                generated.corp_credit += sub.amount;
-            },
-            .do_net_damage_conditional_etr => {
-                // Diviner: do N net damage, if trashed card has odd cost, end the run
-                const damage = sub.amount;
-                const hand_before = generated.runner_hand.items.len;
-                try trashRandomRunnerHandCards(generated, damage);
-                updateTerminalState(generated);
-                if (generated.game_over) return;
-                // Check if a card was trashed and if it has odd cost
-                if (generated.runner_hand.items.len < hand_before) {
-                    // The last trashed card went to discard
-                    if (generated.runner_discard.items.len > 0) {
-                        const trashed_card = generated.runner_discard.items[generated.runner_discard.items.len - 1];
-                        const card_cost = trashed_card.cost orelse 0;
-                        if (card_cost % 2 == 1) {
-                            // Odd cost - end the run
-                            endOfRunCleanup(generated);
-                            generated.run = null;
-                            generated.corp_prompt_state = null;
-                            generated.runner_prompt_state = null;
-                            generated.runner_run_credit = 0;
-                            generated.decision_side = .runner;
-                            generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
-                            return;
-                        }
-                    }
-                }
-            },
-            .runner_loses_credits_or_etr => {
-                // Whitespace sub2: end the run if runner has N credits or less
-                const total_credits = generated.runner_credit + generated.runner_run_credit;
-                if (total_credits <= sub.amount) {
-                    endOfRunCleanup(generated);
-                    generated.run = null;
-                    generated.corp_prompt_state = null;
-                    generated.runner_prompt_state = null;
-                    generated.runner_run_credit = 0;
-                    generated.decision_side = .runner;
-                    generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
-                    return;
-                }
-            },
-            .do_net_damage_then_jack_out => {
-                // Karunā sub1: do N net damage, then runner may jack out
-                const damage = sub.amount;
-                try trashRandomRunnerHandCards(generated, damage);
-                updateTerminalState(generated);
-                if (generated.game_over) return;
-                // Offer jack out - pause subroutines and show jack-out prompt
-                const run = &(generated.run orelse return error.NoRunInProgress);
-                run.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx + 1),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                try choices.append(allocator, stringChoice("Jack out"));
-                try choices.append(allocator, stringChoice("Continue"));
-                generated.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "jack-out"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "waiting"),
-                    .choices = &.{},
-                    .source_card = null,
-                };
-                generated.decision_side = .runner;
-                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-                return;
-            },
-            .give_tag_or_pay_credits => {
-                // Funhouse sub: give 1 tag unless runner pays N credits
-                const run = &(generated.run orelse return error.NoRunInProgress);
-                run.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx + 1),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                try choices.append(allocator, stringChoice("Take 1 tag"));
-                if (generated.runner_credit >= sub.amount) {
-                    const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{sub.amount});
-                    try choices.append(allocator, stringChoice(text));
-                }
-                generated.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "trace"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.decision_side = .runner;
-                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-                return;
-            },
-            .install_ice_from_hq_archives => {
-                try beginBranInstallIcePrompt(generated, server_index, ice_index, @intCast(idx));
-                return;
-            },
-            .trash_program_or_etr => {
-                if (generated.runner_rig_program.items.len == 0) {
-                    // No programs — end the run
-                    try completeUnsuccessfulRun(generated);
-                    return;
-                }
-                // Corp chooses a program to trash — use pending_subroutine for multi-sub ICE
-                generated.run.?.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                for (generated.runner_rig_program.items, 0..) |prog, pidx| {
-                    const label = try std.fmt.allocPrint(allocator, "p|{d}", .{pidx});
-                    try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
-                }
-                generated.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "ballista-trash"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.decision_side = .corp;
-                generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
-                return;
-            },
-            .corp_install_from_hq_archives => {
-                // Ansel 1.0 sub 2: corp installs a card from HQ or Archives
-                try beginAnselInstallPrompt(generated, server_index, ice_index, @intCast(idx));
-                return;
-            },
-            .prevent_steal_trash => {
-                // Ansel 1.0 sub 3: prevent stealing/trashing for rest of run
-                if (generated.run) |*mutable_run| {
-                    mutable_run.no_steal_or_trash = true;
-                }
-            },
-            .conditional_net_damage_if_tagged => {
-                // Doomscroll: do N net damage if runner has N+ tags
-                const tag_count = if (generated.runner_tag) |t| t.base else 0;
-                if (tag_count >= sub.amount) {
-                    const damage = sub.amount;
-                    try trashRandomRunnerHandCards(generated, damage);
-                    updateTerminalState(generated);
-                    if (generated.game_over) return;
-                }
-            },
-            .conditional_etr_threat => {
-                // N-Pot: ETR if threat level >= amount
-                if (threatLevel(generated) >= sub.amount) {
-                    try completeUnsuccessfulRun(generated);
-                    return;
-                }
-            },
-            .net_damage_unless_etr => {
-                // Semak-samun: ETR unless runner suffers N net damage
-                const run = &(generated.run orelse return error.NoRunInProgress);
-                run.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx + 1),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                try choices.append(allocator, stringChoice("End the run"));
-                const text = try std.fmt.allocPrint(allocator, "Suffer {d} net damage", .{sub.amount});
-                try choices.append(allocator, stringChoice(text));
-                generated.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "net-damage-or-etr"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.decision_side = .runner;
-                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-                return;
-            },
-            .trash_program_or_resource_or_etr => {
-                // Biawak: trash 1 program or 1 resource, or ETR if none
-                const has_programs = generated.runner_rig_program.items.len > 0;
-                const has_resources = generated.runner_rig_resources.items.len > 0;
-                if (!has_programs and !has_resources) {
-                    try completeUnsuccessfulRun(generated);
-                    return;
-                }
-                generated.run.?.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx + 1),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                // Use sub.amount to distinguish: 0 = programs only, 1 = resources only
-                if (sub.amount == 0 or sub.amount == 2) {
-                    for (generated.runner_rig_program.items, 0..) |prog, pidx| {
-                        const label = try std.fmt.allocPrint(allocator, "p|{d}", .{pidx});
-                        try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
-                    }
-                }
-                if (sub.amount == 1 or sub.amount == 2) {
-                    for (generated.runner_rig_resources.items, 0..) |res, ridx| {
-                        const label = try std.fmt.allocPrint(allocator, "r|{d}", .{ridx});
-                        try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = res.title, .side = .runner, .index = @intCast(ridx) } });
-                    }
-                }
-                generated.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "ballista-trash"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.decision_side = .corp;
-                generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
-                return;
-            },
-            .runner_loses_credits_and_net_damage => {
-                // Syailendra: runner loses N credits
-                const loss = @min(sub.amount, @as(u8, @intCast(generated.runner_credit)));
-                generated.runner_credit -= loss;
-            },
-            .tag_or_pay_credits_etr => {
-                // Lamplighter: give 1 tag unless runner pays N; then ETR if tagged
-                const run = &(generated.run orelse return error.NoRunInProgress);
-                run.pending_subroutine = .{
-                    .server_index = @intCast(server_index),
-                    .ice_index = @intCast(ice_index),
-                    .subroutine_index = @intCast(idx + 1),
-                };
-                var choices: std.ArrayList(state.PromptChoice) = .empty;
-                defer choices.deinit(allocator);
-                try choices.append(allocator, stringChoice("Take 1 tag"));
-                if (generated.runner_credit >= sub.amount) {
-                    const text = try std.fmt.allocPrint(allocator, "Pay {d} [Credits]", .{sub.amount});
-                    try choices.append(allocator, stringChoice(text));
-                }
-                generated.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "trace"),
-                    .choices = try choices.toOwnedSlice(allocator),
-                    .source_card = ice,
-                };
-                generated.decision_side = .runner;
-                generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-                return;
-            },
-            .place_advancement_counter => {
-                // Syailendra: place N advancement counters on this ICE
-                generated.corp_servers.items[server_index].ices.items[ice_index].advancement_counter += sub.amount;
-                generated.systemMsg(.corp, ice.code orelse 0, "Corp places {d} advancement counter{s} on {s}.", .{
-                    sub.amount, if (sub.amount != 1) "s" else "", ice.title,
-                });
-            },
-            .none => {},
-        }
+        const ctx = state.SubroutineContext{
+            .server_index = @intCast(server_index),
+            .ice_index = @intCast(ice_index),
+            .subroutine_index = @intCast(idx),
+            .amount = sub.amount,
+            .base_trace = sub.base_trace,
+        };
+        const stop = try sub.resolve(generated, ctx);
+        if (stop) return;
     }
 }
 
@@ -9582,7 +9755,8 @@ fn ensureAccessesInitialized(generated: *Game) !void {
     const run = &generated.run.?;
     if (run.accesses_remaining != 0 or run.accessed_count != 0) return;
 
-    var bonus: u8 = run.access_bonus;
+    const floating_access = sumFloatingEffects(generated, .access_bonus);
+    var bonus: u8 = if (floating_access > 0) @intCast(floating_access) else 0;
     if (std.mem.eql(u8, run.server[0], "hq") and generated.turn_events.runner_hq_breaches == 0) {
         bonus += runner_installed_hq_access_bonus(generated);
         generated.turn_events.runner_hq_breaches += 1;
@@ -9595,10 +9769,10 @@ fn ensureAccessesInitialized(generated: *Game) !void {
 }
 
 fn applySuccessfulRunEffects(generated: *Game) !void {
-    const run = generated.run orelse return error.NoRunInProgress;
-    switch (run.successful_run_effect) {
-        .none => {},
-        .draw_cards => try drawCards(generated, .runner, run.successful_run_draw_cards),
+    _ = generated.run orelse return error.NoRunInProgress;
+    const draw_amount = sumFloatingEffects(generated, .successful_run_draw);
+    if (draw_amount > 0) {
+        try drawCards(generated, .runner, @intCast(draw_amount));
     }
 }
 
@@ -9673,7 +9847,7 @@ fn beginAccessFlow(
     accessed: state.CardInstance,
 ) !bool {
     const allocator = generated.arena.allocator();
-    const no_steal_or_trash = if (generated.run) |r| r.no_steal_or_trash else false;
+    const no_steal_or_trash = hasFloatingEffect(generated, .prevent_steal_or_trash);
     if (try fireEvent(generated, .access)) return true;
     if (generated.game_over) return true;
     // Card-specific access handler (Urtica Cipher net damage, etc.)
@@ -9709,55 +9883,85 @@ fn beginNoActionAccessPrompt(generated: *Game, accessed: state.CardInstance) !bo
     return true;
 }
 
-/// Check if runner has a card with trash-from-hand access ability (Carnivore pattern)
-fn hasTrashAccessFromHand(generated: *const Game) bool {
-    for (generated.runner_rig_hardware.items) |hw| {
-        if (hw.trash_access_hand_cost > 0 and !isAbilityUsedThisTurn(&hw, 0) and
-            generated.runner_hand.items.len >= hw.trash_access_hand_cost) return true;
+/// Count available access abilities across all runner rig zones
+fn countAccessAbilities(generated: *const Game, no_steal_or_trash: bool, is_agenda: bool) usize {
+    if (no_steal_or_trash) return 0;
+    var count: usize = 0;
+    const rig_zones = [_][]const state.CardInstance{
+        generated.runner_rig_hardware.items,
+        generated.runner_rig_program.items,
+        generated.runner_rig_resources.items,
+    };
+    for (rig_zones) |zone| {
+        for (zone) |card| {
+            for (card.abilities, 0..) |ability, ability_idx| {
+                if (!ability.is_access_ability) continue;
+                if (ability.once_per_turn and isAbilityUsedThisTurn(&card, @intCast(ability_idx))) continue;
+                if (ability.req) |req| {
+                    if (!req(effectContextConst(generated), &card)) continue;
+                }
+                _ = is_agenda;
+                count += 1;
+            }
+        }
     }
-    return false;
+    return count;
 }
 
-/// Check if runner has a card with self-trash access ability (Gourmand pattern)
-fn hasTrashAccessSelfTrash(generated: *const Game) bool {
-    for (generated.runner_rig_program.items) |prog| {
-        if (prog.trash_access_self_trash) return true;
+/// Append access ability choices to the choices list
+fn appendAccessAbilityChoices(
+    allocator: std.mem.Allocator,
+    generated: *const Game,
+    choices: []state.PromptChoice,
+    start_idx: usize,
+    no_steal_or_trash: bool,
+    is_agenda: bool,
+) usize {
+    if (no_steal_or_trash) return start_idx;
+    var idx = start_idx;
+    const rig_zones = [_][]const state.CardInstance{
+        generated.runner_rig_hardware.items,
+        generated.runner_rig_program.items,
+        generated.runner_rig_resources.items,
+    };
+    for (rig_zones) |zone| {
+        for (zone) |card| {
+            for (card.abilities, 0..) |ability, ability_idx| {
+                if (!ability.is_access_ability) continue;
+                if (ability.once_per_turn and isAbilityUsedThisTurn(&card, @intCast(ability_idx))) continue;
+                if (ability.req) |req| {
+                    if (!req(effectContextConst(generated), &card)) continue;
+                }
+                _ = is_agenda;
+                _ = allocator;
+                choices[idx] = stringChoice(ability.label orelse "Use ability");
+                idx += 1;
+            }
+        }
     }
-    for (generated.runner_rig_hardware.items) |hw| {
-        if (hw.trash_access_self_trash) return true;
-    }
-    return false;
+    return idx;
 }
 
 fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
     const spec = lookupCardSpec(accessed);
     const trash_cost = if (spec) |s| s.trash_cost else null;
     const allocator = generated.arena.allocator();
-    const no_steal_or_trash = if (generated.run) |r| r.no_steal_or_trash else false;
+    const no_steal_or_trash = hasFloatingEffect(generated, .prevent_steal_or_trash);
+    const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
 
     const can_afford = if (trash_cost) |tc| generated.runner_credit >= tc and !no_steal_or_trash else false;
-    const has_trash_from_hand = hasTrashAccessFromHand(generated) and !no_steal_or_trash;
-    const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
-    const has_self_trash = hasTrashAccessSelfTrash(generated) and !no_steal_or_trash and !is_agenda;
+    const access_ability_count = countAccessAbilities(generated, no_steal_or_trash, is_agenda);
     var choice_count: usize = 1; // "No action"
     if (can_afford) choice_count += 1;
-    if (has_trash_from_hand) choice_count += 1;
-    if (has_self_trash) choice_count += 1;
+    choice_count += access_ability_count;
     const choices = try allocator.alloc(state.PromptChoice, choice_count);
     var idx: usize = 0;
     if (can_afford) {
         choices[idx] = stringChoice(try std.fmt.allocPrint(allocator, "Pay {d} [Credits] to trash", .{trash_cost.?}));
         idx += 1;
     }
-    if (has_trash_from_hand) {
-        choices[idx] = stringChoice("Trash card");
-        idx += 1;
-    }
-    if (has_self_trash) {
-        choices[idx] = stringChoice("Use Gourmand");
-        idx += 1;
-    }
-    if (trash_cost == null and !has_trash_from_hand and !has_self_trash) {
+    idx = appendAccessAbilityChoices(allocator, generated, choices, idx, no_steal_or_trash, is_agenda);
+    if (trash_cost == null and access_ability_count == 0) {
         generated.systemMsg(.runner, accessed.code orelse 0, "Runner accesses {s}.", .{accessed.title});
         return false;
     }
@@ -10015,7 +10219,8 @@ fn canRezApproachedIce(game: *const Game) !bool {
     const target = try currentApproachedIce(@constCast(game)) orelse return false;
     if (target.ice.rezzed) return false;
     const rez_cost = target.ice.cost orelse 0;
-    const adjusted_cost = applyCostModifier(rez_cost + run.rez_cost_bonus, sumStaticEffects(game, .runner, .rez_cost, &target.ice));
+    const floating_rez_bonus: u16 = @intCast(@max(0, sumFloatingEffects(game, .rez_cost_bonus)));
+    const adjusted_cost = applyCostModifier(rez_cost + floating_rez_bonus, sumStaticEffects(game, .runner, .rez_cost, &target.ice));
     return game.corp_credit >= adjusted_cost;
 }
 
@@ -10061,7 +10266,7 @@ fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
     const run = g.run orelse return error.NoRunInProgress;
     if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
 
-    var icebreaker = card;
+    const icebreaker = card;
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
     const target_server = try findMutableServerByRunPath(g.corp_servers.items, run.server);
     const server = &g.corp_servers.items[target_server.index];
@@ -10072,7 +10277,8 @@ fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
 
     if (!isIcebreaker(icebreaker.*)) return error.NotAnIcebreaker;
     if (!canBreakIceType(icebreaker.*, ice.*)) return error.CannotBreakIceType;
-    const ice_str = effectiveIceStrength(ice.*, run.server, run.ice_strength_modifier);
+    const ice_str_mod: i8 = @intCast(@as(i16, @truncate(sumFloatingEffects(g, .ice_strength_modifier))));
+    const ice_str = effectiveIceStrength(g, ice.*, run.server, ice_str_mod);
     if (effectiveStrength(icebreaker.*) < ice_str) return error.InsufficientStrength;
 
     const break_ability = icebreaker.abilities[0];
@@ -10083,7 +10289,7 @@ fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
     if (g.runner_credit < credit_cost) return error.InsufficientCredits;
     g.runner_credit -= credit_cost;
 
-    icebreaker.used_break_this_run = true;
+    try addFloatingEffect(g, .{ .kind = .icebreaker_broke, .duration = .end_of_run, .source_code = icebreaker.instance_id });
     if (break_ability.on_break) |callback| {
         try callback(effectContext(g), icebreaker);
     }
@@ -10143,11 +10349,14 @@ fn encounterLeechHandler(ctx: *state.EffectContext, card: *state.CardInstance) a
     const g = gameFromEffectContext(ctx);
     const allocator = g.arena.allocator();
     if (g.run == null) return error.NoRunInProgress;
-    const leech_ability = card.abilities[0];
     card.virus_counter -= 1;
-    g.run.?.ice_strength_modifier -= @intCast(leech_ability.virus_strength_reduction);
+    try addFloatingEffect(g, .{
+        .kind = .ice_strength_modifier,
+        .duration = .end_of_encounter,
+        .value = -1,
+    });
     g.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to give ICE -{d} strength.", .{
-        card.title, leech_ability.virus_strength_reduction,
+        card.title, @as(u8, 1),
     });
     const run = g.run.?;
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
@@ -10222,7 +10431,8 @@ fn encounterActionsForState(
     ice: state.CardInstance,
 ) ![]const state.LegalAction {
     const run = generated.run orelse return error.NoRunInProgress;
-    const ice_str = effectiveIceStrength(ice, run.server, run.ice_strength_modifier);
+    const encounter_ice_mod: i8 = @intCast(@as(i16, @truncate(sumFloatingEffects(generated, .ice_strength_modifier))));
+    const ice_str = effectiveIceStrength(generated, ice, run.server, encounter_ice_mod);
 
     // Count unbroken subroutines
     var unbroken_count: u16 = 0;
@@ -10267,9 +10477,9 @@ fn encounterActionsForState(
             if (generated.runner_credit < pump_cost) continue;
             pump_count += 1;
         }
-        // Leech: programs with virus_strength_reduction ability
+        // Leech: non-icebreaker programs with virus counter and encounter ability
         for (generated.runner_rig_program.items) |card| {
-            if (card.abilities.len > 0 and card.abilities[0].virus_strength_reduction > 0 and card.virus_counter > 0) {
+            if (!isIcebreaker(card) and card.abilities.len > 0 and card.abilities[0].on_use == &encounterLeechHandler and card.virus_counter > 0) {
                 leech_count += 1;
             }
         }
@@ -10345,9 +10555,9 @@ fn encounterActionsForState(
             next += 1;
         }
 
-        // Leech: virus ICE strength reduction
+        // Leech: non-icebreaker programs with virus counter and encounter ability
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
-            if (card.abilities.len > 0 and card.abilities[0].virus_strength_reduction > 0 and card.virus_counter > 0) {
+            if (!isIcebreaker(card) and card.abilities.len > 0 and card.abilities[0].on_use == &encounterLeechHandler and card.virus_counter > 0) {
                 const combined_idx = generated.runner_rig_resources.items.len + card_idx;
                 actions[next] = .{
                     .kind = .use_installed_ability,
@@ -10355,7 +10565,7 @@ fn encounterActionsForState(
                     .card_index = @intCast(combined_idx),
                     .card_title = try allocator.dupe(u8, card.title),
                     .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                    .label = try std.fmt.allocPrint(allocator, "Give -{d} strength to {s}", .{ card.abilities[0].virus_strength_reduction, ice.title }),
+                    .label = try std.fmt.allocPrint(allocator, "Give -1 strength to {s}", .{ice.title}),
                 };
                 next += 1;
             }
@@ -10419,13 +10629,14 @@ fn corpOpeningActionsForState(
     const opponent_ability_count = opponent_resource_ability_count + opponent_program_ability_count + opponent_hardware_ability_count;
     const raw_advanceable = if (g.corp_click >= 1 and g.corp_credit >= 1) countAdvanceableCards(servers) else 0;
     // Don't count scoreable agendas as advanceable (score replaces advance)
-    const advanceable_count = if (!g.cannot_score_agendas_this_turn) raw_advanceable -| scoreable_count else raw_advanceable;
+    const cannot_score = hasFloatingEffect(g, .prevent_score);
+    const advanceable_count = if (!cannot_score) raw_advanceable -| scoreable_count else raw_advanceable;
     const rezzable_count = countRezzableNonIce(g);
     const flashback_count = countCorpFlashbackActions(g);
     var count: usize = playable_hand_count + flashback_count + installed_ability_count + opponent_ability_count + advanceable_count + rezzable_count;
     if (g.corp_click >= 1) count += 1; // gain credit
     if (g.corp_click >= 1 and g.corp_deck.items.len > 0) count += 1; // draw card
-    if (scoreable_count > 0 and !g.cannot_score_agendas_this_turn) count += scoreable_count;
+    if (scoreable_count > 0 and !cannot_score) count += scoreable_count;
     if (g.corp_click >= 3) count += 1; // purge viruses
 
     const actions = try allocator.alloc(state.LegalAction, count);
@@ -10497,7 +10708,7 @@ fn corpOpeningActionsForState(
                 // Skip advance for agendas that are already scoreable
                 if (card.agenda_points != null and card.advancement_requirement != null and
                     card.advancement_counter >= card.advancement_requirement.? and
-                    !g.cannot_score_agendas_this_turn) continue;
+                    !cannot_score) continue;
                 const text = try std.fmt.allocPrint(allocator, "{s}|c|{d}", .{ server.name, card_index });
                 actions[next] = .{
                     .kind = .advance,
@@ -10510,7 +10721,7 @@ fn corpOpeningActionsForState(
         }
     }
     // Per-agenda score actions
-    if (scoreable_count > 0 and !g.cannot_score_agendas_this_turn) {
+    if (scoreable_count > 0 and !cannot_score) {
         for (servers, 0..) |server, server_index| {
             if (server_index < 3) continue;
             for (server.content.items, 0..) |card, card_index| {
@@ -10734,6 +10945,7 @@ fn basicAbilityAction(
 fn countCardAbilityActions(generated: *const Game, side: state.Side, card: state.CardInstance) usize {
     var count: usize = 0;
     for (card.abilities, 0..) |ability, ability_idx| {
+        if (ability.is_access_ability) continue;
         if (side != card.side and !ability.allow_opponent_use) continue;
         const click_cost = if (ability.cost) |c| c.clicks else 0;
         const credit_cost = if (ability.cost) |c| c.credits else 0;
@@ -10759,6 +10971,7 @@ fn emitCardAbilityActions(
 ) !usize {
     var next = start;
     for (card.abilities, 0..) |ability, ability_idx| {
+        if (ability.is_access_ability) continue;
         if (side != card.side and !ability.allow_opponent_use) continue;
         const click_cost = if (ability.cost) |c| c.clicks else 0;
         const credit_cost = if (ability.cost) |c| c.credits else 0;
@@ -11361,7 +11574,6 @@ fn makeCardInstance(
         .subtypes = subtypes,
         .cost = spec.cost,
         .strength = spec.strength,
-        .remote_strength_bonus = spec.remote_strength_bonus,
         .agenda_points = spec.agenda_points,
         .advancement_requirement = spec.advancement_requirement,
         .install = spec.install,
@@ -11376,15 +11588,8 @@ fn makeCardInstance(
         .on_take = spec.on_take,
         .on_empty = spec.on_empty,
         .click_draw_bonus = spec.click_draw_bonus,
-        .tags_on_agenda_steal_from_server = spec.tags_on_agenda_steal_from_server,
-        .trojan_break_any = spec.trojan_break_any,
-        .trojan_derez_threshold = spec.trojan_derez_threshold,
-        .trojan_adds_all_subtypes = spec.trojan_adds_all_subtypes,
         .auto_trash_at_credits = spec.auto_trash_at_credits,
         .draw_on_auto_trash = spec.draw_on_auto_trash,
-        .trash_access_hand_cost = spec.trash_access_hand_cost,
-        .trash_access_self_trash = spec.trash_access_self_trash,
-        .trash_access_draw = spec.trash_access_draw,
         .place_credits_per_turn = spec.place_credits_per_turn,
         .auto_take_credits = spec.auto_take_credits,
         .subroutines = spec.subroutines,
@@ -11392,10 +11597,6 @@ fn makeCardInstance(
         .credit_counter = 0,
         .abilities_used_this_turn = 0,
         .broken_subroutines = 0,
-        .tag_on_rez = spec.tag_on_rez,
-        .advanceable = spec.advanceable,
-        .advancement_strength_threshold = spec.advancement_strength_threshold,
-        .advancement_strength_bonus = spec.advancement_strength_bonus,
     };
 }
 
@@ -11511,7 +11712,7 @@ fn applyCorpStartOfTurnAbilities(game: *Game) !void {
 fn endCorpPhase12(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.corp_phase_12 = false;
-    generated.cannot_score_agendas_this_turn = false;
+    expireFloatingEffects(generated, .end_of_turn);
 
     // Corp must draw at start of turn — empty deck means runner wins
     if (generated.corp_deck.items.len == 0) {
@@ -11551,11 +11752,11 @@ fn clearInstalledThisTurnFlags(game: *Game) void {
 
 fn applySourceCardOnSuccessfulRun(game: *Game) !void {
     const run = game.run orelse return;
-    const source_code = run.source_card_code orelse return;
+    const source_id = run.source_instance_id orelse return;
 
-    // Find the source card in runner's rig (Red Team is a resource)
+    // Find the source card in runner's rig by instance_id
     for (game.runner_rig_resources.items, 0..) |*card, idx| {
-        if (card.code != null and card.code.? == source_code and card.credit_counter > 0) {
+        if (card.instance_id == source_id and card.credit_counter > 0) {
             const take = @min(card.credit_counter, card.take_credits_amount);
             card.credit_counter -= take;
             game.runner_credit += take;
@@ -11598,7 +11799,7 @@ fn runnerHasActiveRunEvent(generated: *const Game) bool {
     // Run events are in the play area when active — check if run has a source card
     // that is a run event (subtypes include "Run")
     if (generated.run) |run| {
-        if (run.source_card_code) |_| return true;
+        if (run.source_instance_id) |_| return true;
     }
     return false;
 }
@@ -11621,24 +11822,8 @@ fn countInstalledIcebreakers(generated: *const Game) u16 {
     return count;
 }
 
-fn applyAmazeTagsOnRunEnd(game: *Game) void {
-    const run = game.run orelse return;
-    if (!run.did_steal_this_run) return;
-
-    // Check the run's target server for cards with tags_on_agenda_steal_from_server
-    const target_server = findServerByRunPath(game.corp_servers.items, run.server) catch return;
-    var tags: u8 = 0;
-    for (target_server.slot.content.items) |card| {
-        if (card.tags_on_agenda_steal_from_server > 0 and card.rezzed) {
-            tags += card.tags_on_agenda_steal_from_server;
-        }
-    }
-    // Also check pending tags from trashed AMAZE
-    tags += run.tags_pending_on_steal;
-
-    if (tags > 0) {
-        _ = addRunnerTag(game, tags) catch {};
-    }
+fn applyAmazeTagsOnRunEnd(_: *Game) void {
+    // Tags on steal are now applied immediately in applyStealAgendaChoice
 }
 
 fn applyIdentityOnSuccessfulRun(game: *Game) !void {
@@ -11647,10 +11832,9 @@ fn applyIdentityOnSuccessfulRun(game: *Game) !void {
 }
 
 fn endOfRunCleanup(game: *Game) void {
-    // Reset used_break_this_run for remaining breakers
-    for (game.runner_rig_program.items) |*card| {
-        card.used_break_this_run = false;
-    }
+    // Expire run-scoped and encounter-scoped floating effects
+    expireFloatingEffects(game, .end_of_run);
+    expireFloatingEffects(game, .end_of_encounter);
 }
 
 fn drawCard(game: *Game, side: state.Side) !void {
@@ -12238,9 +12422,10 @@ fn threatLevel(g: *const Game) u8 {
 }
 
 fn corpIdentityInstallsAgendasFaceup(g: *const Game) bool {
-    const code = g.corp_identity.code orelse return false;
-    const spec = lookupCardSpecByCode(code) orelse return false;
-    return spec.installs_agendas_faceup;
+    for (g.corp_identity.static_abilities) |sa| {
+        if (sa.kind == .faceup_agenda_install) return true;
+    }
+    return false;
 }
 
 fn currentPendingAccessedServerCard(g: *Game) ?*state.CardInstance {
@@ -13127,8 +13312,8 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
     // Tread Lightly prompts for run target
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Server 1") orelse return error.MissingAction);
 
-    // Verify rez cost bonus is set
-    try std.testing.expectEqual(@as(u16, 3), generated.run.?.rez_cost_bonus);
+    // Verify rez cost bonus is set via floating effect
+    try std.testing.expectEqual(@as(i16, 3), sumFloatingEffects(&generated, .rez_cost_bonus));
 
     // Run through to approach-ice phase
     var guard: usize = 0;

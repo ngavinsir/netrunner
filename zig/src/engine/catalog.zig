@@ -1,12 +1,14 @@
 const std = @import("std");
 const state = @import("state.zig");
 const runtime = @import("runtime.zig");
+const game_engine = @import("game.zig");
 
 const Game = runtime.Game;
 
 const gameFromEffectContext = runtime.gameFromEffectContext;
 const gameFromConstEffectContext = runtime.gameFromConstEffectContext;
 const addAdvancementCounter = runtime.addAdvancementCounter;
+const addFloatingEffect = runtime.addFloatingEffect;
 const addRunnerTag = runtime.addRunnerTag;
 const appendDiscardCard = runtime.appendDiscardCard;
 const appendHostedCard = runtime.appendHostedCard;
@@ -42,6 +44,7 @@ const findRunnerHardwareByCode = runtime.findRunnerHardwareByCode;
 const findRunnerResourceIndex = runtime.findRunnerResourceIndex;
 const findServerByRunPath = runtime.findServerByRunPath;
 const hasActivePrompt = runtime.hasActivePrompt;
+const hasFloatingEffectFromSource = runtime.hasFloatingEffectFromSource;
 const hostedChoiceIndex = runtime.hostedChoiceIndex;
 const hostRandomHqCard = runtime.hostRandomHqCard;
 const hostTopRunnerDeckCard = runtime.hostTopRunnerDeckCard;
@@ -73,6 +76,7 @@ const showKpiChoices = runtime.showKpiChoices;
 const showTopDownInstallChoices = runtime.showTopDownInstallChoices;
 const shuffleDeck = runtime.shuffleDeck;
 const spendClicks = runtime.spendClicks;
+const sumFloatingEffects = runtime.sumFloatingEffects;
 const spendCredits = runtime.spendCredits;
 const stringChoice = runtime.stringChoice;
 const threatLevel = runtime.threatLevel;
@@ -91,6 +95,18 @@ const canonicalRunServer = runtime.canonicalRunServer;
 const trackMadeRun = runtime.trackMadeRun;
 const continueActions = runtime.continueActions;
 const public_trail_choices = runtime.public_trail_choices;
+
+/// Wrapper for deferred_prompt: open runner discard-program-to-deck prompt (catalog version)
+fn openRunnerDiscardToDeckPromptCatalog(_: *Game, _: state.CardInstance, _: ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool {
+    // TODO: wire to beginRunnerDiscardProgramToDeckPromptWithChoice when catalog is integrated
+    return false;
+}
+
+/// Wrapper for deferred_prompt: open rez-ice-free prompt after stealing (catalog version)
+fn openRezIceFreeForStealCatalog(_: *Game, _: state.CardInstance, _: ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool {
+    // TODO: wire to beginRezIceFreePrompt when catalog is integrated
+    return false;
+}
 
 /// Precision Design: select card from Archives to add to HQ
 fn precisionDesignOnChoice(ctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
@@ -522,7 +538,13 @@ pub fn scroungeOnChoice(ctx: *state.EffectContext, choice_text: []const u8) anye
     if (std.mem.eql(u8, prompt.prompt_type, "scrounge-install")) {
         const ref = prompt.ability_ref orelse return error.MissingSourceCard;
         g.runner_prompt_state = null;
-        try g.pending_effects.append(g.backing_allocator, .{ .runner_discard_to_deck_prompt = ref.source_instance_id });
+        const source_card = prompt.source_card orelse return error.MissingSourceCard;
+        _ = ref;
+        try g.pending_effects.append(g.backing_allocator, .{ .deferred_prompt = .{
+            .card = source_card,
+            .on_choice = scroungeOnChoice,
+            .open_fn = &openRunnerDiscardToDeckPromptCatalog,
+        } });
         if (std.mem.eql(u8, choice_text, "No action")) {
             if (try resumePendingEffects(g)) return;
             try restorePriorityAfterPrompt(g);
@@ -599,7 +621,7 @@ fn breakAbility(comptime base_cost: u16) state.AbilitySpec {
                 const cost = applyCostModifier(base_cost, sumStaticEffects(g, .runner, .break_cost, card));
                 if (g.runner_credit < cost) return error.InsufficientCredits;
                 g.runner_credit -= cost;
-                card.used_break_this_run = true;
+                try addFloatingEffect(g, .{ .kind = .icebreaker_broke, .duration = .end_of_run, .source_code = card.instance_id });
                 g.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to break subroutine on {s}.", .{ card.title, ice.title });
                 try openBreakSubPrompt(g, ice, card.*, 0);
             }
@@ -909,7 +931,7 @@ fn runnerRunEventPlayAbility(
                                 .rez_cost_bonus = run_rez_cost_bonus,
                                 .access_bonus = successful_run_access_bonus,
                                 .jack_out_available = false,
-                                .source_card_code = null,
+                                .source_instance_id = null,
                             };
                             if (successful_run_draw_cards > 0) {
                                 g2.run.?.successful_run_draw_cards = successful_run_draw_cards;
@@ -1206,7 +1228,11 @@ pub const all_cards = [_]CardSpec{
         .install = .{ .kind = .corp_remote_only },
         .on_steal_fn = &struct {
             fn steal(g: *Game, card: state.CardInstance) anyerror!void {
-                try g.pending_effects.append(g.backing_allocator, .{ .on_steal_rez_ice_free = card });
+                try g.pending_effects.append(g.backing_allocator, .{ .deferred_prompt = .{
+                    .card = card,
+                    .on_choice = null,
+                    .open_fn = &openRezIceFreeForStealCatalog,
+                } });
             }
         }.steal,
     },
@@ -1263,7 +1289,7 @@ pub const all_cards = [_]CardSpec{
         }.use,
         .label = "Take 3 [Credits]",
     }} },
-    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .advanceable = true, .install = .{ .kind = .corp_remote_only } },
+    .{ .title = "Urtica Cipher", .side = .corp, .code = 30045, .card_type = "Asset", .cost = 0, .trash_cost = 2, .static_abilities = &.{.{ .kind = .can_advance }}, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Government Subsidy", .side = .corp, .code = 30064, .card_type = "Operation", .cost = 10, .abilities = &.{corpPlayAbility(10, 15, 0)} },
     .{ .title = "Hedge Fund", .side = .corp, .code = 30075, .card_type = "Operation", .cost = 5, .abilities = &.{corpPlayAbility(5, 9, 0)} },
     .{
@@ -1480,29 +1506,29 @@ pub const all_cards = [_]CardSpec{
         .strength = 6,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .install_ice_from_hq_archives },
-            .{ .kind = .end_the_run },
-            .{ .kind = .end_the_run },
+            .{ .resolve = &game_engine.resolveInstallIceFromHqArchives, .label = "Install a card from HQ or Archives" },
+            .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
+            .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
         },
         .abilities = &.{bioroidBreakAbility(1, 1)},
     },
     .{ .title = "Palisade", .side = .corp, .code = 30072, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 3, .strength = 2, .remote_strength_bonus = 2, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
     } },
     .{ .title = "Diviner", .side = .corp, .code = 30046, .card_type = "ICE", .subtypes = &.{ "Code Gate", "AP" }, .cost = 2, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage_conditional_etr, .amount = 1 },
+        .{ .resolve = &game_engine.resolveNetDamageConditionalEtr, .amount = 1, .label = "Sub 0" },
     } },
     .{ .title = "Whitespace", .side = .corp, .code = 30074, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 2, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .runner_loses_credits, .amount = 3 },
-        .{ .kind = .runner_loses_credits_or_etr, .amount = 6 },
+        .{ .resolve = &game_engine.resolveRunnerLosesCredits, .amount = 3, .label = "Runner loses 3 [Credits]" },
+        .{ .resolve = &game_engine.resolveRunnerLosesCreditsOrEtr, .amount = 6, .label = "Sub 1" },
     } },
     .{ .title = "Karunā", .side = .corp, .code = 30047, .card_type = "ICE", .subtypes = &.{ "Sentry", "AP" }, .cost = 4, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage_then_jack_out, .amount = 2 },
-        .{ .kind = .do_net_damage, .amount = 2 },
+        .{ .resolve = &game_engine.resolveNetDamageThenJackOut, .amount = 2, .label = "Sub 0" },
+        .{ .resolve = &game_engine.resolveNetDamage, .amount = 2, .label = "Do 2 net damage" },
     } },
     .{ .title = "Tithe", .side = .corp, .code = 30073, .card_type = "ICE", .subtypes = &.{ "Sentry", "AP" }, .cost = 1, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .do_net_damage, .amount = 1 },
-        .{ .kind = .corp_gains_credits, .amount = 1 },
+        .{ .resolve = &game_engine.resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
+        .{ .resolve = &game_engine.resolveCorpGainsCredits, .amount = 1, .label = "Corp gains 1 [Credits]" },
     } },
     .{
         .title = "Funhouse",
@@ -1514,7 +1540,7 @@ pub const all_cards = [_]CardSpec{
         .strength = 4,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .give_tag_or_pay_credits, .amount = 4 },
+            .{ .resolve = &game_engine.resolveGiveTagOrPayCredits, .amount = 4, .label = "Sub 0" },
         },
     },
     .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(5, 0, 1)} },
@@ -1663,14 +1689,14 @@ pub const all_cards = [_]CardSpec{
         .event = .run_ends,
         .handler = &struct {
             fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                if (!self_card.used_break_this_run) return;
                 const g = gameFromEffectContext(ctx);
+                if (!hasFloatingEffectFromSource(g, .icebreaker_broke, self_card.instance_id)) return;
                 var i: usize = 0;
                 while (i < g.runner_rig_program.items.len) : (i += 1) {
                     const card = g.runner_rig_program.items[i];
                     if (card.code == null or self_card.code == null) continue;
                     if (card.code.? != self_card.code.?) continue;
-                    if (!card.used_break_this_run) continue;
+                    if (!hasFloatingEffectFromSource(g, .icebreaker_broke, card.instance_id)) continue;
                     const trashed = g.runner_rig_program.orderedRemove(i);
                     try appendDiscardCard(g, .runner, trashed);
                     return;
@@ -1732,7 +1758,7 @@ pub const all_cards = [_]CardSpec{
         .cost = .{ .clicks = 1 },
         .on_use = &struct {
             fn use(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                try applyRunFromAbility(gameFromEffectContext(ctx), "R&D", card.*);
+                try applyRunFromAbility(gameFromEffectContext(ctx), "R&D", card.instance_id);
             }
         }.use,
         .label_fn = &struct {
@@ -1835,16 +1861,24 @@ pub const all_cards = [_]CardSpec{
         .install = .{ .kind = .corp_remote_only },
         .on_steal_fn = &struct {
             fn steal(g: *Game, _: state.CardInstance) anyerror!void {
-                try g.pending_effects.append(g.backing_allocator, .{ .on_steal_give_runner_tag = 1 });
+                // Inline: give runner 1 tag on steal
+                if (g.runner_tag == null) {
+                    g.runner_tag = .{ .base = 0, .total = 1, .is_tagged = true };
+                } else {
+                    g.runner_tag.?.total += 1;
+                    g.runner_tag.?.is_tagged = true;
+                }
+                g.systemMsg(.corp, 0, "Runner gains 1 tag.", .{});
+                g.turn_events.runner_gain_tag_count += 1;
             }
         }.steal,
     },
     .{ .title = "Ping", .side = .corp, .code = 30055, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .tag_on_rez = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
     } },
     .{ .title = "Ballista", .side = .corp, .code = 30062, .card_type = "ICE", .subtypes = &.{"Sentry"}, .cost = 5, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .trash_program_or_etr },
-        .{ .kind = .trash_program_or_etr },
+        .{ .resolve = &game_engine.resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" },
+        .{ .resolve = &game_engine.resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" },
     } },
     .{
         .title = "Sprint",
@@ -1985,9 +2019,9 @@ pub const all_cards = [_]CardSpec{
     },
     // --- Phase 1: Pharos, Fermenter, Neurospike, Luminal Transubstantiation, Cookbook ---
     .{ .title = "Pharos", .side = .corp, .code = 30063, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 7, .strength = 5, .advanceable = true, .advancement_strength_threshold = 3, .advancement_strength_bonus = 5, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .give_runner_tags, .amount = 1 },
-        .{ .kind = .end_the_run },
-        .{ .kind = .end_the_run },
+        .{ .resolve = &game_engine.resolveGiveRunnerTags, .amount = 1, .label = "Give the Runner 1 tags" },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
     } },
     .{
         .title = "Fermenter",
@@ -2057,7 +2091,7 @@ pub const all_cards = [_]CardSpec{
         .abilities = &.{corpCustomPlayAbility(3, 0, null, &struct {
             fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
-                const damage = g.turn_events.agenda_points_scored_this_turn;
+                const damage: u8 = @intCast(@max(0, sumFloatingEffects(g, .agenda_points_scored)));
                 if (damage > 0) {
                     try trashRandomRunnerHandCards(g, damage);
                     g.systemMsg(.corp, 30049, "Corp uses Neurospike to do {d} net damage.", .{damage});
@@ -2338,9 +2372,9 @@ pub const all_cards = [_]CardSpec{
         .strength = 4,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .trash_program_or_etr }, // trash 1 installed Runner card
-            .{ .kind = .corp_install_from_hq_archives }, // install a card from HQ or Archives
-            .{ .kind = .prevent_steal_trash }, // prevent stealing/trashing for rest of run
+            .{ .resolve = &game_engine.resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" }, // trash 1 installed Runner card
+            .{ .resolve = &game_engine.resolveCorpInstallFromHqArchives, .label = "Install a card from HQ or Archives" }, // install a card from HQ or Archives
+            .{ .resolve = &game_engine.resolvePreventStealTrash, .label = "The Runner cannot steal or trash Corp cards for the remainder of this run" }, // prevent stealing/trashing for rest of run
         },
         .abilities = &.{bioroidBreakAbility(1, 1)},
     },
@@ -2370,7 +2404,7 @@ pub const all_cards = [_]CardSpec{
                 fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     if (g.run == null) return;
-                    if (g.run.?.subroutines_fired == 0) return;
+                    if (sumFloatingEffects(g, .subroutine_resolved) == 0) return;
                     if (isAbilityUsedThisTurn(self_card, 0)) return;
                     markAbilityUsedThisTurn(self_card, 0);
                     g.runner_credit += 1;
@@ -3089,14 +3123,14 @@ pub const all_cards = [_]CardSpec{
         .strength = 3,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .trash_program_or_etr },
-            .{ .kind = .do_brain_damage, .amount = 1 },
+            .{ .resolve = &game_engine.resolveTrashProgramOrEtr, .label = "Trash 1 program or end the run" },
+            .{ .resolve = &game_engine.resolveBrainDamage, .amount = 1, .label = "Do 1 brain damage" },
         },
         .abilities = &.{bioroidBreakAbility(1, 1)},
     },
     .{ .title = "Scatter Field", .side = .corp, .code = 35042, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 3, .strength = 0, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .corp_install_from_hq_archives },
-        .{ .kind = .end_the_run },
+        .{ .resolve = &game_engine.resolveCorpInstallFromHqArchives, .label = "Install a card from HQ or Archives" },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
     } },
     .{
         .title = "Empiricist",
@@ -3108,9 +3142,9 @@ pub const all_cards = [_]CardSpec{
         .strength = 5,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .corp_gains_credits, .amount = 0 },
-            .{ .kind = .do_net_damage, .amount = 1 },
-            .{ .kind = .do_net_damage, .amount = 2 },
+            .{ .resolve = &game_engine.resolveCorpGainsCredits, .amount = 0, .label = "Corp draws 1 card" },
+            .{ .resolve = &game_engine.resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
+            .{ .resolve = &game_engine.resolveNetDamage, .amount = 2, .label = "Do 2 net damage" },
         },
     },
     .{
@@ -3128,24 +3162,24 @@ pub const all_cards = [_]CardSpec{
             // Sub 3: Resolve a sentry subroutine on another rezzed ice
             // Sub 4: Resolve a code gate subroutine on another rezzed ice
             // Subs 3+4 need cross-ICE subroutine resolution (most complex card in set)
-            .{ .kind = .corp_install_from_hq_archives },
-            .{ .kind = .none }, // rez ice -2 (needs rez prompt with discount)
-            .{ .kind = .none }, // resolve sentry sub (needs cross-ICE resolution)
-            .{ .kind = .none }, // resolve code gate sub (needs cross-ICE resolution)
+            .{ .resolve = &game_engine.resolveCorpInstallFromHqArchives, .label = "Install a card from HQ or Archives" },
+            .{ .resolve = &game_engine.resolveRezIceWithDiscount, .label = "Rez a piece of ice, paying 2 less" },
+            .{ .resolve = &game_engine.resolveOtherIceSubroutine, .label = "Resolve a sentry subroutine on another rezzed ice" },
+            .{ .resolve = &game_engine.resolveOtherIceSubroutine, .label = "Resolve a code gate subroutine on another rezzed ice" },
         },
     },
     .{ .title = "Semak-samun", .side = .corp, .code = 35054, .card_type = "ICE", .subtypes = &.{ "AP", "Barrier" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .net_damage_unless_etr, .amount = 3 },
+        .{ .resolve = &game_engine.resolveNetDamageUnlessEtr, .amount = 3, .label = "End the run unless the Runner suffers 3 net damage" },
     } },
     .{ .title = "Doomscroll", .side = .corp, .code = 35063, .card_type = "ICE", .subtypes = &.{ "AP", "Observer", "Sentry" }, .cost = 3, .strength = 3, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .tag_runner },
-        .{ .kind = .do_net_damage, .amount = 1 },
-        .{ .kind = .conditional_net_damage_if_tagged, .amount = 2 },
+        .{ .resolve = &game_engine.resolveTagRunner, .label = "Give the Runner 1 tag" },
+        .{ .resolve = &game_engine.resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
+        .{ .resolve = &game_engine.resolveConditionalNetDamageIfTagged, .amount = 2, .label = "Do 2 net damage if the Runner is tagged" },
     } },
     .{ .title = "N-Pot", .side = .corp, .code = 35064, .card_type = "ICE", .subtypes = &.{"Code Gate"}, .cost = 4, .strength = 4, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
-        .{ .kind = .conditional_etr_threat, .amount = 2 },
-        .{ .kind = .conditional_etr_threat, .amount = 4 },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
+        .{ .resolve = &game_engine.resolveConditionalEtrThreat, .amount = 2, .label = "End the run if threat >= 2" },
+        .{ .resolve = &game_engine.resolveConditionalEtrThreat, .amount = 4, .label = "End the run if threat >= 4" },
     } },
     .{
         .title = "Biawak",
@@ -3157,19 +3191,19 @@ pub const all_cards = [_]CardSpec{
         .strength = 6,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .trash_program_or_resource_or_etr, .amount = 0 }, // trash 1 program or ETR
-            .{ .kind = .trash_program_or_resource_or_etr, .amount = 1 }, // trash 1 resource or ETR
-            .{ .kind = .end_the_run },
+            .{ .resolve = &game_engine.resolveTrashProgramOrResourceOrEtr, .amount = 0, .label = "Trash 1 installed card or end the run" }, // trash 1 program or ETR
+            .{ .resolve = &game_engine.resolveTrashProgramOrResourceOrEtr, .amount = 1, .label = "Trash 1 installed card or end the run" }, // trash 1 resource or ETR
+            .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
         },
     },
     .{ .title = "Kessleroid", .side = .corp, .code = 35075, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .end_the_run },
-        .{ .kind = .end_the_run },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
+        .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
     } },
     .{ .title = "Syailendra", .side = .corp, .code = 35076, .card_type = "ICE", .subtypes = &.{ "AP", "Code Gate" }, .cost = 4, .strength = 5, .advanceable = true, .install = .{ .kind = .corp_server_choice }, .subroutines = &.{
-        .{ .kind = .place_advancement_counter, .amount = 1 },
-        .{ .kind = .runner_loses_credits, .amount = 2 },
-        .{ .kind = .do_net_damage, .amount = 1 },
+        .{ .resolve = &game_engine.resolvePlaceAdvancementCounter, .amount = 1, .label = "Place 1 advancement counter" },
+        .{ .resolve = &game_engine.resolveRunnerLosesCredits, .amount = 2, .label = "Runner loses 2 [Credits]" },
+        .{ .resolve = &game_engine.resolveNetDamage, .amount = 1, .label = "Do 1 net damage" },
     } },
     .{
         .title = "Flyswatter",
@@ -3181,7 +3215,7 @@ pub const all_cards = [_]CardSpec{
         .strength = 0,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .end_the_run },
+            .{ .resolve = &game_engine.resolveEndTheRun, .label = "End the run" },
         },
     },
     .{
@@ -3194,8 +3228,8 @@ pub const all_cards = [_]CardSpec{
         .strength = 3,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{
-            .{ .kind = .tag_or_pay_credits_etr, .amount = 3 },
-            .{ .kind = .none }, // ETR if tagged (custom)
+            .{ .resolve = &game_engine.resolveTagOrPayCreditsEtr, .amount = 3, .label = "Sub 0" },
+            .{ .resolve = &game_engine.resolveEtrIfTagged, .label = "End the run if the Runner is tagged" }
         },
     },
     // --- Elevation Assets ---

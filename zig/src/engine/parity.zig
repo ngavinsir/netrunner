@@ -1092,7 +1092,8 @@ test "runner overclock run credits are attached and cleared through run flow" {
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
     const run_after_choice = generated.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(u16, 5), run_after_choice.temporary_run_credits);
+    _ = run_after_choice;
+    try std.testing.expectEqual(@as(i16, 5), game.sumFloatingEffects(&generated, .run_credits));
     try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
@@ -1100,8 +1101,8 @@ test "runner overclock run credits are attached and cleared through run flow" {
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
-    const run_after_success = generated.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(u16, 5), run_after_success.temporary_run_credits);
+    try std.testing.expect(generated.run != null);
+    try std.testing.expectEqual(@as(i16, 5), game.sumFloatingEffects(&generated, .run_credits));
     try std.testing.expectEqual(@as(u16, 0), generated.runner_run_credit);
 
     // After movement completes, runner gets access prompt directly (no corp success continue)
@@ -1207,11 +1208,10 @@ test "runner jailbreak successful-run effect is attached to run flow" {
     try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Jailbreak"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "HQ"));
 
-    const run_after_choice = generated.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(u16, 0), run_after_choice.rez_cost_bonus);
-    try std.testing.expectEqual(state.RunSuccessEffectKind.draw_cards, run_after_choice.successful_run_effect);
-    try std.testing.expectEqual(@as(u8, 1), run_after_choice.successful_run_draw_cards);
-    try std.testing.expectEqual(@as(u8, 1), run_after_choice.access_bonus);
+    try std.testing.expect(generated.run != null);
+    try std.testing.expectEqual(@as(i16, 0), game.sumFloatingEffects(&generated, .rez_cost_bonus));
+    try std.testing.expectEqual(@as(i16, 1), game.sumFloatingEffects(&generated, .successful_run_draw));
+    try std.testing.expectEqual(@as(i16, 1), game.sumFloatingEffects(&generated, .access_bonus));
 
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
@@ -1277,8 +1277,8 @@ test "runner tread-lightly run modifier is attached to run state" {
     try flow.applyAction(&generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Tread Lightly"));
     try flow.applyAction(&generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
-    const run = generated.run orelse return error.MissingRun;
-    try std.testing.expectEqual(@as(u16, 3), run.rez_cost_bonus);
+    try std.testing.expect(generated.run != null);
+    try std.testing.expectEqual(@as(i16, 3), game.sumFloatingEffects(&generated, .rez_cost_bonus));
 }
 
 test "runner creative-commission scenario matches live replay oracle" {
@@ -3308,7 +3308,9 @@ fn hasAdvanceableCards(gen: *const generator.Game) bool {
     for (gen.corp_servers.items) |server| {
         for (server.content.items) |card| {
             if (card.agenda_points != null) return true;
-            if (card.advanceable) return true;
+            for (card.static_abilities) |sa| {
+                if (sa.kind == .can_advance) return true;
+            }
         }
     }
     return false;
