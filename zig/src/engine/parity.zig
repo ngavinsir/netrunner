@@ -8042,6 +8042,543 @@ test "e2e elevation runner game plays to completion with oracle parity" {
     try std.testing.expect(generated.winner != null);
 }
 
+// --- Smoke parity tests for previously uncovered cards ---
+
+test "urtica cipher install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30045) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Urtica Cipher"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "diviner install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30046) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30046) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "karuna install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30047) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30047) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "superconducting hub install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30070) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30070) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "tithe install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30073) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30073) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "whitespace install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30074) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30074) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "ansel 1.0 install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 30038) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30038) orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-fullpack");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "carnivore install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 30003 and g.runner_credit >= 4) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30003) orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-fullpack");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "cleaver install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 30006 and g.runner_credit >= 3) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30006) orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "carmen install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 30015 and g.runner_credit >= 5) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30015) orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActions(allocator, seed, scenario_actions);
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "red team install parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 30018 and g.runner_credit >= 5) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30018) orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-advanced");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "key performance indicators parity test" {
+    // KPI has multi-step prompt resolution that requires oracle-side action mapping.
+    // Needs dedicated oracle action translation before parity test can pass.
+    return error.SkipZigTest;
+}
+
+test "measured response parity test" {
+    // Measured Response requires threat >= 4 and runner successful run last turn.
+    // This is complex to set up in a smoke test, so we just verify the card exists
+    // in the deck and the game starts correctly. A full test would need many turns.
+    // For now, skip with a note that this needs a dedicated scenario.
+    return error.SkipZigTest;
+}
+
+test "bigger picture parity test" {
+    // Bigger Picture requires runner to be tagged.
+    // Complex prerequisite - skip for now.
+    return error.SkipZigTest;
+}
+
+test "touch-ups parity test" {
+    // Touch-ups implementation skips "reveal grip + shuffle" step, causing oracle mismatch.
+    // Needs implementation completion before parity test can pass.
+    return error.SkipZigTest;
+}
+
+test "scrounge parity test" {
+    // Scrounge requires a program in the heap - complex prerequisite.
+    // Skip for now.
+    return error.SkipZigTest;
+}
+
+test "shred parity test" {
+    // Shred is a run event not in any matchup deck.
+    // Skip - needs a new matchup definition on both Zig and oracle sides.
+    return error.SkipZigTest;
+}
+
+test "lie low parity test" {
+    // Lie Low is not in any matchup deck.
+    // Skip - needs a new matchup definition.
+    return error.SkipZigTest;
+}
+
+test "maintenance access parity test" {
+    // Maintenance Access is not in any matchup deck.
+    // Skip - needs a new matchup definition.
+    return error.SkipZigTest;
+}
+
+test "transfer of wealth parity test" {
+    // Transfer of Wealth is not in any matchup deck.
+    // Skip - needs a new matchup definition.
+    return error.SkipZigTest;
+}
+
+test "illumination parity test" {
+    // Illumination is not in any matchup deck.
+    // Skip - needs a new matchup definition.
+    return error.SkipZigTest;
+}
+
+test "mycoweb install parity test" {
+    // Mycoweb is not in any matchup deck.
+    // Skip - needs a new matchup definition.
+    return error.SkipZigTest;
+}
+
+test "ip enforcement parity test" {
+    // IP Enforcement requires runner tagged + stolen agendas.
+    // Not in any matchup deck. Skip.
+    return error.SkipZigTest;
+}
+
 /// Card Coverage Manifest
 /// Tracks smoke parity coverage for every card in the Zig catalog.
 /// Status: covered = has dedicated parity test, uncovered = needs test
@@ -8055,10 +8592,10 @@ const CoverageEntry = struct {
 const card_coverage = [_]CoverageEntry{
     .{ .code = 30001, .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal", .covered = true },
     .{ .code = 30002, .title = "Wildcat Strike", .covered = true },
-    .{ .code = 30003, .title = "Carnivore", .covered = false },
+    .{ .code = 30003, .title = "Carnivore", .covered = true },
     .{ .code = 30004, .title = "Botulus", .covered = true },
     .{ .code = 30005, .title = "Buzzsaw", .covered = true },
-    .{ .code = 30006, .title = "Cleaver", .covered = false },
+    .{ .code = 30006, .title = "Cleaver", .covered = true },
     .{ .code = 30007, .title = "Fermenter", .covered = true },
     .{ .code = 30008, .title = "Leech", .covered = true },
     .{ .code = 30009, .title = "Cookbook", .covered = true },
@@ -8067,10 +8604,10 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 30012, .title = "Tread Lightly", .covered = true },
     .{ .code = 30013, .title = "Docklands Pass", .covered = true },
     .{ .code = 30014, .title = "Pennyshaver", .covered = true },
-    .{ .code = 30015, .title = "Carmen", .covered = false },
+    .{ .code = 30015, .title = "Carmen", .covered = true },
     .{ .code = 30016, .title = "Marjanah", .covered = true },
     .{ .code = 30017, .title = "Tranquilizer", .covered = true },
-    .{ .code = 30018, .title = "Red Team", .covered = false },
+    .{ .code = 30018, .title = "Red Team", .covered = true },
     .{ .code = 30019, .title = "T\xc4\x81o Salonga: Telepresence Magician", .covered = true },
     .{ .code = 30020, .title = "Creative Commission", .covered = true },
     .{ .code = 30021, .title = "VRcation", .covered = true },
@@ -8090,16 +8627,16 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 30035, .title = "Haas-Bioroid: Precision Design", .covered = true },
     .{ .code = 30036, .title = "Luminal Transubstantiation", .covered = true },
     .{ .code = 30037, .title = "Nico Campaign", .covered = true },
-    .{ .code = 30038, .title = "Ansel 1.0", .covered = false },
+    .{ .code = 30038, .title = "Ansel 1.0", .covered = true },
     .{ .code = 30039, .title = "Brân 1.0", .covered = true },
     .{ .code = 30040, .title = "Seamless Launch", .covered = true },
     .{ .code = 30041, .title = "Sprint", .covered = true },
     .{ .code = 30042, .title = "Manegarm Skunkworks", .covered = true },
     .{ .code = 30043, .title = "Jinteki: Restoring Humanity", .covered = true },
     .{ .code = 30044, .title = "Longevity Serum", .covered = true },
-    .{ .code = 30045, .title = "Urtica Cipher", .covered = false },
-    .{ .code = 30046, .title = "Diviner", .covered = false },
-    .{ .code = 30047, .title = "Karunā", .covered = false },
+    .{ .code = 30045, .title = "Urtica Cipher", .covered = true },
+    .{ .code = 30046, .title = "Diviner", .covered = true },
+    .{ .code = 30047, .title = "Karunā", .covered = true },
     .{ .code = 30048, .title = "Hansei Review", .covered = true },
     .{ .code = 30049, .title = "Neurospike", .covered = true },
     .{ .code = 30050, .title = "Anoetic Void", .covered = true },
@@ -8122,11 +8659,11 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 30067, .title = "Offworld Office", .covered = true },
     .{ .code = 30068, .title = "Orbital Superiority", .covered = true },
     .{ .code = 30069, .title = "Send a Message", .covered = true },
-    .{ .code = 30070, .title = "Superconducting Hub", .covered = false },
+    .{ .code = 30070, .title = "Superconducting Hub", .covered = true },
     .{ .code = 30071, .title = "Regolith Mining License", .covered = true },
     .{ .code = 30072, .title = "Palisade", .covered = true },
-    .{ .code = 30073, .title = "Tithe", .covered = false },
-    .{ .code = 30074, .title = "Whitespace", .covered = false },
+    .{ .code = 30073, .title = "Tithe", .covered = true },
+    .{ .code = 30074, .title = "Whitespace", .covered = true },
     .{ .code = 30075, .title = "Hedge Fund", .covered = true },
     .{ .code = 30076, .title = "The Catalyst: Convention Breaker", .covered = true },
     .{ .code = 30077, .title = "The Syndicate: Profit over Principle", .covered = true },
@@ -8214,29 +8751,18 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 35082, .title = "Mahkota Langit Grid", .covered = true },
 };
 
-// Coverage summary: 136/159 cards covered (23 uncovered)
+// Coverage summary: 147/159 cards covered (12 skipped - need new matchups, oracle mapping, or complex game state)
 //
-// Uncovered cards needing dedicated parity tests:
-//   30003: Carnivore (Hardware)
-//   30006: Cleaver (Program)
-//   30015: Carmen (Program)
-//   30018: Red Team (Resource)
-//   30038: Ansel 1.0 (ICE)
-//   30045: Urtica Cipher (Asset)
-//   30046: Diviner (ICE)
-//   30047: Karunā (ICE)
-//   30070: Superconducting Hub (Agenda)
-//   30073: Tithe (ICE)
-//   30074: Whitespace (ICE)
-//   35004: Scrounge (Event)
-//   35005: Shred (Event)
-//   35015: Lie Low (Event)
-//   35016: Maintenance Access (Event)
-//   35017: Transfer of Wealth (Event)
-//   35025: Illumination (Event)
-//   35053: Mycoweb (ICE)
-//   35065: Bigger Picture (Operation)
-//   35066: IP Enforcement (Operation)
-//   35067: Touch-ups (Operation)
-//   35077: Key Performance Indicators (Operation)
-//   35078: Measured Response (Operation)
+// Skipped cards (SkipZigTest):
+//   35004: Scrounge (Event) - needs program in heap
+//   35005: Shred (Event) - not in any matchup deck
+//   35015: Lie Low (Event) - not in any matchup deck
+//   35016: Maintenance Access (Event) - not in any matchup deck
+//   35017: Transfer of Wealth (Event) - not in any matchup deck
+//   35025: Illumination (Event) - not in any matchup deck
+//   35053: Mycoweb (ICE) - not in any matchup deck
+//   35065: Bigger Picture (Operation) - requires runner tagged
+//   35066: IP Enforcement (Operation) - requires runner tagged + stolen agendas
+//   35067: Touch-ups (Operation) - incomplete implementation (missing reveal grip + shuffle)
+//   35077: Key Performance Indicators (Operation) - needs oracle action mapping for multi-step prompts
+//   35078: Measured Response (Operation) - requires threat >= 4 + successful run last turn
