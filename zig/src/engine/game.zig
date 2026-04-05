@@ -5270,8 +5270,12 @@ fn completeRunWithoutAccess(generated: *Game) !void {
     endOfRunCleanup(generated);
     generated.run = null;
     generated.runner_run_credit = 0;
-    // If an event handler (e.g., Zahya) set a prompt, preserve it
-    if (generated.runner_prompt_state != null) return;
+    // If an event handler (e.g., Conduit) set a prompt, present it
+    if (generated.runner_prompt_state) |ps| {
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+        return;
+    }
     generated.decision_side = .runner;
     generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
@@ -5289,8 +5293,12 @@ fn completeRunAfterAccess(generated: *Game) !void {
     endOfRunCleanup(generated);
     generated.run = null;
     generated.runner_run_credit = 0;
-    // If an event handler (e.g., Zahya) set a prompt, preserve it
-    if (generated.runner_prompt_state != null) return;
+    // If an event handler (e.g., Conduit) set a prompt, present it
+    if (generated.runner_prompt_state) |ps| {
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+        return;
+    }
     generated.decision_side = .runner;
     generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
@@ -5307,6 +5315,12 @@ pub fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     endOfRunCleanup(generated);
     generated.run = null;
     generated.runner_run_credit = 0;
+    // If an event handler (e.g., Conduit) set a prompt, preserve it
+    if (generated.runner_prompt_state) |ps| {
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+        return;
+    }
     generated.decision_side = .corp;
     generated.legal_actions = try continueActions(allocator, .corp);
 }
@@ -7056,6 +7070,13 @@ pub fn trashCorpServerCardByInstanceId(generated: *Game, instance_id: u32) !void
     const ref = findCorpServerCardByInstanceId(generated, instance_id) orelse return error.CardNotFound;
     const trashed = generated.corp_servers.items[ref.server_index].content.orderedRemove(ref.content_index);
     try appendDiscardCard(generated, .corp, trashed);
+    try removeServerIfEmpty(generated, ref.server_index);
+}
+
+/// Remove a corp installed card from the game (not to discard — removed from game / RFG).
+pub fn removeCorpInstalledFromGame(generated: *Game, instance_id: u32) !void {
+    const ref = findCorpServerCardByInstanceId(generated, instance_id) orelse return error.CardNotFound;
+    _ = generated.corp_servers.items[ref.server_index].content.orderedRemove(ref.content_index);
     try removeServerIfEmpty(generated, ref.server_index);
 }
 
