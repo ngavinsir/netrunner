@@ -40,7 +40,6 @@ const centralNotRunThisTurnChoices = runtime.centralNotRunThisTurnChoices;
 const drawCards = runtime.drawCards;
 const encounterActionsForState = runtime.encounterActionsForState;
 const findCardPtrByInstanceId = runtime.findCardPtrByInstanceId;
-const findRunnerHardwareByCode = runtime.findRunnerHardwareByCode;
 const findRunnerResourceIndex = runtime.findRunnerResourceIndex;
 const findServerByRunPath = runtime.findServerByRunPath;
 const hasActivePrompt = runtime.hasActivePrompt;
@@ -110,6 +109,9 @@ const encounterBreakHandler = game_engine.encounterBreakHandler;
 const encounterPumpHandler = game_engine.encounterPumpHandler;
 const encounterBioroidHandler = game_engine.encounterBioroidHandler;
 const encounterLeechHandler = game_engine.encounterLeechHandler;
+const collectEventHandlers = game_engine.collectEventHandlers;
+const beginRezIceFreePromptForScore = game_engine.beginRezIceFreePromptForScore;
+const beginRezIceFreePrompt = game_engine.beginRezIceFreePrompt;
 const encounterBotulusHandler = game_engine.encounterBotulusHandler;
 const isInEncounter = game_engine.isInEncounter;
 const openRunnerDiscardToDeckPrompt = game_engine.openRunnerDiscardToDeckPrompt;
@@ -169,8 +171,6 @@ pub const CardSpec = struct {
     place_credits_per_turn: bool = false,
     auto_take_credits: bool = false,
     subroutines: []const state.SubroutineSpec = &.{},
-    on_score: state.AgendaEffectSpec = .{},
-    on_steal: state.AgendaEffectSpec = .{},
     trash_cost: ?u16 = null,
 };
 
@@ -252,7 +252,8 @@ const peer_review_on_choice: *const fn (*state.EffectContext, []const u8) anyerr
         const c_allocator = cg.arena.allocator();
         const prompt = cg.corp_prompt_state orelse return error.NoPromptState;
         if (std.mem.eql(u8, prompt.prompt_type, "peer-review-private")) {
-            try beginPeerReviewInstallPrompt(cg, prompt.source_card orelse return error.NoPromptState, peer_review_on_choice);
+            const ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+            try beginPeerReviewInstallPrompt(cg, ref.source_instance_id, peer_review_on_choice);
             return;
         } else if (std.mem.eql(u8, prompt.prompt_type, "peer-review-install")) {
             for (prompt.choices) |ch| {
@@ -269,7 +270,7 @@ const peer_review_on_choice: *const fn (*state.EffectContext, []const u8) anyerr
                         cg.corp_prompt_state = .{
                             .prompt_type = try c_allocator.dupe(u8, "peer-review-server"),
                             .choices = try server_choices.toOwnedSlice(c_allocator),
-                            .source_card = prompt.source_card,
+                            .ability_ref = prompt.ability_ref,
                             .min_choices = card_ref.index orelse 0,
                             .on_choice = peer_review_on_choice,
                         };
@@ -300,10 +301,11 @@ const scrounge_on_choice: *const fn (*state.EffectContext, []const u8) anyerror!
         const cg = gameFromEffectContext(cctx);
         const prompt = cg.runner_prompt_state orelse return error.NoPromptState;
         if (std.mem.eql(u8, prompt.prompt_type, "scrounge-install")) {
-            const source_card = prompt.source_card orelse return error.MissingSourceCard;
+            const ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+            const source_card_ptr = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return error.MissingSourceCard;
             cg.runner_prompt_state = null;
             try cg.pending_effects.append(cg.backing_allocator, .{ .deferred_prompt = .{
-                .card = source_card,
+                .card = source_card_ptr.*,
                 .on_choice = scrounge_on_choice,
                 .open_fn = &openRunnerDiscardToDeckPrompt,
             } });
@@ -455,7 +457,16 @@ pub const all_cards = [_]CardSpec{
         .side = .corp,
         .code = 30059,
         .card_type = "Identity",
-        // Advance trigger is handled inline in addAdvancementCounter since it needs the card's old state
+        .event_abilities = &.{.{
+            .event = .advance,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    g.corp_credit += 2;
+                    g.systemMsg(.corp, 30059, "Corp uses Weyland Consortium: Built to Last to gain 2 [credits].", .{});
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Ren\xc3\xa9 \"Loup\" Arcemont: Party Animal",
@@ -563,9 +574,46 @@ pub const all_cards = [_]CardSpec{
             }.handle,
         }},
     },
-    .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 7 } },
-    .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .rez_ice_free }, .on_steal = .{ .kind = .rez_ice_free } },
-    .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .install = .{ .kind = .corp_remote_only }, .static_abilities = &.{.{ .kind = .hand_size, .value = 2 }}, .on_score = .{ .kind = .draw_cards, .amount = 2 } },
+    .{ .title = "Offworld Office", .side = .corp, .code = 30067, .card_type = "Agenda", .agenda_points = 2, .advancement_requirement = 4, .install = .{ .kind = .corp_remote_only }, .event_abilities = &.{.{
+        .event = .agenda_scored,
+        .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                g.corp_credit += 7;
+                g.systemMsg(.corp, 0, "Corp gains 7 [credits].", .{});
+            }
+        }.handle,
+    }} },
+    .{ .title = "Send a Message", .side = .corp, .code = 30069, .card_type = "Agenda", .agenda_points = 3, .advancement_requirement = 5, .install = .{ .kind = .corp_remote_only }, .event_abilities = &.{
+        .{
+            .event = .agenda_scored,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    _ = try beginRezIceFreePromptForScore(g, card.*);
+                }
+            }.handle,
+        },
+        .{
+            .event = .agenda_stolen,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    _ = try beginRezIceFreePrompt(g, card.*);
+                }
+            }.handle,
+        },
+    } },
+    .{ .title = "Superconducting Hub", .side = .corp, .code = 30070, .card_type = "Agenda", .agenda_points = 1, .advancement_requirement = 3, .install = .{ .kind = .corp_remote_only }, .static_abilities = &.{.{ .kind = .hand_size, .value = 2 }}, .event_abilities = &.{.{
+        .event = .agenda_scored,
+        .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                try drawCards(g, .corp, 2);
+                g.systemMsg(.corp, 30070, "Corp draws 2 cards.", .{});
+            }
+        }.handle,
+    }} },
     .{
         .title = "Orbital Superiority",
         .side = .corp,
@@ -1260,6 +1308,7 @@ pub const all_cards = [_]CardSpec{
         }.handle,
     }}, .abilities = &.{.{
         .on_use = &encounterLeechHandler,
+        .label = "Give -1 strength to encountered ICE",
         .req = &struct {
             fn check(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
                 if (card.virus_counter == 0) return false;
@@ -1310,10 +1359,31 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-
         .install = .{ .kind = .corp_remote_only },
-        .on_score = .{ .kind = .give_runner_tag, .amount = 1 },
-        .on_steal = .{ .kind = .give_runner_tag, .amount = 1 },
+        .event_abilities = &.{
+            .{
+                .event = .agenda_scored,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                        const g = gameFromEffectContext(ctx);
+                        _ = try addRunnerTag(g, 1);
+                        g.systemMsg(.corp, 0, "Runner gains 1 tag.", .{});
+                        try collectEventHandlers(g, .{ .kind = .runner_gain_tag });
+                    }
+                }.handle,
+            },
+            .{
+                .event = .agenda_stolen,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                        const g = gameFromEffectContext(ctx);
+                        _ = try addRunnerTag(g, 1);
+                        g.systemMsg(.corp, 0, "Runner gains 1 tag.", .{});
+                        try collectEventHandlers(g, .{ .kind = .runner_gain_tag });
+                    }
+                }.handle,
+            },
+        },
     },
     .{ .title = "Ping", .side = .corp, .code = 30055, .card_type = "ICE", .subtypes = &.{"Barrier"}, .cost = 2, .strength = 1, .install = .{ .kind = .corp_server_choice }, .event_abilities = &.{.{
         .event = .corp_rez_ice,
@@ -1573,9 +1643,22 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Agenda",
         .agenda_points = 2,
         .advancement_requirement = 3,
-
         .install = .{ .kind = .corp_remote_only },
-        .on_score = .{ .kind = .gain_clicks, .amount = 3 },
+        .event_abilities = &.{.{
+            .event = .agenda_scored,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    g.corp_click += 3;
+                    try addFloatingEffect(g, .{
+                        .kind = .prevent_score,
+                        .duration = .end_of_turn,
+                        .value = 1,
+                    });
+                    g.systemMsg(.corp, 0, "Corp gains 3 [clicks].", .{});
+                }
+            }.handle,
+        }},
     },
     .{ .title = "Cookbook", .side = .runner, .code = 30009, .card_type = "Resource", .subtypes = &.{"Virtual"}, .cost = 1, .runner_install = .{ .kind = .resource }, .static_abilities = &.{.{
         .kind = .virus_install_bonus,
@@ -1890,7 +1973,8 @@ pub const all_cards = [_]CardSpec{
                             if (std.mem.eql(u8, choice_text, "Yes")) {
                                 g.runner_credit += 1;
                                 g.systemMsg(.runner, 30023, "Runner uses Pantograph to gain 1 [credit].", .{});
-                                try beginRunnerOptionalInstallPrompt(g, prompt.source_card orelse return error.MissingSourceCard, &@This().choice);
+                                const ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+                                try beginRunnerOptionalInstallPrompt(g, ref.source_instance_id, &@This().choice);
                                 if (!hasActivePrompt(g)) {
                                     if (try resumePendingEffects(g)) return;
                                 }
@@ -1922,7 +2006,7 @@ pub const all_cards = [_]CardSpec{
                     }
                 }.choice;
                 fn trigger(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
-                    try beginRunnerOptionalInstallConfirmPrompt(gameFromEffectContext(ctx), self_card.*, pantograph_on_choice);
+                    try beginRunnerOptionalInstallConfirmPrompt(gameFromEffectContext(ctx), self_card.instance_id, pantograph_on_choice);
                 }
             };
             break :blk &.{
@@ -2835,7 +2919,16 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle }},
     },
-    .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .install = .{ .kind = .corp_remote_only }, .on_score = .{ .kind = .gain_credits, .amount = 2 } },
+    .{ .title = "Greenmail", .side = .corp, .code = 35070, .card_type = "Agenda", .subtypes = &.{"Expansion"}, .agenda_points = 1, .advancement_requirement = 2, .install = .{ .kind = .corp_remote_only }, .event_abilities = &.{.{
+        .event = .agenda_scored,
+        .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                g.corp_credit += 2;
+                g.systemMsg(.corp, 0, "Corp gains 2 [credits].", .{});
+            }
+        }.handle,
+    }} },
     .{
         .title = "Off the Books",
         .side = .corp,
@@ -3165,7 +3258,7 @@ pub const all_cards = [_]CardSpec{
                                     g.corp_prompt_state = .{
                                         .prompt_type = try allocator.dupe(u8, "top-down-server"),
                                         .choices = server_choices,
-                                        .source_card = prompt.source_card,
+                                        .ability_ref = prompt.ability_ref,
                                         .min_choices = @intCast((card_idx & 0xF) | (@as(u8, prompt.min_choices) << 4)),
                                         .on_choice = &@This().choice,
                                     };
@@ -3187,7 +3280,8 @@ pub const all_cards = [_]CardSpec{
                             g.decision_side = .corp;
                             g.legal_actions = try corpOpeningActionsForState(allocator, g);
                         } else {
-                            try showTopDownInstallChoices(g, prompt.source_card orelse return error.NoPromptState, installs_done + 1, &@This().choice);
+                            const ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+                            try showTopDownInstallChoices(g, ref.source_instance_id, installs_done + 1, &@This().choice);
                         }
                     } else return error.UnsupportedChoice;
                 }
@@ -3198,7 +3292,7 @@ pub const all_cards = [_]CardSpec{
                 try drawCards(g, .corp, 2);
                 g.systemMsg(.corp, 35044, "Corp uses Top-Down Solutions to draw 2 cards.", .{});
                 // Offer install prompt
-                try showTopDownInstallChoices(g, card.*, 0, top_down_on_choice);
+                try showTopDownInstallChoices(g, card.instance_id, 0, top_down_on_choice);
             }
         }.play }},
     },
@@ -3227,15 +3321,14 @@ pub const all_cards = [_]CardSpec{
                     g.corp_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "peer-review-private"),
                         .choices = try private_choices.toOwnedSlice(allocator),
-                        .source_card = card.*,
-                    
+                        .ability_ref = .{ .source_instance_id = card.instance_id },
                         .on_choice = peer_review_on_choice,
                     };
                     g.decision_side = .corp;
                     g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                     return;
                 }
-                try beginPeerReviewInstallPrompt(g, card.*, peer_review_on_choice);
+                try beginPeerReviewInstallPrompt(g, card.instance_id, peer_review_on_choice);
             }
         }.play }},
     },
@@ -3485,7 +3578,7 @@ pub const all_cards = [_]CardSpec{
                             g.corp_prompt_state = .{
                                 .prompt_type = try allocator.dupe(u8, "kpi-shuffle"),
                                 .choices = try hand_choices.toOwnedSlice(allocator),
-                                .source_card = prompt.source_card,
+                                .ability_ref = prompt.ability_ref,
                                 .min_choices = choices_made + 1,
                                 .on_choice = &@This().choice,
                             };
@@ -3503,7 +3596,7 @@ pub const all_cards = [_]CardSpec{
                                 g.corp_prompt_state = .{
                                     .prompt_type = try allocator.dupe(u8, "kpi-advance"),
                                     .choices = adv_choices,
-                                    .source_card = prompt.source_card,
+                                    .ability_ref = prompt.ability_ref,
                                     .min_choices = choices_made + 1,
                                     .on_choice = &@This().choice,
                                 };
@@ -3527,7 +3620,7 @@ pub const all_cards = [_]CardSpec{
                                 g.corp_prompt_state = .{
                                     .prompt_type = try allocator.dupe(u8, "kpi-ice-choose"),
                                     .choices = try ice_choices.toOwnedSlice(allocator),
-                                    .source_card = prompt.source_card,
+                                    .ability_ref = prompt.ability_ref,
                                     .min_choices = choices_made + 1,
                                     .on_choice = &@This().choice,
                                 };
@@ -3541,7 +3634,8 @@ pub const all_cards = [_]CardSpec{
                             g.decision_side = .corp;
                             g.legal_actions = try corpOpeningActionsForState(allocator, g);
                         } else {
-                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_made + 1, &@This().choice);
+                            const ref1 = prompt.ability_ref orelse return error.MissingAbilityRef;
+                            try showKpiChoices(g, ref1.source_instance_id, choices_made + 1, &@This().choice);
                         }
                     } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-advance")) {
                         _ = try addAdvancementCounter(g, choice_text, 1);
@@ -3551,7 +3645,8 @@ pub const all_cards = [_]CardSpec{
                             g.decision_side = .corp;
                             g.legal_actions = try corpOpeningActionsForState(allocator, g);
                         } else {
-                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices, &@This().choice);
+                            const ref2 = prompt.ability_ref orelse return error.MissingAbilityRef;
+                            try showKpiChoices(g, ref2.source_instance_id, prompt.min_choices, &@This().choice);
                         }
                     } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-ice-choose")) {
                         for (prompt.choices) |ch| {
@@ -3561,7 +3656,7 @@ pub const all_cards = [_]CardSpec{
                                     g.corp_prompt_state = .{
                                         .prompt_type = try allocator.dupe(u8, "kpi-ice-server"),
                                         .choices = server_choices,
-                                        .source_card = prompt.source_card,
+                                        .ability_ref = prompt.ability_ref,
                                         .min_choices = @intCast((card_ref.index orelse 0) | (@as(u8, prompt.min_choices) << 4)),
                                         .on_choice = &@This().choice,
                                     };
@@ -3583,7 +3678,8 @@ pub const all_cards = [_]CardSpec{
                             g.decision_side = .corp;
                             g.legal_actions = try corpOpeningActionsForState(allocator, g);
                         } else {
-                            try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, choices_done, &@This().choice);
+                            const ref3 = prompt.ability_ref orelse return error.MissingAbilityRef;
+                            try showKpiChoices(g, ref3.source_instance_id, choices_done, &@This().choice);
                         }
                     } else if (std.mem.eql(u8, prompt.prompt_type, "kpi-shuffle")) {
                         for (prompt.choices) |card_choice| {
@@ -3597,7 +3693,8 @@ pub const all_cards = [_]CardSpec{
                                 g.decision_side = .corp;
                                 g.legal_actions = try corpOpeningActionsForState(allocator, g);
                             } else {
-                                try showKpiChoices(g, prompt.source_card orelse return error.NoPromptState, prompt.min_choices, &@This().choice);
+                                const ref4 = prompt.ability_ref orelse return error.MissingAbilityRef;
+                                try showKpiChoices(g, ref4.source_instance_id, prompt.min_choices, &@This().choice);
                             }
                             return;
                         }
@@ -3608,7 +3705,7 @@ pub const all_cards = [_]CardSpec{
             fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
                 // "Resolve 2 of: Gain 2cr, Install ice ignoring costs, Place 1 advancement, Draw 1 + shuffle 1"
-                try showKpiChoices(g, card.*, 0, kpi_on_choice);
+                try showKpiChoices(g, card.instance_id, 0, kpi_on_choice);
             }
         }.play }},
     },
@@ -3678,7 +3775,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Operation",
         .subtypes = &.{"Transaction"},
         .cost = 3,
-        .abilities = &.{.{ .is_play = true, .flashback_extra_clicks = 1, .req = &struct {
+        .abilities = &.{.{ .is_play = true, .is_flashback = true, .req = &struct {
             fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
                 const g = gameFromConstEffectContext(ctx);
                 // "Play only if you have not finished an action yet this turn."
@@ -3730,8 +3827,7 @@ pub const all_cards = [_]CardSpec{
                     g.runner_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "scrounge-install"),
                         .choices = try choices_list.toOwnedSlice(allocator),
-                        .source_card = card.*,
-                    
+                        .ability_ref = .{ .source_instance_id = card.instance_id },
                         .on_choice = scrounge_on_choice,
                     };
                     g.decision_side = .runner;
@@ -3934,8 +4030,8 @@ pub const all_cards = [_]CardSpec{
                             g.legal_actions = try runnerOpeningActionsForState(g.arena.allocator(), g);
                             return;
                         }
-                        const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                        const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
+                        const bling_ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+                        const host = findCardPtrByInstanceId(g, bling_ref.source_instance_id) orelse return error.MissingSourceCard;
                         const hosted_index = hostedChoiceIndex(prompt, choice_text) orelse return error.UnsupportedChoice;
                         var chosen = try removeHostedCard(g.arena.allocator(), host, hosted_index);
                         try g.runner_hand.append(g.backing_allocator, chosen);
@@ -3951,7 +4047,7 @@ pub const all_cards = [_]CardSpec{
                 }.choice;
                 fn use(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
-                    try beginRunnerHostedCardPrompt(g, card.*, bling_on_choice);
+                    try beginRunnerHostedCardPrompt(g, card.instance_id, bling_on_choice);
                 }
             }.use,
         }},
@@ -3993,8 +4089,8 @@ pub const all_cards = [_]CardSpec{
                         g.runner_prompt_state = null;
                         g.corp_prompt_state = null;
                         if (std.mem.eql(u8, choice_text, "Yes")) {
-                            const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                            const host = findRunnerHardwareByCode(g, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
+                            const detente_ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+                            const host = findCardPtrByInstanceId(g, detente_ref.source_instance_id) orelse return error.MissingSourceCard;
                             try hostRandomHqCard(g, host);
                         } else if (!std.mem.eql(u8, choice_text, "No")) {
                             return error.UnsupportedChoice;
@@ -4007,7 +4103,7 @@ pub const all_cards = [_]CardSpec{
                     const g = gameFromEffectContext(ctx);
                     const run = g.run orelse return;
                     if (!std.mem.eql(u8, run.server[0], "hq") or g.runner_successful_run_this_turn or g.corp_hand.items.len == 0) return;
-                    try beginYesNoPrompt(g, .runner, "runner-host-confirm", card.*, detente_on_choice);
+                    try beginYesNoPrompt(g, .runner, "runner-host-confirm", card.instance_id, detente_on_choice);
                     g.corp_prompt_state = .{
                         .prompt_type = try g.arena.allocator().dupe(u8, "waiting"),
                         .choices = &.{},
@@ -4172,15 +4268,14 @@ pub const all_cards = [_]CardSpec{
                     g.runner_prompt_state = .{
                         .prompt_type = try allocator.dupe(u8, "runner-host-mode"),
                         .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = card.*,
-                    
+                        .ability_ref = .{ .source_instance_id = card.instance_id },
                         .on_choice = &struct {
                             fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                                 const cg = gameFromEffectContext(cctx);
                                 const c_allocator = cg.arena.allocator();
                                 const prompt = cg.runner_prompt_state orelse return error.NoPromptState;
-                                const source_card = prompt.source_card orelse return error.MissingSourceCard;
-                                const host = findRunnerHardwareByCode(cg, source_card.code orelse return error.MissingSourceCard) orelse return error.InvalidCardIndex;
+                                const madani_ref = prompt.ability_ref orelse return error.MissingAbilityRef;
+                                const host = findCardPtrByInstanceId(cg, madani_ref.source_instance_id) orelse return error.MissingSourceCard;
                                 if (std.mem.eql(u8, prompt.prompt_type, "runner-host-mode")) {
                                     if (std.mem.eql(u8, choice_text, "Host programs from grip")) {
                                         try spendClicks(cg, .runner, 1);
@@ -4199,8 +4294,7 @@ pub const all_cards = [_]CardSpec{
                                         cg.runner_prompt_state = .{
                                             .prompt_type = try c_allocator.dupe(u8, "runner-host-from-grip"),
                                             .choices = try c_choices.toOwnedSlice(c_allocator),
-                                            .source_card = source_card,
-
+                                            .ability_ref = prompt.ability_ref,
                                             .on_choice = &@This().choice,
                                         };
                                         cg.decision_side = .runner;
@@ -4222,8 +4316,7 @@ pub const all_cards = [_]CardSpec{
                                         cg.runner_prompt_state = .{
                                             .prompt_type = try c_allocator.dupe(u8, "runner-hosted-install"),
                                             .choices = try c_choices.toOwnedSlice(c_allocator),
-                                            .source_card = source_card,
-
+                                            .ability_ref = prompt.ability_ref,
                                             .on_choice = &@This().choice,
                                         };
                                         cg.decision_side = .runner;
@@ -4258,8 +4351,7 @@ pub const all_cards = [_]CardSpec{
                                         cg.runner_prompt_state = .{
                                             .prompt_type = try c_allocator.dupe(u8, "runner-host-from-grip"),
                                             .choices = try c_choices.toOwnedSlice(c_allocator),
-                                            .source_card = source_card,
-
+                                            .ability_ref = prompt.ability_ref,
                                             .on_choice = &@This().choice,
                                         };
                                         cg.decision_side = .runner;

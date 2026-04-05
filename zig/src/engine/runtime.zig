@@ -42,7 +42,6 @@ pub const centralNotRunThisTurnChoices = game.centralNotRunThisTurnChoices;
 pub const drawCards = game.drawCards;
 pub const encounterActionsForState = game.encounterActionsForState;
 pub const findCardPtrByInstanceId = game.findCardPtrByInstanceId;
-pub const findRunnerHardwareByCode = game.findRunnerHardwareByCode;
 pub const findRunnerResourceIndex = game.findRunnerResourceIndex;
 pub const findServerByRunPath = game.findServerByRunPath;
 pub const hasActivePrompt = game.hasActivePrompt;

@@ -91,21 +91,6 @@ pub const SubroutineSpec = struct {
     label: ?[]const u8 = null,
 };
 
-pub const AgendaEffectKind = enum(u8) {
-    none,
-    gain_credits,
-    draw_cards,
-    rez_ice_free,
-    give_runner_tag,
-    gain_clicks,
-};
-
-pub const AgendaEffectSpec = struct {
-    kind: AgendaEffectKind = .none,
-    amount: u8 = 0,
-    hand_size_bonus: u8 = 0,
-};
-
 
 
 pub const InstallSpec = struct {
@@ -153,7 +138,7 @@ pub const AbilitySpec = struct {
     allow_opponent_use: bool = false,
     once_per_turn: bool = false,
     is_play: bool = false, // play-from-hand ability (operation/event effect)
-    flashback_extra_clicks: u8 = 0, // flashback: extra click cost to play from archives
+    is_flashback: bool = false, // can be played from archives for extra click cost
     // Encounter parameters (used by shared break/pump/bioroid handlers):
     credit_cost: u16 = 0,
     break_count: u8 = 1,
