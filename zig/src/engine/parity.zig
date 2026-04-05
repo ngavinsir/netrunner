@@ -2086,6 +2086,9 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "corp-free-install-server")) return "select";
     if (std.mem.eql(u8, prompt_type, "pt-untaian-advance")) return "select";
     if (std.mem.eql(u8, prompt_type, "cacophony-sabotage")) return "other";
+    if (std.mem.eql(u8, prompt_type, "sabotage")) return "select";
+    if (std.mem.eql(u8, prompt_type, "au-co-peek")) return "other";
+    if (std.mem.eql(u8, prompt_type, "fransofia-bypass")) return "other";
     if (std.mem.eql(u8, prompt_type, "peek-rd-trash-one")) return "select";
     if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";
     if (std.mem.eql(u8, prompt_type, "muslihat-reveal")) return "other";

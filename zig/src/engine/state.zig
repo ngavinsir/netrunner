@@ -198,11 +198,35 @@ pub const GameEvent = enum(u8) {
     card_installed,
     corp_card_runner_trashed, // fires before a corp card is removed; payload.target_instance_id = trashed card
     runner_discarded_to_hand_size, // fires after runner discards the last card to hand size
+    corp_dealt_damage, // fires after corp deals damage (net/meat/brain) to runner
+    corp_trash_from_hand, // fires when a corp card is trashed from HQ by an effect (not voluntary discard)
+};
+
+pub const Priority = struct {
+    pub const pre_bypass: u16 = 1;
+    pub const corp_damage: u16 = 1;
+    pub const force_discard: u16 = 1;
+    pub const lose_clicks: u16 = 1;
+    pub const gain_clicks: u16 = 2;
+    pub const drain_credits: u16 = 4;
+    pub const bypass: u16 = 4;
+    pub const lose_credits: u16 = 4;
+    pub const pre_gain_credits: u16 = 5;
+    pub const gain_credits: u16 = 6;
+    pub const pre_draw_cards: u16 = 7;
+    pub const draw_cards: u16 = 8;
+    pub const post_draw_cards: u16 = 9;
+    pub const pre_breach: u16 = 9;
+    pub const default_priority: u16 = 10;
+    pub const trace: u16 = 11;
+    pub const corp_lose_tag: u16 = 11;
+    pub const last: u16 = 999;
 };
 
 pub const EventAbility = struct {
     event: GameEvent,
     handler: *const fn (*EffectContext, *CardInstance) anyerror!void,
+    automatic_priority: u16 = 10,
 };
 
 pub const CardReference = struct {
@@ -305,6 +329,7 @@ pub const FloatingEffectKind = enum(u8) {
     icebreaker_broke,
     subroutine_resolved,
     agenda_points_scored,
+    trash_cost,
 };
 
 pub const FloatingEffectDuration = enum(u8) {
@@ -318,6 +343,7 @@ pub const FloatingEffect = struct {
     duration: FloatingEffectDuration,
     value: i16 = 0,
     source_code: ?u32 = null,
+    target_server: ?u8 = null, // Server index for server-scoped effects (e.g. Mahkota lingering trash cost)
 };
 
 pub const EncounterPhase = enum(u8) {
@@ -345,6 +371,7 @@ pub const RunState = struct {
     accessed_count: u8 = 0,
     accessed_card_indexes: [4]?u8 = .{ null, null, null, null },
     access_card_index: ?u8 = null,
+    bypass: bool = false,
     jack_out_available: bool = false,
     break_subs_selected: u8 = 0,
     break_subs_max: u8 = 0,

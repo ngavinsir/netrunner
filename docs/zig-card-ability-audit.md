@@ -104,28 +104,32 @@ Work through each card with completely missing or majorly wrong abilities. For e
 - **Aggressive Trendsetting (35037)** -- interactive trash ability
 
 #### 1b. Cards with wrong/incomplete abilities
-- **Humanoid Resources (35039)** -- fix from "9cr trash" to "4cr + draw 3 + install 2 + play op"
-- **Idiosyncresis (35061)** -- add trash-self drain/gain ability
-- **AU Co. (35046)** -- add damage/trash triggers + top-3-R&D ability
-- **Public Access Plaza (35062)** -- add on-trash tag at threat >= 2
-- **Mahkota Langit Grid (35082)** -- add all abilities (recurring for rez, trash cost, lingering)
-- **Cacophony (35010)** -- add end-of-turn sabotage 3 for 2 power counters
+- ~~**Humanoid Resources (35039)** -- confirmed already correct~~
+- ~~**Idiosyncresis (35061)** -- add trash-self drain/gain ability~~ ✅
+- ~~**AU Co. (35046)** -- add damage/trash triggers + optional start-of-turn peek~~ ✅
+- ~~**Public Access Plaza (35062)** -- already complete (has on-trash tag at threat >= 2)~~ ✅
+- ~~**Mahkota Langit Grid (35082)** -- recurring credit reset + on-trash lingering trash cost~~ ✅
+- ~~**Cacophony (35010)** -- proper sabotage mechanic (corp chooses from HQ/R&D)~~ ✅
 
 ### Phase 2: Implement systemic ability gaps (Tier 1)
 
 These require new engine infrastructure:
 
-#### 2a. `pay-credits` interaction system
-- Design a mechanism in the engine for "these credits can be spent for X purpose"
-- Implement for: Open Market (install Job/Connection), Azimat (trash corp cards), Mahkota Langit Grid (rez ice/assets in same server)
-- This is a significant engine feature -- may need a new field on CardSpec or a new interaction type
+#### 2a. `pay-credits` interaction system ✅
+- ~~Design a mechanism in the engine for "these credits can be spent for X purpose"~~
+- ~~Implement for: Open Market (install Job/Connection), Azimat (trash corp cards), Mahkota Langit Grid (rez ice/assets in same server)~~
+- Implemented `PayCreditsContext` enum + `spendPayCredits`/`availablePayCredits` helpers in game.zig
+- Auto-spends hosted credits at install/trash/rez call sites; affordability checks updated
 
-#### 2b. `access-ability` system
-- Implement alternative trash-on-access for: Carnivore (trash 2 from hand to trash accessed free), Gourmand (trash self to trash accessed + draw 1)
+#### 2b. `access-ability` system ✅
+- ~~Implement alternative trash-on-access for: Carnivore (trash 2 from hand to trash accessed free), Gourmand (trash self to trash accessed + draw 1)~~
+- Already implemented: `is_access_ability` flag, `countAccessAbilities`, `appendAccessAbilityChoices`, `applyAccessAbilityChoice`
 
-#### 2c. Ice bypass mechanic
-- Implement `bypass-ice` in the encounter system
-- Wire up Fransofia Ward's encounter-ice event
+#### 2c. Ice bypass mechanic ✅
+- ~~Implement `bypass-ice` in the encounter system~~
+- ~~Wire up Fransofia Ward's encounter-ice event~~
+- Added `bypass` flag to RunState, `bypassCurrentIce` helper, ice_encountered global event via fireEvent
+- Fransofia Ward: ice_encountered handler offers trash-to-bypass when corp has 15+ credits
 
 ### Phase 3: Verify and fix Tier 3 cards
 

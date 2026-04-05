@@ -102,6 +102,8 @@ const trashCorpServerCardByInstanceId = game_engine.trashCorpServerCardByInstanc
 const trashRunnerRigCardByInstanceId = game_engine.trashRunnerRigCardByInstanceId;
 const beginNetDamageOnAccessPrompt = game_engine.beginNetDamageOnAccessPrompt;
 const beginByteAmbushPrompt = game_engine.beginByteAmbushPrompt;
+const beginSabotagePrompt = runtime.beginSabotagePrompt;
+const bypassCurrentIce = runtime.bypassCurrentIce;
 const beginStartTurnSequence = runtime.beginStartTurnSequence;
 const beginPeekRdTopPrompt = runtime.beginPeekRdTopPrompt;
 const completeRunnerEndTurn = runtime.completeRunnerEndTurn;
@@ -2590,16 +2592,26 @@ pub const all_cards = [_]CardSpec{
         .code = 35046,
         .card_type = "Identity",
         .subtypes = &.{"Division"},
-        // Place 1 power counter on damage/corp-trash events (auto via event handlers)
-        // Start of turn: spend 2 power counters to peek top 3 R&D, trash 1, draw rest
+        // "Whenever you do damage or trash 1+ cards from HQ, place 1 power counter."
+        // "When your turn begins, you may spend 2 power counters to look at top 3 R&D, trash 1, add rest to HQ."
         .event_abilities = &.{
             .{
-                .event = .agenda_scored,
+                .event = .corp_dealt_damage,
                 .handler = &struct {
                     fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
                         const g = gameFromEffectContext(ctx);
                         self_card.power_counter += 1;
-                        g.systemMsg(.corp, 35046, "Corp places 1 power counter on AU Co.", .{});
+                        g.systemMsg(.corp, 35046, "Corp places 1 power counter on AU Co. (damage dealt).", .{});
+                    }
+                }.handle,
+            },
+            .{
+                .event = .corp_trash_from_hand,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
+                        const g = gameFromEffectContext(ctx);
+                        self_card.power_counter += 1;
+                        g.systemMsg(.corp, 35046, "Corp places 1 power counter on AU Co. (HQ trash).", .{});
                     }
                 }.handle,
             },
@@ -2610,9 +2622,29 @@ pub const all_cards = [_]CardSpec{
                         if (card.power_counter < 2) return;
                         const g = gameFromEffectContext(ctx);
                         if (g.corp_deck.items.len == 0) return;
-                        card.power_counter -= 2;
-                        g.systemMsg(.corp, 35046, "AU Co.: Corp spends 2 power counters to look at top 3 R&D.", .{});
-                        try beginPeekRdTopPrompt(g, 3, card.instance_id);
+                        const allocator = g.arena.allocator();
+                        // Optional: ask corp if they want to spend 2 power counters
+                        g.corp_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "au-co-peek"),
+                            .choices = try allocator.dupe(state.PromptChoice, &.{
+                                stringChoice("Look at the top 3 cards of R&D"),
+                                stringChoice("No action"),
+                            }),
+                            .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
+                            .on_choice = &struct {
+                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                    const cg = gameFromEffectContext(cctx);
+                                    const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
+                                    cg.corp_prompt_state = null;
+                                    if (std.mem.eql(u8, choice_text, "No action")) return;
+                                    const live = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
+                                    if (live.power_counter < 2) return;
+                                    live.power_counter -= 2;
+                                    cg.systemMsg(.corp, 35046, "AU Co.: Corp spends 2 power counters to look at top 3 R&D.", .{});
+                                    try beginPeekRdTopPrompt(cg, 3, ref.source_instance_id);
+                                }
+                            }.choice,
+                        };
                     }
                 }.handle,
             },
@@ -3660,7 +3692,48 @@ pub const all_cards = [_]CardSpec{
         .install = .{ .kind = .corp_server_choice },
         // "2 recurring credits for rezzing ice/assets in this server."
         // "The trash cost of each asset in this server's root is increased by 2."
+        // "When the Runner trashes this upgrade during a run, the trash cost bonus persists until end of run."
         .initial_credit_counters = 2,
+        .event_abilities = &.{
+            // Recurring credits: reset to 2 at start of corp turn
+            .{
+                .event = .corp_turn_begins,
+                .handler = &struct {
+                    fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        card.credit_counter = 2;
+                    }
+                }.handle,
+            },
+            // On-trash by runner during a run: register lingering +2 trash cost for assets in same server
+            .{
+                .event = .corp_card_runner_trashed,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        const payload = ctx.event orelse return;
+                        if (payload.target_instance_id != card.instance_id) return;
+                        const g = gameFromEffectContext(ctx);
+                        if (g.run == null) return; // Only during a run
+                        // Find server index for this card
+                        for (g.corp_servers.items, 0..) |server, idx| {
+                            for (server.content.items) |c| {
+                                if (c.instance_id == card.instance_id) {
+                                    try addFloatingEffect(g, .{
+                                        .kind = .trash_cost,
+                                        .duration = .end_of_run,
+                                        .value = 2,
+                                        .source_code = 35082,
+                                        .target_server = @intCast(idx),
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }.handle,
+            },
+        },
         .static_abilities = &.{.{
             .kind = .trash_cost,
             .value = 2,
@@ -5102,7 +5175,7 @@ pub const all_cards = [_]CardSpec{
                 }.handle,
             },
             // "When your action phase ends, remove 2 hosted power counters: Sabotage 3."
-            // (Sabotage 3 = corp trashes top 3 cards of R&D)
+            // (Sabotage = corp chooses cards to trash from HQ and/or top of R&D)
             .{
                 .event = .runner_end_turn,
                 .handler = &struct {
@@ -5134,15 +5207,10 @@ pub const all_cards = [_]CardSpec{
                                             }
                                             live.power_counter -= 2;
                                         }
-                                        // Sabotage 3: trash top 3 cards of R&D
-                                        const trash_count: u8 = @intCast(@min(3, cg.corp_deck.items.len));
-                                        var i: u8 = 0;
-                                        while (i < trash_count) : (i += 1) {
-                                            if (cg.corp_deck.items.len == 0) break;
-                                            const trashed = cg.corp_deck.orderedRemove(0);
-                                            try appendDiscardCard(cg, .corp, trashed);
-                                        }
-                                        cg.systemMsg(.runner, 35010, "Cacophony: Corp trashes top {d} card(s) of R&D.", .{trash_count});
+                                        cg.systemMsg(.runner, 35010, "Cacophony: Sabotage 3.", .{});
+                                        // Sabotage 3: corp chooses cards from HQ and/or top of R&D
+                                        try beginSabotagePrompt(cg, 3);
+                                        return;
                                     }
                                     try beginStartTurnSequence(cg, .corp);
                                 }
@@ -5184,7 +5252,51 @@ pub const all_cards = [_]CardSpec{
         .runner_install = .{ .kind = .resource, .mu_cost = 0 },
         .static_abilities = &.{.{ .kind = .rez_cost, .value = 1 }},
         // "Whenever you encounter a piece of ice, if the Corp has 15cr or more, you may trash this resource to bypass that ice."
-        // Bypass handled via encounter event check
+        .event_abilities = &.{.{
+            .event = .ice_encountered,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    if (g.corp_credit < 15) return;
+                    if (g.run == null) return;
+                    const allocator = g.arena.allocator();
+                    g.runner_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "fransofia-bypass"),
+                        .choices = try allocator.dupe(state.PromptChoice, &.{
+                            stringChoice("Trash Fransofia Ward to bypass"),
+                            stringChoice("No action"),
+                        }),
+                        .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const ref = (cg.runner_prompt_state orelse return).ability_ref orelse return;
+                                cg.runner_prompt_state = null;
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    // Continue encounter normally
+                                    if (cg.run == null) return;
+                                    const run = cg.run.?;
+                                    const ice_idx = run.current_ice_index orelse return;
+                                    const target_server = findServerByRunPath(cg.corp_servers.items, run.server) catch return;
+                                    const ice_count = target_server.slot.ices.items.len;
+                                    const actual = ice_count - 1 - ice_idx;
+                                    const ice = target_server.slot.ices.items[actual];
+                                    cg.decision_side = .runner;
+                                    cg.legal_actions = try encounterActionsForState(cg.arena.allocator(), cg, ice);
+                                    return;
+                                }
+                                // Trash Fransofia Ward and bypass
+                                try trashRunnerRigCardByInstanceId(cg, ref.source_instance_id);
+                                cg.systemMsg(.runner, 35021, "Runner trashes Fransofia Ward to bypass ice.", .{});
+                                try bypassCurrentIce(cg);
+                            }
+                        }.choice,
+                    };
+                    g.decision_side = .runner;
+                    g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Open Market",
