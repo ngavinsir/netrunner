@@ -1667,6 +1667,11 @@ fn applyPromptChoice(
         return;
     }
 
+    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "byte-ambush")) {
+        try applyByteAmbushChoice(generated, choice_text);
+        return;
+    }
+
     if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_access_choice) and prompt.source_card != null) {
         try applyAccessPromptChoice(generated, side, choice_text);
         return;
@@ -5371,6 +5376,49 @@ fn applyNetDamageOnAccessChoice(
     try finishAccessCard(generated);
 }
 
+/// Byte! (35050): Corp may pay 4cr on access to give runner 1 tag + 3 net damage.
+pub fn beginByteAmbushPrompt(generated: *Game, accessed: state.CardInstance) !bool {
+    const allocator = generated.arena.allocator();
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    if (generated.corp_credit >= 4) {
+        try choices.append(allocator, stringChoice("Pay 4 [Credits] to give 1 tag and do 3 net damage"));
+    }
+    try choices.append(allocator, stringChoice("No action"));
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "byte-ambush"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .source_card = accessed,
+    };
+    return true;
+}
+
+fn applyByteAmbushChoice(generated: *Game, choice_text: []const u8) !void {
+    const accessed = (if (generated.corp_prompt_state) |ps| ps.source_card else null) orelse return error.MissingSourceCard;
+    generated.corp_prompt_state = null;
+
+    if (std.mem.startsWith(u8, choice_text, "Pay ")) {
+        try spendCredits(generated, .corp, 4);
+        _ = try addRunnerTag(generated, 1);
+        if (generated.game_over) return;
+        try trashRandomRunnerHandCards(generated, 3);
+        updateTerminalState(generated);
+        if (generated.game_over) return;
+    }
+
+    // Proceed to trash-on-access prompt for the runner
+    if (try beginTrashAccessPrompt(generated, accessed)) {
+        generated.decision_side = .runner;
+        generated.legal_actions = try promptChoiceActions(
+            generated.arena.allocator(),
+            .runner,
+            generated.runner_prompt_state.?,
+        );
+        return;
+    }
+    try finishAccessCard(generated);
+}
+
 fn beginHqAccessChoicePrompt(generated: *Game) !bool {
     const allocator = generated.arena.allocator();
     generated.runner_prompt_state = .{
@@ -7052,7 +7100,7 @@ fn endCorpPhase12(generated: *Game) !void {
     // Clear installed_this_turn flags for all corp cards
     clearInstalledThisTurnFlags(generated);
 
-    if (try fireEvent(generated, .corp_turn_begins)) return;
+    _ = try fireEvent(generated, .corp_turn_begins);
     if (generated.game_over) return;
 
     // Auto-trigger start-of-turn abilities (Nico Campaign)

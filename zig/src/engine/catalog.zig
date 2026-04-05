@@ -100,6 +100,7 @@ const markAbilityUsedThisTurn = runtime.markAbilityUsedThisTurn;
 const trashCorpServerCardByInstanceId = game_engine.trashCorpServerCardByInstanceId;
 const trashRunnerRigCardByInstanceId = game_engine.trashRunnerRigCardByInstanceId;
 const beginNetDamageOnAccessPrompt = game_engine.beginNetDamageOnAccessPrompt;
+const beginByteAmbushPrompt = game_engine.beginByteAmbushPrompt;
 const removeCurrentAccessedCard = game_engine.removeCurrentAccessedCard;
 const finishAccessCard = game_engine.finishAccessCard;
 const checkServerApproachAbilities = game_engine.checkServerApproachAbilities;
@@ -3158,8 +3159,146 @@ pub const all_cards = [_]CardSpec{
         .trash_on_empty = true,
         .clicks_on_empty = 2,
     },
-    .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
-    .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
+    .{
+        .title = "Byte!",
+        .side = .corp,
+        .code = 35050,
+        .card_type = "Asset",
+        .subtypes = &.{"Ambush"},
+        .cost = 0,
+        .trash_cost = 0,
+        .install = .{ .kind = .corp_remote_only },
+        // "When the Runner accesses this asset, you may pay 4[c] to give the Runner 1 tag and do 3 net damage."
+        .event_abilities = &.{.{
+            .event = .access,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    _ = try beginByteAmbushPrompt(gameFromEffectContext(ctx), card.*);
+                }
+            }.handle,
+        }},
+    },
+    .{
+        .title = "Ph\xe1\xba\xadt Gioan Baotixita",
+        .side = .corp,
+        .code = 35051,
+        .card_type = "Asset",
+        .subtypes = &.{"Executive"},
+        .cost = 1,
+        .trash_cost = 3,
+        .install = .{ .kind = .corp_remote_only },
+        // "When your turn ends, place 1 power counter on this asset."
+        // "When an agenda is scored or stolen, you may remove up to 3 hosted power counters to do that much net damage."
+        .event_abilities = &.{
+            .{
+                .event = .corp_end_turn,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        card.power_counter += 1;
+                        const g = gameFromEffectContext(ctx);
+                        g.systemMsg(.corp, 35051, "Corp places 1 power counter on Ph\xe1\xba\xadt Gioan Baotixita ({d} total).", .{card.power_counter});
+                    }
+                }.handle,
+            },
+            .{
+                .event = .agenda_scored,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        if (card.power_counter == 0) return;
+                        const g = gameFromEffectContext(ctx);
+                        const allocator = g.arena.allocator();
+                        const max_spend: u8 = @min(card.power_counter, 3);
+                        var choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer choices.deinit(allocator);
+                        var i: u8 = 1;
+                        while (i <= max_spend) : (i += 1) {
+                            const text = try std.fmt.allocPrint(allocator, "Remove {d} power counter{s} to do {d} net damage", .{ i, if (i != 1) "s" else "", i });
+                            try choices.append(allocator, stringChoice(text));
+                        }
+                        try choices.append(allocator, stringChoice("No action"));
+                        g.corp_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
+                            .choices = try choices.toOwnedSlice(allocator),
+                            .source_card = card.*,
+                            .on_choice = &struct {
+                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                    const cg = gameFromEffectContext(cctx);
+                                    cg.corp_prompt_state = null;
+                                    if (std.mem.eql(u8, choice_text, "No action")) return;
+                                    // Parse "Remove N power counter(s)..." to get N
+                                    if (!std.mem.startsWith(u8, choice_text, "Remove ")) return;
+                                    const n = std.fmt.parseInt(u8, choice_text[7..8], 10) catch return;
+                                    // Find Phat in installed cards and remove counters
+                                    for (cg.corp_servers.items) |*server| {
+                                        for (server.content.items) |*c| {
+                                            if (c.code == 35051 and c.rezzed and c.power_counter >= n) {
+                                                c.power_counter -= n;
+                                                try trashRandomRunnerHandCards(cg, n);
+                                                updateTerminalState(cg);
+                                                cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }.choice,
+                        };
+                        g.decision_side = .corp;
+                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    }
+                }.handle,
+            },
+            .{
+                .event = .agenda_stolen,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (!card.rezzed) return;
+                        if (card.power_counter == 0) return;
+                        const g = gameFromEffectContext(ctx);
+                        const allocator = g.arena.allocator();
+                        const max_spend: u8 = @min(card.power_counter, 3);
+                        var choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer choices.deinit(allocator);
+                        var i: u8 = 1;
+                        while (i <= max_spend) : (i += 1) {
+                            const text = try std.fmt.allocPrint(allocator, "Remove {d} power counter{s} to do {d} net damage", .{ i, if (i != 1) "s" else "", i });
+                            try choices.append(allocator, stringChoice(text));
+                        }
+                        try choices.append(allocator, stringChoice("No action"));
+                        g.corp_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
+                            .choices = try choices.toOwnedSlice(allocator),
+                            .source_card = card.*,
+                            .on_choice = &struct {
+                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                    const cg = gameFromEffectContext(cctx);
+                                    cg.corp_prompt_state = null;
+                                    if (std.mem.eql(u8, choice_text, "No action")) return;
+                                    if (!std.mem.startsWith(u8, choice_text, "Remove ")) return;
+                                    const n = std.fmt.parseInt(u8, choice_text[7..8], 10) catch return;
+                                    for (cg.corp_servers.items) |*server| {
+                                        for (server.content.items) |*c| {
+                                            if (c.code == 35051 and c.rezzed and c.power_counter >= n) {
+                                                c.power_counter -= n;
+                                                try trashRandomRunnerHandCards(cg, n);
+                                                updateTerminalState(cg);
+                                                cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
+                                                return;
+                                            }
+                                        }
+                                    }
+                                }
+                            }.choice,
+                        };
+                        g.decision_side = .corp;
+                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    }
+                }.handle,
+            },
+        },
+    },
     .{
         .title = "Idiosyncresis",
         .side = .corp,
@@ -3170,8 +3309,48 @@ pub const all_cards = [_]CardSpec{
         .trash_cost = 2,
         .static_abilities = &.{.{ .kind = .can_advance }},
         .install = .{ .kind = .corp_remote_only },
-        // "When your turn begins, you may trash this asset. If you do, for each hosted advancement counter, gain 3cr and the Runner loses 2cr."
-        // This is a start-of-turn optional effect - implemented as auto-trigger when advancement counters > 0
+        // "When your turn begins, you may trash this asset. If you do, for each hosted advancement counter, gain 3[c] and the Runner loses 2[c]."
+        .event_abilities = &.{.{
+            .event = .corp_turn_begins,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (card.advancement_counter == 0) return;
+                    if (!card.rezzed) return;
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.arena.allocator();
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "idiosyncresis-trash"),
+                        .choices = try allocator.dupe(state.PromptChoice, &.{
+                            stringChoice("Trash Idiosyncresis"),
+                            stringChoice("No action"),
+                        }),
+                        .source_card = card.*,
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    cg.corp_prompt_state = null;
+                                    return;
+                                }
+                                const ps = cg.corp_prompt_state orelse return;
+                                const src = ps.source_card orelse return;
+                                const counters = src.advancement_counter;
+                                const iid = src.instance_id;
+                                cg.corp_prompt_state = null;
+                                try trashCorpServerCardByInstanceId(cg, iid);
+                                const gain: u16 = @as(u16, counters) * 3;
+                                const drain: u16 = @as(u16, counters) * 2;
+                                cg.corp_credit += gain;
+                                cg.runner_credit = if (cg.runner_credit >= drain) cg.runner_credit - drain else 0;
+                                cg.systemMsg(.corp, 35061, "Corp trashes Idiosyncresis: gains {d} [credits], runner loses {d} [credits].", .{ gain, drain });
+                            }
+                        }.choice,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Public Access Plaza",

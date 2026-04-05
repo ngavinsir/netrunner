@@ -106,6 +106,7 @@ pub const openBreakSubPrompt = game.openBreakSubPrompt;
 pub const fireEvent = game.fireEvent;
 pub const isAbilityUsedThisTurn = game.isAbilityUsedThisTurn;
 pub const markAbilityUsedThisTurn = game.markAbilityUsedThisTurn;
+pub const beginByteAmbushPrompt = game.beginByteAmbushPrompt;
 
 
 pub const SideSpec = struct {

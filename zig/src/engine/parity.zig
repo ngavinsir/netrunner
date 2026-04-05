@@ -6059,6 +6059,66 @@ test "open market install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "open market auto-take credits parity test" {
+    const allocator = std.testing.allocator;
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 100) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var c: u8 = 0;
+            while (c < 3) : (c += 1) {
+                if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
+                    try flow.applyAction(&g, a)
+                else break;
+            }
+            if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
+                try flow.applyAction(&g, a);
+                while (g.corp_prompt_state != null) {
+                    const ps = g.corp_prompt_state.?;
+                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    const title = if (ps.choices[0].card) |cr| cr.title else break;
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                }
+            } else continue;
+            if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
+                try flow.applyAction(&g, a)
+            else continue;
+            for (g.runner_hand.items) |h| {
+                if (h.code != null and h.code.? == 35022 and g.runner_credit >= 2) break :blk s;
+            }
+        }
+        return error.NoSeedFound;
+    };
+
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    // Install Open Market
+    try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35022) orelse return error.MissingAction);
+    // End runner turn, then start next corp+runner turn to trigger auto-take
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 test "charm offensive parity test" {
     const allocator = std.testing.allocator;
     const seed: u64 = blk: {
