@@ -110,6 +110,9 @@ pub const markAbilityUsedThisTurn = game.markAbilityUsedThisTurn;
 pub const beginByteAmbushPrompt = game.beginByteAmbushPrompt;
 pub const beginStartTurnSequence = game.beginStartTurnSequence;
 pub const beginPeekRdTopPrompt = game.beginPeekRdTopPrompt;
+pub const completeRunnerEndTurn = game.completeRunnerEndTurn;
+pub const serverHasBioroidIce = game.serverHasBioroidIce;
+pub const continueServerApproach = game.continueServerApproach;
 
 
 pub const SideSpec = struct {

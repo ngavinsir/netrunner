@@ -197,6 +197,7 @@ pub const GameEvent = enum(u8) {
     server_approached,
     card_installed,
     corp_card_runner_trashed, // fires before a corp card is removed; payload.target_instance_id = trashed card
+    runner_discarded_to_hand_size, // fires after runner discards the last card to hand size
 };
 
 pub const EventAbility = struct {

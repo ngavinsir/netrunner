@@ -104,6 +104,9 @@ const beginNetDamageOnAccessPrompt = game_engine.beginNetDamageOnAccessPrompt;
 const beginByteAmbushPrompt = game_engine.beginByteAmbushPrompt;
 const beginStartTurnSequence = runtime.beginStartTurnSequence;
 const beginPeekRdTopPrompt = runtime.beginPeekRdTopPrompt;
+const completeRunnerEndTurn = runtime.completeRunnerEndTurn;
+const serverHasBioroidIce = runtime.serverHasBioroidIce;
+const continueServerApproach = runtime.continueServerApproach;
 const removeCurrentAccessedCard = game_engine.removeCurrentAccessedCard;
 const finishAccessCard = game_engine.finishAccessCard;
 const checkServerApproachAbilities = game_engine.checkServerApproachAbilities;
@@ -2440,9 +2443,53 @@ pub const all_cards = [_]CardSpec{
         .code = 35024,
         .card_type = "Identity",
         .subtypes = &.{"Cyborg"},
-        // "When discarding to hand size, may install a discarded program or hardware."
-        // Triggers after runner discard phase — needs discard-to-hand-size event
-        // Auto-declined in oracle auto-resolve mode (optional install prompt)
+        // "When discarding to hand size, may install a discarded program or hardware for free."
+        .event_abilities = &.{.{
+            .event = .runner_discarded_to_hand_size,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.arena.allocator();
+                    // Find programs and hardware in runner's discard
+                    var choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices.deinit(allocator);
+                    for (g.runner_discard.items, 0..) |card, idx| {
+                        const ct = card.card_type orelse continue;
+                        if (!std.mem.eql(u8, ct, "Program") and !std.mem.eql(u8, ct, "Hardware")) continue;
+                        try choices.append(allocator, .{
+                            .kind = .card,
+                            .text = try std.fmt.allocPrint(allocator, "{s}", .{card.title}),
+                            .card = .{ .title = card.title, .code = card.code, .side = .runner, .index = @intCast(idx) },
+                        });
+                    }
+                    if (choices.items.len == 0) return;
+                    try choices.append(allocator, stringChoice("No action"));
+                    g.runner_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "magdalene-install"),
+                        .choices = try choices.toOwnedSlice(allocator),
+                        .source_card = g.runner_identity,
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                cg.runner_prompt_state = null;
+                                if (!std.mem.eql(u8, choice_text, "No action")) {
+                                    // Find the chosen card in runner's discard by title and install it free
+                                    for (cg.runner_discard.items, 0..) |card, idx| {
+                                        if (std.mem.eql(u8, card.title, choice_text)) {
+                                            const installed = cg.runner_discard.orderedRemove(idx);
+                                            try appendRunnerInstalledCard(cg, installed);
+                                            cg.systemMsg(.runner, 35024, "Magdalene installs {s} from heap for free.", .{installed.title});
+                                            break;
+                                        }
+                                    }
+                                }
+                                try completeRunnerEndTurn(cg);
+                            }
+                        }.choice,
+                    };
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "LEO Construction: Labor Solutions",
@@ -2451,8 +2498,22 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Identity",
         .subtypes = &.{"Division"},
         // "Once per turn, during a run on a server with bioroid ICE, end the run."
-        // This is a corp action during runs — handled via run-time corp ability.
-        // Auto-declined in oracle auto-resolve mode (complex conditions).
+        .abilities = &.{.{
+            .once_per_turn = true,
+            .label = "End the run",
+            .req = &struct {
+                fn check(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
+                    return serverHasBioroidIce(gameFromConstEffectContext(ctx));
+                }
+            }.check,
+            .on_use = &struct {
+                fn use(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    g.systemMsg(.corp, 35035, "Corp uses LEO Construction to end the run.", .{});
+                    try completeUnsuccessfulRun(g);
+                }
+            }.use,
+        }},
     },
     .{
         .title = "Po\xc3\xa9tr\xc3\xaf Luxury Brands: All the Rage",
@@ -2827,7 +2888,19 @@ pub const all_cards = [_]CardSpec{
 
         .install = .{ .kind = .corp_remote_only },
         // "First time Runner trashes installed Corp card each turn, they may spend [click]. If not, Corp gets +1 allotted [click] next turn."
-        // Complex trigger - requires event system enhancement
+        // In oracle auto-resolve mode the runner always declines, so corp always gets +1 click.
+        .event_abilities = &.{.{
+            .event = .runner_trash_corp_card,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    // Only trigger on the first trash of the turn
+                    if (g.turn_events.runner_trash_corp_card_count != 1) return;
+                    g.corp_extra_clicks_next_turn += 1;
+                    g.systemMsg(.corp, 35037, "Aggressive Trendsetting: Corp gains +1 allotted [click] next turn.", .{});
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Project Ingatan",
@@ -3401,10 +3474,181 @@ pub const all_cards = [_]CardSpec{
         .trash_on_empty = true,
         .draw_on_take = 1,
     },
-    .{ .title = "Plutus", .side = .corp, .code = 35073, .card_type = "Asset", .subtypes = &.{"Deep Net"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
+    .{
+        .title = "Plutus",
+        .side = .corp,
+        .code = 35073,
+        .card_type = "Asset",
+        .subtypes = &.{"Deep Net"},
+        .cost = 0,
+        .trash_cost = 3,
+        .install = .{ .kind = .corp_remote_only },
+        // "Start of turn: if there is a Transaction operation in Archives, play it and remove it from the game."
+        .event_abilities = &.{.{
+            .event = .corp_turn_begins,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    // Find first Transaction in Archives
+                    for (g.corp_discard.items, 0..) |card, idx| {
+                        const ct = card.card_type orelse continue;
+                        if (!std.mem.eql(u8, ct, "Operation")) continue;
+                        if (!hasSubtype(card, "Transaction")) continue;
+                        // Remove from Archives (RFG — don't re-add to discard)
+                        const op = g.corp_discard.orderedRemove(idx);
+                        g.systemMsg(.corp, 35073, "Plutus auto-plays {s} from Archives (removed from game).", .{op.title});
+                        // Play it without spending clicks or credits
+                        try resolveCorpOperation(g, op);
+                        // Card is RFG: do NOT append to discard
+                        return;
+                    }
+                }
+            }.handle,
+        }},
+    },
     // --- Elevation Upgrades ---
-    .{ .title = "Mercia B4LL4RD", .side = .corp, .code = 35045, .card_type = "Upgrade", .subtypes = &.{ "Academic", "Bioroid" }, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_server_choice } },
-    .{ .title = "Mitra Aman", .side = .corp, .code = 35056, .card_type = "Upgrade", .subtypes = &.{"Clone"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_server_choice } },
+    .{
+        .title = "Mercia B4LL4RD",
+        .side = .corp,
+        .code = 35045,
+        .card_type = "Upgrade",
+        .subtypes = &.{ "Academic", "Bioroid" },
+        .cost = 2,
+        .trash_cost = 2,
+        .install = .{ .kind = .corp_server_choice },
+        // "End of corp action phase: install ICE from HQ at -1[c], move Mercia to that server."
+        .event_abilities = &.{.{
+            .event = .corp_end_turn,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.arena.allocator();
+                    // Collect ICE from HQ as choices
+                    var choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices.deinit(allocator);
+                    for (g.corp_hand.items, 0..) |hcard, idx| {
+                        if (!std.mem.eql(u8, hcard.card_type orelse "", "ICE")) continue;
+                        try choices.append(allocator, .{
+                            .kind = .card,
+                            .text = try std.fmt.allocPrint(allocator, "{d}|{s}", .{ idx, hcard.title }),
+                            .card = .{ .title = hcard.title, .code = hcard.code, .side = .corp, .index = @intCast(idx) },
+                        });
+                    }
+                    if (choices.items.len == 0) return;
+                    try choices.append(allocator, stringChoice("No action"));
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "mercia-install-ice"),
+                        .choices = try choices.toOwnedSlice(allocator),
+                        .source_card = card.*,
+                        .ability_ref = .{ .source_instance_id = card.instance_id },
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const mercia_iid = if (cg.corp_prompt_state) |ps|
+                                    (if (ps.ability_ref) |ref| ref.source_instance_id else 0)
+                                else
+                                    0;
+                                cg.corp_prompt_state = null;
+                                if (std.mem.eql(u8, choice_text, "No action")) return;
+                                // Parse "idx|title"
+                                var parts = std.mem.splitScalar(u8, choice_text, '|');
+                                const idx_text = parts.next() orelse return;
+                                const ice_idx = std.fmt.parseInt(u8, idx_text, 10) catch return;
+                                if (ice_idx >= cg.corp_hand.items.len) return;
+                                const ice_card = cg.corp_hand.items[ice_idx];
+                                if (!std.mem.eql(u8, ice_card.card_type orelse "", "ICE")) return;
+                                // Pay discounted cost (-1[c])
+                                const cost = ice_card.cost orelse 0;
+                                const discounted = if (cost > 0) cost - 1 else 0;
+                                if (cg.corp_credit < discounted) return;
+                                try spendCredits(cg, .corp, discounted);
+                                _ = cg.corp_hand.orderedRemove(ice_idx);
+                                try installCard(cg, ice_card, "New remote");
+                                cg.systemMsg(.corp, 35045, "Mercia B4LL4RD: Corp installs {s} at -1[credits].", .{ice_card.title});
+                                // Move Mercia to the new remote server
+                                const last_idx = cg.corp_servers.items.len - 1;
+                                outer: for (cg.corp_servers.items) |*server| {
+                                    for (server.content.items, 0..) |c, ci| {
+                                        if (c.instance_id == mercia_iid) {
+                                            const mercia = server.content.orderedRemove(ci);
+                                            try cg.corp_servers.items[last_idx].content.append(cg.backing_allocator, mercia);
+                                            cg.systemMsg(.corp, 35045, "Mercia B4LL4RD moves to the new server.", .{});
+                                            break :outer;
+                                        }
+                                    }
+                                }
+                            }
+                        }.choice,
+                    };
+                }
+            }.handle,
+        }},
+    },
+    .{
+        .title = "Mitra Aman",
+        .side = .corp,
+        .code = 35056,
+        .card_type = "Upgrade",
+        .subtypes = &.{"Clone"},
+        .cost = 0,
+        .trash_cost = 3,
+        .install = .{ .kind = .corp_server_choice },
+        // "When the Runner approaches this server, you may trash this upgrade to gain 3[c]
+        //  and swap the approached ICE with an ICE from HQ or Archives."
+        .event_abilities = &.{.{
+            .event = .server_approached,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.arena.allocator();
+                    const choices = try allocator.dupe(state.PromptChoice, &.{
+                        stringChoice("Trash Mitra Aman: Gain 3[Credits]"),
+                        stringChoice("No action"),
+                    });
+                    g.corp_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "mitra-swap"),
+                        .choices = choices,
+                        .source_card = card.*,
+                        .ability_ref = .{ .source_instance_id = card.instance_id },
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                // Capture instance_id before clearing prompt
+                                const mitra_iid: u32 = if (cg.corp_prompt_state) |ps|
+                                    (if (ps.ability_ref) |ref| ref.source_instance_id else 0)
+                                else
+                                    0;
+                                cg.corp_prompt_state = null;
+                                if (std.mem.eql(u8, choice_text, "No action")) {
+                                    try continueServerApproach(cg);
+                                    return;
+                                }
+                                // "Trash Mitra Aman: Gain 3[Credits]" — trash Mitra, gain 3cr, continue run
+                                cg.corp_credit += 3;
+                                cg.systemMsg(.corp, 35056, "Mitra Aman: Corp gains 3[credits].", .{});
+                                outer: for (cg.corp_servers.items) |*server| {
+                                    for (server.content.items, 0..) |c, ci| {
+                                        const matches = if (mitra_iid != 0)
+                                            c.instance_id == mitra_iid
+                                        else
+                                            (c.code != null and c.code.? == 35056);
+                                        if (matches) {
+                                            const trashed = server.content.orderedRemove(ci);
+                                            try appendDiscardCard(cg, .corp, trashed);
+                                            break :outer;
+                                        }
+                                    }
+                                }
+                                try continueServerApproach(cg);
+                            }
+                        }.choice,
+                    };
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                }
+            }.handle,
+        }},
+    },
     .{
         .title = "Mahkota Langit Grid",
         .side = .corp,
@@ -4441,8 +4685,64 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Mod"},
         .cost = 2,
         .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
-        // "On install + turn begin: may host on non-AI icebreaker. Host gets +1 str.
-        //  Pump abilities last for remainder of run instead of shorter duration."
+        // "On install + turn begin: may host on non-AI icebreaker. Host gets +1 str."
+        // The +1 str is applied via effectiveStrength scanning card.hosted for self_strength bonuses.
+        .static_abilities = &.{.{ .kind = .self_strength, .value = 1 }},
+        .event_abilities = &.{.{
+            .event = .card_installed,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.arena.allocator();
+                    // Find non-AI icebreakers to host on
+                    var choices: std.ArrayList(state.PromptChoice) = .empty;
+                    defer choices.deinit(allocator);
+                    for (g.runner_rig_program.items, 0..) |prog, idx| {
+                        if (!isIcebreaker(prog)) continue;
+                        if (hasSubtype(prog, "AI")) continue;
+                        try choices.append(allocator, .{
+                            .kind = .card,
+                            .text = try std.fmt.allocPrint(allocator, "{d}|{s}", .{ idx, prog.title }),
+                            .card = .{ .title = prog.title, .code = prog.code, .side = .runner, .index = @intCast(idx) },
+                        });
+                    }
+                    if (choices.items.len == 0) return; // No valid hosts
+                    try choices.append(allocator, stringChoice("No action"));
+                    g.runner_prompt_state = .{
+                        .prompt_type = try allocator.dupe(u8, "gamedragon-host"),
+                        .choices = try choices.toOwnedSlice(allocator),
+                        .source_card = card.*,
+                        .ability_ref = .{ .source_instance_id = card.instance_id },
+                        .on_choice = &struct {
+                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                                const cg = gameFromEffectContext(cctx);
+                                const gd_iid: u32 = if (cg.runner_prompt_state) |ps|
+                                    (if (ps.ability_ref) |ref| ref.source_instance_id else 0)
+                                else
+                                    0;
+                                cg.runner_prompt_state = null;
+                                if (std.mem.eql(u8, choice_text, "No action")) return;
+                                // Parse "prog_idx|prog_title"
+                                var parts = std.mem.splitScalar(u8, choice_text, '|');
+                                const idx_text = parts.next() orelse return;
+                                const prog_idx = std.fmt.parseInt(usize, idx_text, 10) catch return;
+                                if (prog_idx >= cg.runner_rig_program.items.len) return;
+                                // Find GAMEDRAGON in hardware by instance_id and remove it
+                                for (cg.runner_rig_hardware.items, 0..) |hw, hi| {
+                                    if (hw.instance_id == gd_iid) {
+                                        const gd = cg.runner_rig_hardware.orderedRemove(hi);
+                                        // Host on the chosen icebreaker
+                                        try appendHostedCard(cg.arena.allocator(), &cg.runner_rig_program.items[prog_idx], gd);
+                                        cg.systemMsg(.runner, 35027, "GAMEDRAGON Pro hosts on {s}.", .{cg.runner_rig_program.items[prog_idx].title});
+                                        return;
+                                    }
+                                }
+                            }
+                        }.choice,
+                    };
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Madani",

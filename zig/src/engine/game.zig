@@ -21,6 +21,7 @@ pub const CardZone = enum(u8) {
     runner_hardware,
     corp_server_content,
     corp_ice_hosted,
+    corp_scored,
 };
 
 pub const EventSource = struct {
@@ -750,6 +751,7 @@ pub const Game = struct {
     pending_install: ?state.PendingInstall = null,
     pending_access: ?PendingAccess = null,
     corp_phase_12: bool = false,
+    corp_extra_clicks_next_turn: u8 = 0, // bonus clicks for corp next turn (e.g. Aggressive Trendsetting)
     // cannot_score_agendas_this_turn replaced by floating effect .prevent_score
     tao_first_ice: ?[]const u8 = null, // Tao: first ICE selection (server_idx|ice_idx|title)
     pending_effects: std.ArrayListUnmanaged(PendingEffect) = .empty, // Async effect continuation queue
@@ -1325,6 +1327,9 @@ pub fn applyAction(
         .use_runner_ability => {
             try applyAbilityRef(generated, action);
         },
+        .use_corp_ability => {
+            try applyAbilityRef(generated, action);
+        },
         .rez_non_ice => {
             const card_index = action.card_index orelse return error.MissingCardIndex;
             const server = action.server orelse return error.MissingServer;
@@ -1350,7 +1355,6 @@ pub fn applyAction(
         .use_identity_ability => {
             try applyAbilityRef(generated, action);
         },
-        else => return error.UnsupportedAction,
     }
 }
 
@@ -1566,7 +1570,24 @@ fn applyDiscardChoice(generated: *Game, side: state.Side, choice_text: []const u
         return;
     }
 
+    // Fire runner_discarded_to_hand_size for identity abilities (e.g., Magdalene)
+    if (side == .runner) {
+        _ = try fireEvent(generated, .runner_discarded_to_hand_size);
+        if (generated.runner_prompt_state) |ps| {
+            const allocator = generated.arena.allocator();
+            generated.decision_side = .runner;
+            generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
+            return;
+        }
+    }
+
     try finishEndTurn(generated, side);
+}
+
+/// Called from on_choice handlers (e.g., Magdalene) that trigger during runner end-of-turn
+/// discard phase. Resumes the normal end-of-turn flow.
+pub fn completeRunnerEndTurn(g: *Game) !void {
+    try finishEndTurn(g, .runner);
 }
 
 fn finishEndTurn(generated: *Game, side: state.Side) !void {
@@ -1740,9 +1761,22 @@ fn applyPromptChoice(
 
     // Prompt-level on_choice handler: set directly when opening the prompt
     if (prompt.on_choice) |handler| {
+        const decision_before = generated.decision_side;
         try handler(effectContext(generated), choice_text);
         if (hasActivePrompt(generated)) return;
         if (try resumePendingEffects(generated)) return;
+        // Only auto-update opening actions if the handler didn't change decision_side
+        // AND there's no active run (run prompts must handle their own continuation).
+        if (generated.decision_side == decision_before and generated.run == null) {
+            const allocator = generated.arena.allocator();
+            if (side == .corp) {
+                generated.decision_side = .corp;
+                generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
+            } else {
+                generated.decision_side = .runner;
+                generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
+            }
+        }
         return;
     }
 
@@ -2360,6 +2394,16 @@ fn findCardByEventSource(generated: *Game, src: EventSource) ?*state.CardInstanc
             }
             return null;
         },
+        .corp_scored => {
+            if (src.index < generated.corp_scored.items.len) {
+                const card = &generated.corp_scored.items[src.index];
+                if (card.code != null and card.code.? == src.code) return card;
+            }
+            for (generated.corp_scored.items) |*card| {
+                if (card.code != null and card.code.? == src.code) return card;
+            }
+            return null;
+        },
     }
 }
 
@@ -2545,6 +2589,12 @@ pub fn collectEventHandlers(generated: *Game, payload: state.EffectContext.Event
             for (ice.hosted, 0..) |hosted, hosted_idx| {
                 try appendEventHandlersForCard(generated, allocator, hosted, .runner, .corp_ice_hosted, @intCast(hosted_idx), @intCast(server_idx), @intCast(ice_idx), event, payload);
             }
+        }
+    }
+    // Corp scored agendas — skip agenda_scored/agenda_stolen (those fire through card_effect separately)
+    if (event != .agenda_scored and event != .agenda_stolen) {
+        for (generated.corp_scored.items, 0..) |card, idx| {
+            try appendEventHandlersForCard(generated, allocator, card, .corp, .corp_scored, @intCast(idx), 0, 0, event, payload);
         }
     }
 }
@@ -2753,7 +2803,16 @@ pub fn canBreakIceType(breaker: state.CardInstance, ice: state.CardInstance) boo
 }
 
 pub fn effectiveStrength(card: state.CardInstance) u8 {
-    return card.current_strength orelse card.strength orelse 0;
+    var base: i16 = @intCast(card.current_strength orelse card.strength orelse 0);
+    // Add unconditional strength bonuses from hosted items (e.g., GAMEDRAGON Pro)
+    for (card.hosted) |hosted| {
+        for (hosted.static_abilities) |sa| {
+            if (sa.kind == .self_strength and sa.req == null) {
+                base += sa.value;
+            }
+        }
+    }
+    return if (base > 0) @intCast(base) else 0;
 }
 
 fn effectiveIceStrength(g: *const Game, card: state.CardInstance, server_path: []const []const u8, ice_strength_modifier: i8) u8 {
@@ -5073,6 +5132,17 @@ fn advanceMovementPhase(generated: *Game) !void {
     try enterSuccessAccessPhase(generated);
 }
 
+/// Continue a run after a server-approach prompt was resolved (e.g. Mitra Aman declined).
+/// Mirrors the flow that follows checkServerApproachAbilities returning false.
+pub fn continueServerApproach(generated: *Game) !void {
+    const allocator = generated.arena.allocator();
+    const run = &(generated.run orelse return);
+    try applySuccessfulRunEffects(generated);
+    run.phase = try allocator.dupe(u8, "success");
+    if (try fireEvent(generated, .successful_run)) return;
+    try enterSuccessAccessPhase(generated);
+}
+
 pub fn prepareNextAccess(generated: *Game) !bool {
     const run = &generated.run.?;
     generated.runner_prompt_state = null;
@@ -5664,17 +5734,44 @@ pub fn continueActionsForRunWithRez(
             const rez_actions = if (game) |g| try corpRezNonIceActions(allocator, g) else &[_]state.LegalAction{};
             // Check if corp can rez approached ICE
             const has_ice_rez = if (game) |g| try canRezApproachedIce(g) else false;
-            const extra = rez_actions.len + @as(usize, if (has_ice_rez) 1 else 0);
+            // Check corp identity for usable abilities during a run (e.g., LEO Construction)
+            var identity_ability_count: usize = 0;
+            if (game) |g| {
+                const id = &g.corp_identity;
+                for (id.abilities, 0..) |ability, idx| {
+                    if (ability.once_per_turn and isAbilityUsedThisTurn(id, @intCast(idx))) continue;
+                    if (ability.req) |req| {
+                        if (!req(effectContextConst(g), id)) continue;
+                    }
+                    identity_ability_count += 1;
+                }
+            }
+            const extra = rez_actions.len + @as(usize, if (has_ice_rez) 1 else 0) + identity_ability_count;
             if (extra == 0) break :blk &corp_continue_actions;
-            // Combine continue + rez actions
+            // Combine continue + rez actions + identity abilities
             var combined = try allocator.alloc(state.LegalAction, 1 + extra);
             combined[0] = corp_continue_actions[0]; // continue action
             @memcpy(combined[1 .. 1 + rez_actions.len], rez_actions);
+            var out_idx: usize = 1 + rez_actions.len;
             if (has_ice_rez) {
-                combined[1 + rez_actions.len] = .{
-                    .kind = .rez_ice,
-                    .side = .corp,
-                };
+                combined[out_idx] = .{ .kind = .rez_ice, .side = .corp };
+                out_idx += 1;
+            }
+            if (game) |g| {
+                const id = &g.corp_identity;
+                for (id.abilities, 0..) |ability, idx| {
+                    if (ability.once_per_turn and isAbilityUsedThisTurn(id, @intCast(idx))) continue;
+                    if (ability.req) |req| {
+                        if (!req(effectContextConst(g), id)) continue;
+                    }
+                    combined[out_idx] = .{
+                        .kind = .use_corp_ability,
+                        .side = .corp,
+                        .ability_ref = .{ .source_instance_id = id.instance_id, .ability_index = @intCast(idx) },
+                        .label = ability.label,
+                    };
+                    out_idx += 1;
+                }
             }
             break :blk combined;
         },
@@ -6826,10 +6923,17 @@ fn applyAbilityRef(generated: *Game, action: state.LegalAction) !void {
             }
             if (ability.once_per_turn) markAbilityUsedThisTurn(card, @intCast(ref.ability_index));
 
+            const decision_before = generated.decision_side;
             if (ability.on_use) |handler| {
                 try handler(effectContext(generated), card);
             }
-            if (!hasActivePrompt(generated) and generated.pending_access == null and generated.run == null) {
+            // Only auto-update opening actions if:
+            // - no active prompt
+            // - no pending access
+            // - run has ended (run == null)
+            // - the handler didn't already change decision_side (e.g., completeUnsuccessfulRun)
+            if (!hasActivePrompt(generated) and generated.pending_access == null and generated.run == null
+                and generated.decision_side == decision_before) {
                 generated.decision_side = action.side;
                 if (action.side == .runner) {
                     generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
@@ -7174,7 +7278,8 @@ fn endCorpPhase12(generated: *Game) !void {
     }
     try drawCard(generated, .corp);
     generated.systemMsg(.corp, 0, "Corp draws 1 card for their mandatory draw.", .{});
-    generated.corp_click = generated.corp_click_per_turn;
+    generated.corp_click = generated.corp_click_per_turn + generated.corp_extra_clicks_next_turn;
+    generated.corp_extra_clicks_next_turn = 0;
     generated.runner_successful_run_last_turn = generated.runner_successful_run_this_turn;
     generated.runner_successful_run_this_turn = false;
 
@@ -7187,6 +7292,14 @@ fn endCorpPhase12(generated: *Game) !void {
     // Auto-trigger start-of-turn abilities (Nico Campaign)
     try applyCorpStartOfTurnAbilities(generated);
     if (generated.game_over) return;
+
+    // If a corp prompt was opened during start-of-turn events (e.g., AU Co. peek, Plutus auto-play),
+    // present it instead of jumping directly to opening actions.
+    if (generated.corp_prompt_state != null) {
+        generated.decision_side = .corp;
+        generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+        return;
+    }
 
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
@@ -7267,6 +7380,16 @@ pub fn countFractersInHeap(generated: *const Game) u8 {
 }
 
 /// Count installed icebreakers (Principia install cost reduction)
+/// Returns true if the server currently being run has at least one rezzed bioroid ICE.
+pub fn serverHasBioroidIce(g: *const Game) bool {
+    const run = g.run orelse return false;
+    const target = findServerByRunPath(@constCast(g).corp_servers.items, run.server) catch return false;
+    for (target.slot.ices.items) |ice| {
+        if (ice.rezzed and hasSubtype(ice, "Bioroid")) return true;
+    }
+    return false;
+}
+
 pub fn countInstalledIcebreakers(generated: *const Game) u16 {
     var count: u16 = 0;
     for (generated.runner_rig_program.items) |card| {
