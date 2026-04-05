@@ -1764,16 +1764,14 @@ pub const all_cards = [_]CardSpec{
             .handler = &struct {
                 fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
+                    const scored_server_index: usize = if (ctx.event) |ev| if (ev.server_index) |si| @intCast(si) else return else return;
+                    if (scored_server_index >= g.corp_servers.items.len) return;
                     var same_server = false;
-                    if (g.last_scored_server_index) |scored_server_index| {
-                        if (scored_server_index < g.corp_servers.items.len) {
-                            const server = g.corp_servers.items[scored_server_index];
-                            for (server.content.items) |card| {
-                                if (card.code != null and self_card.code != null and card.code.? == self_card.code.?) {
-                                    same_server = true;
-                                    break;
-                                }
-                            }
+                    const server = g.corp_servers.items[scored_server_index];
+                    for (server.content.items) |card| {
+                        if (card.code != null and self_card.code != null and card.code.? == self_card.code.?) {
+                            same_server = true;
+                            break;
                         }
                     }
                     if (!same_server) return;

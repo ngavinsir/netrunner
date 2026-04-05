@@ -29,14 +29,15 @@ pub const EventSource = struct {
     side: state.Side,
     zone: CardZone,
     ability_index: u8 = 0,
-    index: u16 = 0, // index within zone at collection time
-    server_index: u16 = 0, // for corp_server_content zone
-    parent_index: u16 = 0, // host ICE index for corp_ice_hosted zone
+    index: u16 = 0,
+    server_index: u16 = 0,
+    parent_index: u16 = 0,
+    payload: ?state.EffectContext.EventPayload = null,
 };
 
 pub const PendingEffect = union(enum) {
     event_handler: EventSource,
-    card_effect: struct { card: state.CardInstance, event: state.GameEvent, ability_index: u8 },
+    card_effect: struct { card: state.CardInstance, event: state.GameEvent, ability_index: u8, payload: ?state.EffectContext.EventPayload = null },
     finish_score: void,
     finish_steal: struct { accessed: state.CardInstance, is_central: bool },
     deferred_prompt: struct {
@@ -749,7 +750,6 @@ pub const Game = struct {
     pending_install: ?state.PendingInstall = null,
     pending_access: ?PendingAccess = null,
     corp_phase_12: bool = false,
-    last_scored_server_index: ?usize = null, // Server from which last agenda was scored
     // cannot_score_agendas_this_turn replaced by floating effect .prevent_score
     tao_first_ice: ?[]const u8 = null, // Tao: first ICE selection (server_idx|ice_idx|title)
     pending_effects: std.ArrayListUnmanaged(PendingEffect) = .empty, // Async effect continuation queue
@@ -1960,7 +1960,6 @@ fn applyScoreAgendaChoice(
     const requirement = agenda.advancement_requirement orelse return error.UnsupportedChoice;
     if (agenda.advancement_counter < requirement) return error.UnsupportedChoice;
 
-    generated.last_scored_server_index = target.server_index;
     const scored_agenda = removeServerContentCard(generated, target.server_index, @intCast(target.card_index));
     try generated.corp_scored.append(generated.backing_allocator, scored_agenda);
     try removeServerIfEmpty(generated, target.server_index);
@@ -1988,6 +1987,7 @@ fn applyScoreAgendaChoice(
                     .card = scored_agenda,
                     .event = .agenda_scored,
                     .ability_index = @intCast(ea_idx),
+                    .payload = .{ .kind = .agenda_scored, .source_code = scored_agenda.code, .server_index = @intCast(target.server_index) },
                 } });
                 break;
             }
@@ -2014,7 +2014,7 @@ fn applyScoreAgendaChoice(
                 generated.systemMsg(.corp, 0, "Runner gains {d} tag{s}.", .{ amount, if (amount != 1) @as([]const u8, "s") else "" });
                 if (amount > 0) {
                     generated.turn_events.runner_gain_tag_count += 1;
-                    try collectEventHandlers(generated, .runner_gain_tag);
+                    try collectEventHandlers(generated, .{ .kind = .runner_gain_tag });
                 }
             },
             .gain_clicks => {
@@ -2037,7 +2037,7 @@ fn applyScoreAgendaChoice(
     }
 
     // Collect event handlers (appends to pending_effects without draining)
-    try collectEventHandlers(generated, .agenda_scored);
+    try collectEventHandlers(generated, .{ .kind = .agenda_scored, .source_code = scored_agenda.code, .server_index = @intCast(target.server_index) });
 
     // Terminal: check game state and return to corp actions
     try generated.pending_effects.append(allocator, .{ .finish_score = {} });
@@ -2309,7 +2309,7 @@ pub fn removeRunnerTags(generated: *Game, count: u8) !void {
         tag.is_tagged = tag.total > 0;
     }
     if (removed > 0) {
-        try collectEventHandlers(generated, .runner_lose_tag);
+        try collectEventHandlers(generated, .{ .kind = .runner_lose_tag });
     }
 }
 
@@ -2420,6 +2420,7 @@ fn appendEventHandlersForCard(
     server_index: u16,
     parent_index: u16,
     event: state.GameEvent,
+    payload: state.EffectContext.EventPayload,
 ) !void {
     if (card.code == null) return;
     for (card.event_abilities, 0..) |ability, ability_index| {
@@ -2433,6 +2434,7 @@ fn appendEventHandlersForCard(
             .index = index,
             .server_index = server_index,
             .parent_index = parent_index,
+            .payload = payload,
         } });
     }
 }
@@ -2446,7 +2448,8 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                 if (src.ability_index >= card.event_abilities.len) continue;
                 const ability = card.event_abilities[src.ability_index];
                 if (ability.event != src.event) continue;
-                try ability.handler(effectContext(generated), card);
+                const ctx = if (src.payload) |p| effectContextWithEvent(generated, p) else effectContext(generated);
+                try ability.handler(ctx, card);
                 if (hasActivePrompt(generated)) return true;
             },
             .card_effect => |ce| {
@@ -2463,7 +2466,8 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                         } else continue;
                         const old_corp_prompt = generated.corp_prompt_state;
                         const old_runner_prompt = generated.runner_prompt_state;
-                        try ea.handler(effectContext(generated), mutable_card);
+                        const ce_ctx = if (ce.payload) |p| effectContextWithEvent(generated, p) else effectContext(generated);
+                        try ea.handler(ce_ctx, mutable_card);
                         if (generated.game_over) return true;
                         // Check if a new prompt was opened
                         if (generated.corp_prompt_state != null and
@@ -2550,37 +2554,38 @@ pub fn hasActivePrompt(generated: *const Game) bool {
 
 /// Collect all matching event handlers into the pending effects queue.
 /// Does NOT drain — caller decides when to drain.
-fn collectEventHandlers(generated: *Game, event: state.GameEvent) !void {
+pub fn collectEventHandlers(generated: *Game, payload: state.EffectContext.EventPayload) !void {
     const allocator = generated.backing_allocator;
+    const event = payload.kind;
 
-    try appendEventHandlersForCard(generated, allocator, generated.corp_identity, .corp, .identity, 0, 0, 0, event);
-    try appendEventHandlersForCard(generated, allocator, generated.runner_identity, .runner, .identity, 0, 0, 0, event);
+    try appendEventHandlersForCard(generated, allocator, generated.corp_identity, .corp, .identity, 0, 0, 0, event, payload);
+    try appendEventHandlersForCard(generated, allocator, generated.runner_identity, .runner, .identity, 0, 0, 0, event, payload);
 
     for (generated.runner_rig_hardware.items, 0..) |hw, idx| {
-        try appendEventHandlersForCard(generated, allocator, hw, .runner, .runner_hardware, @intCast(idx), 0, 0, event);
+        try appendEventHandlersForCard(generated, allocator, hw, .runner, .runner_hardware, @intCast(idx), 0, 0, event, payload);
     }
     for (generated.runner_rig_resources.items, 0..) |res, idx| {
-        try appendEventHandlersForCard(generated, allocator, res, .runner, .runner_resource, @intCast(idx), 0, 0, event);
+        try appendEventHandlersForCard(generated, allocator, res, .runner, .runner_resource, @intCast(idx), 0, 0, event, payload);
     }
     for (generated.runner_rig_program.items, 0..) |prog, idx| {
-        try appendEventHandlersForCard(generated, allocator, prog, .runner, .runner_program, @intCast(idx), 0, 0, event);
+        try appendEventHandlersForCard(generated, allocator, prog, .runner, .runner_program, @intCast(idx), 0, 0, event, payload);
     }
     for (generated.corp_servers.items, 0..) |server, server_idx| {
         for (server.content.items, 0..) |card, card_idx| {
             if (!card.rezzed) continue;
-            try appendEventHandlersForCard(generated, allocator, card, .corp, .corp_server_content, @intCast(card_idx), @intCast(server_idx), 0, event);
+            try appendEventHandlersForCard(generated, allocator, card, .corp, .corp_server_content, @intCast(card_idx), @intCast(server_idx), 0, event, payload);
         }
         for (server.ices.items, 0..) |ice, ice_idx| {
             for (ice.hosted, 0..) |hosted, hosted_idx| {
-                try appendEventHandlersForCard(generated, allocator, hosted, .runner, .corp_ice_hosted, @intCast(hosted_idx), @intCast(server_idx), @intCast(ice_idx), event);
+                try appendEventHandlersForCard(generated, allocator, hosted, .runner, .corp_ice_hosted, @intCast(hosted_idx), @intCast(server_idx), @intCast(ice_idx), event, payload);
             }
         }
     }
 }
 
-/// Collect event handlers and immediately drain (for non-scoring event sites like addRunnerTag).
+/// Collect event handlers and immediately drain.
 pub fn fireEvent(generated: *Game, event: state.GameEvent) anyerror!bool {
-    try collectEventHandlers(generated, event);
+    try collectEventHandlers(generated, .{ .kind = event });
     return try drainPendingEffects(generated);
 }
 
@@ -3060,7 +3065,7 @@ fn applyStealAgendaChoice(
     if (tags_from_effects > 0) {
         _ = addRunnerTag(generated, @intCast(tags_from_effects)) catch {};
     }
-    try collectEventHandlers(generated, .agenda_stolen);
+    try collectEventHandlers(generated, .{ .kind = .agenda_stolen, .source_code = accessed.code });
 
     // On-steal agenda effects
     const pending_allocator = generated.backing_allocator;
@@ -3084,7 +3089,7 @@ fn applyStealAgendaChoice(
                 generated.systemMsg(.corp, 0, "Runner gains {d} tag{s}.", .{ amount, if (amount != 1) @as([]const u8, "s") else "" });
                 if (amount > 0) {
                     generated.turn_events.runner_gain_tag_count += 1;
-                    try collectEventHandlers(generated, .runner_gain_tag);
+                    try collectEventHandlers(generated, .{ .kind = .runner_gain_tag });
                 }
             },
             .none => {},
