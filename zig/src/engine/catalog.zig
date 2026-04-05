@@ -968,7 +968,14 @@ pub const CardSpec = struct {
     subroutines: []const state.SubroutineSpec = &.{},
     abilities: []const state.AbilitySpec = &.{},
     initial_credit_counters: u16 = 0,
-    on_install: ?*const fn (*state.EffectContext, *state.CardInstance) anyerror!void = null,
+    auto_take_credits: bool = false,
+    take_credits_amount: u16 = 0,
+    trash_on_empty: bool = false,
+    initial_virus_counters: u16 = 0,
+    initial_power_counters: u16 = 0,
+    draw_on_take: u8 = 0,
+    draw_on_empty: u8 = 0,
+    clicks_on_empty: u8 = 0,
     break_subroutine_count: u8 = 0,
     on_steal_fn: ?*const fn (*Game, state.CardInstance) anyerror!void = null,
     trash_cost: ?u16 = null,
@@ -1260,11 +1267,7 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Nico Campaign", .side = .corp, .code = 30037, .card_type = "Asset", .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 9, .auto_take_credits = true,
         .take_credits_amount = 3,
         .trash_on_empty = true,
-        .on_empty = &struct {
-            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                try drawCards(gameFromEffectContext(ctx), .corp, 1);
-            }
-        }.handle,
+        .draw_on_empty = 1,
     },
     .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .trash_cost = 3, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 15, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
@@ -2031,11 +2034,7 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Virus"},
         .cost = 1,
         .runner_install = .{ .kind = .program },
-        .on_install = &struct {
-            fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                card.virus_counter += 1;
-            }
-        }.handle,
+        .initial_virus_counters = 1,
         .abilities = &.{.{
             .cost = .{ .clicks = 1 },
             .on_use = &struct {
@@ -2297,11 +2296,7 @@ pub const all_cards = [_]CardSpec{
         },
     },
     // --- Phase 4: Trojans ---
-    .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .trojan_break_any = true, .on_install = &struct {
-        fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-            card.virus_counter += 1;
-        }
-    }.handle, .abilities = &.{.{
+    .{ .title = "Botulus", .side = .runner, .code = 30004, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .trojan_break_any = true, .initial_virus_counters = 1, .abilities = &.{.{
         .cost = .{ .virus_counters = 1 },
         .req = &struct {
             fn req(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
@@ -2334,11 +2329,7 @@ pub const all_cards = [_]CardSpec{
             }
         }.handle,
     }} },
-    .{ .title = "Tranquilizer", .side = .runner, .code = 30017, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .trojan_derez_threshold = 3, .on_install = &struct {
-        fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-            card.virus_counter += 1;
-        }
-    }.handle, .event_abilities = &.{.{
+    .{ .title = "Tranquilizer", .side = .runner, .code = 30017, .card_type = "Program", .subtypes = &.{ "Virus", "Trojan" }, .cost = 2, .runner_install = .{ .kind = .program }, .trojan_derez_threshold = 3, .initial_virus_counters = 1, .event_abilities = &.{.{
         .event = .runner_turn_begins,
         .handler = &struct {
             fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
@@ -3263,11 +3254,7 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Otto Campaign", .side = .corp, .code = 35040, .card_type = "Asset", .subtypes = &.{"Advertisement"}, .cost = 2, .trash_cost = 2, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 6, .auto_take_credits = true,
         .take_credits_amount = 2,
         .trash_on_empty = true,
-        .on_empty = &struct {
-            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                gameFromEffectContext(ctx).corp_click += 2;
-            }
-        }.handle,
+        .clicks_on_empty = 2,
     },
     .{ .title = "Byte!", .side = .corp, .code = 35050, .card_type = "Asset", .subtypes = &.{"Ambush"}, .cost = 0, .trash_cost = 0, .install = .{ .kind = .corp_remote_only } },
     .{ .title = "Ph\xe1\xba\xadt Gioan Baotixita", .side = .corp, .code = 35051, .card_type = "Asset", .subtypes = &.{"Executive"}, .cost = 1, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
@@ -3306,11 +3293,7 @@ pub const all_cards = [_]CardSpec{
     .{ .title = "Anthill Excavation Contract", .side = .corp, .code = 35072, .card_type = "Asset", .subtypes = &.{"Industrial"}, .cost = 3, .trash_cost = 1, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 8, .auto_take_credits = true,
         .take_credits_amount = 4,
         .trash_on_empty = true,
-        .on_take = &struct {
-            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                try drawCards(gameFromEffectContext(ctx), .corp, 1);
-            }
-        }.handle,
+        .draw_on_take = 1,
     },
     .{ .title = "Plutus", .side = .corp, .code = 35073, .card_type = "Asset", .subtypes = &.{"Deep Net"}, .cost = 0, .trash_cost = 3, .install = .{ .kind = .corp_remote_only } },
     // --- Elevation Upgrades ---
@@ -3785,14 +3768,27 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .runner_install = .{ .kind = .hardware, .mu_cost = 0 },
         .static_abilities = &.{.{ .kind = .mu, .value = 1 }},
-        .on_install = &struct {
-            fn install(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                const g = gameFromEffectContext(ctx);
-                const install_ctx = g.runner_install_context orelse return;
-                if (install_ctx.install_cost != 0 or g.runner_deck.items.len == 0) return;
-                try hostTopRunnerDeckCard(g, card);
-            }
-        }.install,
+        .event_abilities = &.{
+            .{
+                .event = .card_installed,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        const g = gameFromEffectContext(ctx);
+                        const install_ctx = g.runner_install_context orelse return;
+                        if (install_ctx.install_cost != 0 or g.runner_deck.items.len == 0) return;
+                        try hostTopRunnerDeckCard(g, card);
+                    }
+                }.handle,
+            },
+            .{
+                .event = .runner_end_turn,
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        try trashHostedRunnerCards(gameFromEffectContext(ctx), card);
+                    }
+                }.handle,
+            },
+        },
         .abilities = &.{.{
             .label_fn = &struct {
                 fn label(allocator: std.mem.Allocator, _: state.CardInstance) anyerror![]const u8 {
@@ -3810,14 +3806,6 @@ pub const all_cards = [_]CardSpec{
                     try beginRunnerHostedCardPrompt(g, card.instance_id, &blingOnChoice);
                 }
             }.use,
-        }},
-        .event_abilities = &.{.{
-            .event = .runner_end_turn,
-            .handler = &struct {
-                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                    try trashHostedRunnerCards(gameFromEffectContext(ctx), card);
-                }
-            }.handle,
         }},
     },
     .{
@@ -4176,11 +4164,7 @@ pub const all_cards = [_]CardSpec{
         .trash_access_self_trash = true,
         .trash_access_draw = 1,
     },
-    .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .on_install = &struct {
-        fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-            card.virus_counter += 2;
-        }
-    }.handle, .abilities = &.{ breakAbility(1), .{
+    .{ .title = "Hantu", .side = .runner, .code = 35008, .card_type = "Program", .subtypes = &.{ "Icebreaker", "Killer", "Virus" }, .cost = 3, .strength = 2, .runner_install = .{ .kind = .program }, .initial_virus_counters = 2, .abilities = &.{ breakAbility(1), .{
         .req = &struct {
             fn req(ctx: *const state.EffectContext, card: *const state.CardInstance) bool {
                 const g = gameFromConstEffectContext(ctx);
@@ -4266,11 +4250,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Program",
         .cost = 1,
         .runner_install = .{ .kind = .program },
-        .on_install = &struct {
-            fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
-                card.power_counter += 2;
-            }
-        }.handle,
+        .initial_power_counters = 2,
         .event_abilities = &.{.{
             .event = .successful_run_ends,
             .handler = &struct {

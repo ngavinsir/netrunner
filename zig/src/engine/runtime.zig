@@ -108,54 +108,6 @@ pub const fireEvent = game.fireEvent;
 pub const isAbilityUsedThisTurn = game.isAbilityUsedThisTurn;
 pub const markAbilityUsedThisTurn = game.markAbilityUsedThisTurn;
 
-pub const CardZone = enum(u8) {
-    identity,
-    runner_resource,
-    runner_program,
-    runner_hardware,
-    corp_server_content,
-    corp_ice_hosted,
-};
-
-pub const EventSource = struct {
-    code: u32,
-    event: state.GameEvent,
-    side: state.Side,
-    zone: CardZone,
-    ability_index: u8 = 0,
-    index: u16 = 0,
-    server_index: u16 = 0,
-    parent_index: u16 = 0,
-};
-
-pub const PendingEffect = union(enum) {
-    event_handler: EventSource,
-    card_effect: struct { card: state.CardInstance, event: state.GameEvent, ability_index: u8 },
-    finish_score: void,
-    finish_steal: struct { accessed: state.CardInstance, is_central: bool },
-    deferred_prompt: struct {
-        card: state.CardInstance,
-        on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
-        open_fn: *const fn (*game.Game, state.CardInstance, ?*const fn (*state.EffectContext, []const u8) anyerror!void) anyerror!bool,
-    },
-};
-
-const PendingAccessZone = enum(u8) {
-    corp_hand,
-    corp_deck,
-    corp_discard,
-    corp_server_content,
-};
-
-pub const PendingAccess = struct {
-    zone: PendingAccessZone,
-    card_index: u8,
-    server_index: usize = 0,
-};
-
-pub const RunnerInstallContext = struct {
-    install_cost: u16,
-};
 
 pub const SideSpec = struct {
     identity_code: u32,

@@ -62,11 +62,6 @@ pub const RunTargetKind = enum(u8) {
     rd_only,
 };
 
-pub const RunSuccessEffectKind = enum(u8) {
-    none,
-    draw_cards,
-};
-
 pub const InstallKind = enum(u8) {
     none,
     corp_remote_only,
@@ -159,7 +154,6 @@ pub const AbilitySpec = struct {
     once_per_turn: bool = false,
     is_play: bool = false, // play-from-hand ability (operation/event effect)
     flashback_extra_clicks: u8 = 0, // flashback: extra click cost to play from archives
-    flashback_gain_clicks: u8 = 0, // flashback: clicks gained after resolve
     // Encounter parameters (used by shared break/pump/bioroid handlers):
     credit_cost: u16 = 0,
     break_count: u8 = 1,
@@ -194,9 +188,6 @@ pub const StaticAbility = struct {
     req: ?*const fn (*const EffectContext, *const CardInstance, ?*const CardInstance) i16 = null,
 };
 
-pub const InstalledAbilityCallback = *const fn (*EffectContext, *CardInstance) anyerror!void;
-
-
 pub const GameEvent = enum(u8) {
     agenda_scored,
     agenda_stolen,
@@ -217,6 +208,8 @@ pub const GameEvent = enum(u8) {
     corp_install,
     runner_end_turn,
     ice_encountered,
+    server_approached,
+    card_installed,
 };
 
 pub const EventAbility = struct {
@@ -269,9 +262,11 @@ pub const CardInstance = struct {
     initial_credit_counters: u16 = 0,
     take_credits_amount: u16 = 0,
     trash_on_empty: bool = false,
-    on_install: ?InstalledAbilityCallback = null,
-    on_take: ?InstalledAbilityCallback = null,
-    on_empty: ?InstalledAbilityCallback = null,
+    initial_virus_counters: u16 = 0,
+    initial_power_counters: u16 = 0,
+    draw_on_take: u8 = 0,
+    draw_on_empty: u8 = 0,
+    clicks_on_empty: u8 = 0,
     click_draw_bonus: u8 = 0,
     auto_trash_at_credits: u8 = 0,
     draw_on_auto_trash: u8 = 0,
