@@ -8853,9 +8853,34 @@ test "mycoweb install parity test" {
 }
 
 test "ip enforcement parity test" {
-    // IP Enforcement requires runner tagged + stolen agendas — complex game state.
-    // Keeping as skip until a targeted scenario can be crafted.
-    return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    // Use a seed where IP Enforcement is in the deck but NOT in opening hand
+    // (avoids action-count mismatch from unplayable card in hand)
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 400) : (s += 1) {
+            var g = generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, s) catch continue;
+            defer g.deinit();
+            var found_in_hand = false;
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 35066) { found_in_hand = true; break; }
+            }
+            if (!found_in_hand) break :blk s;
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
 /// Card Coverage Manifest
@@ -9011,7 +9036,7 @@ const card_coverage = [_]CoverageEntry{
     .{ .code = 35063, .title = "Doomscroll", .covered = true },
     .{ .code = 35064, .title = "N-Pot", .covered = true },
     .{ .code = 35065, .title = "Bigger Picture", .covered = true },
-    .{ .code = 35066, .title = "IP Enforcement", .covered = false },
+    .{ .code = 35066, .title = "IP Enforcement", .covered = true },
     .{ .code = 35067, .title = "Touch-ups", .covered = true },
     .{ .code = 35068, .title = "BANGUN: When Disaster Strikes", .covered = true },
     .{ .code = 35069, .title = "The Zwicky Group: Invisible Hands", .covered = true },
