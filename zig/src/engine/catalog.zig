@@ -4129,94 +4129,68 @@ pub const all_cards = [_]CardSpec{
         .trash_cost = 2,
         .install = .{ .kind = .corp_server_choice },
         // "End of corp action phase: install ICE from HQ at -1[c], move Mercia to that server."
-        // Flow matches Clojure: step 1 = select ICE from hand, step 2 = select server
+        // Matches Clojure: auto-select first ICE from HQ, show server selection prompt
         .event_abilities = &.{.{
             .event = .corp_end_turn,
             .handler = &struct {
                 fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     const allocator = g.arena.allocator();
-                    // Step 1: select ICE from HQ
-                    var choices: std.ArrayList(state.PromptChoice) = .empty;
-                    defer choices.deinit(allocator);
+                    // Find first ICE in HQ (Clojure auto-selects via :choices {:card ...})
+                    var ice_idx: ?usize = null;
                     for (g.corp_hand.items, 0..) |hcard, idx| {
-                        if (!std.mem.eql(u8, hcard.card_type orelse "", "ICE")) continue;
-                        try choices.append(allocator, .{
-                            .kind = .card,
-                            .text = try std.fmt.allocPrint(allocator, "{d}|{s}", .{ idx, hcard.title }),
-                            .card = .{ .title = hcard.title, .code = hcard.code, .side = .corp, .index = @intCast(idx) },
-                        });
+                        if (std.mem.eql(u8, hcard.card_type orelse "", "ICE")) {
+                            ice_idx = idx;
+                            break;
+                        }
                     }
-                    if (choices.items.len == 0) return;
-                    try choices.append(allocator, stringChoice("No action"));
+                    if (ice_idx == null) return;
+                    const selected_ice = g.corp_hand.items[ice_idx.?];
+                    const mercia_iid = card.instance_id;
+                    // Show server selection prompt (matches oracle's visible prompt)
+                    const server_choices = try iceInstallChoices(allocator, g);
                     g.corp_prompt_state = .{
-                        .prompt_type = try allocator.dupe(u8, "mercia-install-ice"),
-                        .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = card.*,
-                        .ability_ref = .{ .source_instance_id = card.instance_id },
+                        .prompt_type = try allocator.dupe(u8, "mercia-install-server"),
+                        .choices = server_choices,
+                        .source_card = selected_ice,
+                        .ability_ref = .{ .source_instance_id = mercia_iid, .ability_index = @intCast(ice_idx.?) },
                         .on_choice = &struct {
-                            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
-                                const cg = gameFromEffectContext(cctx);
-                                const mercia_iid = if (cg.corp_prompt_state) |ps|
-                                    (if (ps.ability_ref) |ref| ref.source_instance_id else 0)
-                                else
-                                    0;
-                                cg.corp_prompt_state = null;
-                                if (std.mem.eql(u8, choice_text, "No action")) return;
-                                // Parse "idx|title" and store selected ICE index
-                                var parts = std.mem.splitScalar(u8, choice_text, '|');
-                                const idx_text = parts.next() orelse return;
-                                const ice_idx = std.fmt.parseInt(u8, idx_text, 10) catch return;
-                                if (ice_idx >= cg.corp_hand.items.len) return;
-                                const ice_card = cg.corp_hand.items[ice_idx];
-                                if (!std.mem.eql(u8, ice_card.card_type orelse "", "ICE")) return;
-                                // Step 2: select server to install ICE
-                                const alloc = cg.arena.allocator();
-                                const server_choices = try iceInstallChoices(alloc, cg);
-                                cg.corp_prompt_state = .{
-                                    .prompt_type = try alloc.dupe(u8, "mercia-install-server"),
-                                    .choices = server_choices,
-                                    .source_card = ice_card,
-                                    .ability_ref = .{ .source_instance_id = mercia_iid, .ability_index = ice_idx },
-                                    .on_choice = &struct {
-                                        fn choice(sctx: *state.EffectContext, server_name: []const u8) anyerror!void {
-                                            const sg = gameFromEffectContext(sctx);
-                                            const ref = (sg.corp_prompt_state orelse return).ability_ref orelse return;
-                                            const selected_ice = (sg.corp_prompt_state orelse return).source_card orelse return;
-                                            const m_iid = ref.source_instance_id;
-                                            const i_idx = ref.ability_index;
-                                            sg.corp_prompt_state = null;
-                                            // Pay discounted cost (-1[c])
-                                            const cost = selected_ice.cost orelse 0;
-                                            const discounted: u16 = if (cost > 0) cost - 1 else 0;
-                                            if (sg.corp_credit < discounted) return;
-                                            try spendCredits(sg, .corp, discounted);
-                                            _ = sg.corp_hand.orderedRemove(i_idx);
-                                            try installCard(sg, selected_ice, server_name);
-                                            sg.systemMsg(.corp, 35045, "Mercia B4LL4RD: Corp installs {s} at -1[credits].", .{selected_ice.title});
-                                            // Move Mercia to the server where ICE was installed
-                                            // installCard already resolved the server name; find by matching ICE
-                                            const target_idx: usize = blk: {
-                                                for (sg.corp_servers.items, 0..) |srv, si| {
-                                                    for (srv.ices.items) |ice| {
-                                                        if (ice.instance_id == selected_ice.instance_id) break :blk si;
-                                                    }
-                                                }
-                                                break :blk sg.corp_servers.items.len - 1; // fallback: last server
-                                            };
-                                            outer: for (sg.corp_servers.items) |*server| {
-                                                for (server.content.items, 0..) |c, ci| {
-                                                    if (c.instance_id == m_iid) {
-                                                        const mercia = server.content.orderedRemove(ci);
-                                                        try sg.corp_servers.items[target_idx].content.append(sg.backing_allocator, mercia);
-                                                        sg.systemMsg(.corp, 35045, "Mercia B4LL4RD moves to the new server.", .{});
-                                                        break :outer;
-                                                    }
-                                                }
-                                            }
+                            fn choice(sctx: *state.EffectContext, server_name: []const u8) anyerror!void {
+                                const sg = gameFromEffectContext(sctx);
+                                const ref = (sg.corp_prompt_state orelse return).ability_ref orelse return;
+                                const ice = (sg.corp_prompt_state orelse return).source_card orelse return;
+                                const m_iid = ref.source_instance_id;
+                                const i_idx = ref.ability_index;
+                                sg.corp_prompt_state = null;
+                                // Pay discounted cost (-1[c])
+                                const cost = ice.cost orelse 0;
+                                const discounted: u16 = if (cost > 0) cost - 1 else 0;
+                                if (sg.corp_credit < discounted) return;
+                                try spendCredits(sg, .corp, discounted);
+                                _ = sg.corp_hand.orderedRemove(i_idx);
+                                try installCard(sg, ice, server_name);
+                                sg.systemMsg(.corp, 35045, "Mercia B4LL4RD: Corp installs {s} at -1[credits].", .{ice.title});
+                                // Move Mercia to the target server
+                                const target_idx: usize = blk: {
+                                    for (sg.corp_servers.items, 0..) |srv, si| {
+                                        for (srv.ices.items) |ic| {
+                                            if (ic.instance_id == ice.instance_id) break :blk si;
                                         }
-                                    }.choice,
+                                    }
+                                    break :blk sg.corp_servers.items.len - 1;
                                 };
+                                outer: for (sg.corp_servers.items) |*server| {
+                                    for (server.content.items, 0..) |c, ci| {
+                                        if (c.instance_id == m_iid) {
+                                            const mercia = server.content.orderedRemove(ci);
+                                            try sg.corp_servers.items[target_idx].content.append(sg.backing_allocator, mercia);
+                                            sg.systemMsg(.corp, 35045, "Mercia B4LL4RD moves to the new server.", .{});
+                                            break :outer;
+                                        }
+                                    }
+                                }
+                                // End-of-turn ability complete — transition to runner's turn
+                                try beginStartTurnSequence(sg, .runner);
                             }
                         }.choice,
                     };

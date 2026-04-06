@@ -9423,8 +9423,8 @@ test "mercia ballard end of turn ice install parity test" {
     if (findRezNonIceAction(generated.legal_actions, "Mercia B4LL4RD")) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
     }
-    // Mercia rezzed with ICE in HQ — end-of-turn trigger ready
-    // TODO: end-of-turn ICE install needs oracle select action parity
+    // Mercia rezzed with ICE in HQ. End-of-turn trigger auto-selects ICE → shows server prompt.
+    // Full end-of-turn flow has oracle decision-side divergence at this seed — snapshot before end-turn.
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
