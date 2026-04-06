@@ -733,7 +733,12 @@
         (when (some? card-title)
           (or (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :resource]))
               (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :program]))
-              (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :hardware])))))))
+              (some #(when (= card-title (:title %)) %) (get-in @state [side :rig :hardware]))
+              ;; Search corp server content (assets/upgrades)
+              (some (fn [server]
+                      (some #(when (= card-title (:title %)) (card/get-card state %))
+                            (:content server)))
+                    (vals (get-in @state [:corp :servers]))))))))
 
 (defn- require-card!
   [card action]

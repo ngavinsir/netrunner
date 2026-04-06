@@ -9529,7 +9529,7 @@ test "aggressive trendsetting score parity test" {
 
 test "humanoid resources use ability parity test" {
     // Humanoid Resources: 3-click ability: gain 4cr, draw 3, install up to 2, play 1 op
-    // Exercises: install + rez (ability activation has oracle translation gap — engine TODO)
+    // Setup: install + rez on turn 1, use ability on turn 2
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.elevation_hb,
@@ -9545,13 +9545,22 @@ test "humanoid resources use ability parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Corp turn: install Humanoid Resources in remote + rez it
+    // Corp turn 1: install Humanoid Resources in remote + rez it
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Humanoid Resources"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     if (findRezNonIceAction(generated.legal_actions, "Humanoid Resources")) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
     }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner turn: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Corp turn 2: use Humanoid Resources 3-click ability (gain 4cr, draw 3, install 2, play op)
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Humanoid Resources"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
