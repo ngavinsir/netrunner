@@ -8014,7 +8014,7 @@ fn isRunnerCardPlayableFromHand(
     return credit >= (card.cost orelse 0);
 }
 
-fn iceInstallChoices(
+pub fn iceInstallChoices(
     allocator: std.mem.Allocator,
     game: *const Game,
 ) ![]const state.PromptChoice {

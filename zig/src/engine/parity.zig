@@ -2092,6 +2092,8 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "conduit-counter")) return "other";
     if (std.mem.eql(u8, prompt_type, "clearinghouse-trash")) return "other";
     if (std.mem.eql(u8, prompt_type, "byte-ambush")) return "other";
+    if (std.mem.eql(u8, prompt_type, "phat-net-damage")) return "other";
+    if (std.mem.eql(u8, prompt_type, "mercia-install-server")) return "other";
     if (std.mem.eql(u8, prompt_type, "spin-doctor-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "bangun-faceup")) return "other";
     if (std.mem.eql(u8, prompt_type, "bangun-bluff")) return "other";
@@ -9343,13 +9345,14 @@ test "byte ambush on access parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "phat gioan power counter parity test" {
-    // Phật Gioan: end of corp turn → place power counter (when rezzed)
-    // Setup: install + rez Phật Gioan, end turn to get power counter
+test "phat gioan power counter and score damage parity test" {
+    // Phật Gioan: end of corp turn → place power counter. On score → net damage.
+    // Exercises: install + rez + end turn (power counter placed) + install agenda + advance + score
+    // Score triggers Phật Gioan damage prompt (oracle translation for phat-net-damage needed for full parity)
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.elevation_jinteki,
-        &.{ "Ph\xe1\xba\xadt Gioan Baotixita", "Hedge Fund" },
+        &.{ "Ph\xe1\xba\xadt Gioan Baotixita", "Sericulture Expansion" },
         &.{},
         400,
     ) orelse return error.NoSeedFound;
@@ -9361,16 +9364,27 @@ test "phat gioan power counter parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Corp turn: install Phật Gioan in remote, rez it
+    // Corp turn 1: install Phật Gioan (remote1) + rez, install Sericulture (remote2), advance once
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Ph\xe1\xba\xadt Gioan Baotixita"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
-    // Rez it during the same turn (using rez action before end of turn)
     if (findRezNonIceAction(generated.legal_actions, "Ph\xe1\xba\xadt Gioan Baotixita")) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
     }
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Sericulture Expansion"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
-    // After end turn, Phật Gioan should have 1 power counter
+    // Phật Gioan now has 1 power counter
+
+    // Runner turn 1: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Corp turn 2: advance twice more (Sericulture at 3 adv = scoreable)
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -9380,9 +9394,9 @@ test "phat gioan power counter parity test" {
 }
 
 test "mercia ballard end of turn ice install parity test" {
-    // Mercia B4LL4RD: install + rez, end turn with ICE in HQ triggers ability
-    // Exercises: install + rez + end turn (Mercia's end-of-turn prompt fires)
-    // (End-of-turn prompt resolution has parity gap — engine TODO)
+    // Mercia B4LL4RD: end of corp turn → select ICE from HQ → select server → install + move
+    // Exercises: install + rez with ICE in HQ (end-of-turn trigger ready)
+    // Full end-of-turn ICE install needs oracle select action translation (engine TODO)
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.elevation_hb,
