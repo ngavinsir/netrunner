@@ -48,6 +48,7 @@ const hostedChoiceIndex = runtime.hostedChoiceIndex;
 const hostRandomHqCard = runtime.hostRandomHqCard;
 const hostTopRunnerDeckCard = runtime.hostTopRunnerDeckCard;
 const installCard = runtime.installCard;
+const corpInstallIce = game_engine.corpInstallIce;
 const iceInstallChoices = game_engine.iceInstallChoices;
 const installChoicesForCard = runtime.installChoicesForCard;
 const installCorpCardFromHand = runtime.installCorpCardFromHand;
@@ -4162,10 +4163,8 @@ pub const all_cards = [_]CardSpec{
                                 const m_iid = ref.source_instance_id;
                                 const i_idx = ref.ability_index;
                                 sg.corp_prompt_state = null;
-                                // Install at -1[c] cost (Clojure corp-install handles payment)
-                                // The oracle shows no credit charge, matching Clojure's async install flow
-                                _ = sg.corp_hand.orderedRemove(i_idx);
-                                try installCard(sg, ice, server_name);
+                                // Install ICE at -1[c] cost via generic corp-install cost model
+                                try corpInstallIce(sg, i_idx, server_name, -1);
                                 sg.systemMsg(.corp, 35045, "Mercia B4LL4RD: Corp installs {s} at -1[credits].", .{ice.title});
                                 // Move Mercia to the target server
                                 const target_idx: usize = blk: {

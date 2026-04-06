@@ -8255,6 +8255,48 @@ pub fn centralNotRunThisTurnChoices(
     return choices;
 }
 
+/// Corp install ICE matching Clojure's cost model:
+/// cost = max(0, card_cost + existing_ice_count_at_server + cost_bonus)
+/// Removes card from HQ, pays credits, installs ICE at server.
+pub fn corpInstallIce(
+    game: *Game,
+    hand_index: u8,
+    server_name: []const u8,
+    cost_bonus: i16,
+) !void {
+    if (hand_index >= game.corp_hand.items.len) return error.InvalidCardIndex;
+    const card = game.corp_hand.items[hand_index];
+    const card_type = card.card_type orelse return error.MissingCardType;
+    if (!std.mem.eql(u8, card_type, "ICE")) return error.UnsupportedCardType;
+
+    // Calculate ice install cost: card_cost + existing_ice_at_server + cost_bonus
+    const base_cost: i16 = @intCast(card.cost orelse 0);
+    const server_index: ?usize = if (std.mem.eql(u8, server_name, "New remote"))
+        null
+    else blk: {
+        const idx = try findServerIndexByName(game.corp_servers.items, resolveServerName(server_name));
+        break :blk idx;
+    };
+    const existing_ice: i16 = if (server_index) |si|
+        @intCast(game.corp_servers.items[si].ices.items.len)
+    else
+        0;
+    const total_cost: u16 = @intCast(@max(0, base_cost + existing_ice + cost_bonus));
+
+    if (game.corp_credit < total_cost) return error.InsufficientCredits;
+    try spendCredits(game, .corp, total_cost);
+    const ice_card = game.corp_hand.orderedRemove(hand_index);
+    try installCard(game, ice_card, server_name);
+}
+
+fn resolveServerName(display_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, display_name, "HQ")) return "hq";
+    if (std.mem.eql(u8, display_name, "R&D")) return "rnd";
+    if (std.mem.eql(u8, display_name, "Archives")) return "archives";
+    // "Server N" → "remoteN"
+    return display_name;
+}
+
 pub fn installCard(
     game: *Game,
     card: state.CardInstance,
