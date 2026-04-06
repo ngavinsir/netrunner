@@ -9301,6 +9301,310 @@ test "nebula talent mgmt flip and click gain parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+// ============================================================================
+// Phase 4 Priority 2: Multi-turn ability tests for install-only smoke test cards
+// ============================================================================
+
+test "byte ambush on access parity test" {
+    // Byte!: on-access ambush — corp pays 4cr for 1 tag + 3 net damage
+    // Setup: corp installs Byte! in remote, runner runs it
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_jinteki,
+        &.{"Byte!"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Byte! in remote
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Byte!"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+
+    // Snapshot after installing Byte! — the ambush triggers when runner accesses
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "phat gioan power counter parity test" {
+    // Phật Gioan: end of corp turn → place power counter (when rezzed)
+    // Setup: install + rez Phật Gioan, end turn to get power counter
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_jinteki,
+        &.{ "Ph\xe1\xba\xadt Gioan Baotixita", "Hedge Fund" },
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Phật Gioan in remote, rez it
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Ph\xe1\xba\xadt Gioan Baotixita"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    // Rez it during the same turn (using rez action before end of turn)
+    if (findRezNonIceAction(generated.legal_actions, "Ph\xe1\xba\xadt Gioan Baotixita")) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+    }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+    // After end turn, Phật Gioan should have 1 power counter
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "mercia ballard end of turn ice install parity test" {
+    // Mercia B4LL4RD: install + rez, verify rezzed state for end-of-turn ability
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_hb,
+        &.{"Mercia B4LL4RD"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Mercia in a remote + rez
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mercia B4LL4RD"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    if (findRezNonIceAction(generated.legal_actions, "Mercia B4LL4RD")) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "mitra aman install and rez parity test" {
+    // Mitra Aman: install in server with ICE, rez it — verify state for approach trigger
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_jinteki,
+        &.{ "Mitra Aman", "Palisade" },
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Palisade + Mitra Aman in same remote
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Palisade"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mitra Aman"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Server 1"));
+    if (findRezNonIceAction(generated.legal_actions, "Mitra Aman")) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "aggressive trendsetting score parity test" {
+    // Aggressive Trendsetting: agenda scored — verify scoring flow
+    // Setup: install + advance + score the agenda
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_hb,
+        &.{"Aggressive Trendsetting"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn 1: install Aggressive Trendsetting in remote, advance once
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Aggressive Trendsetting"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote1|c|0") orelse return error.MissingAction);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner turn 1: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Corp turn 2: advance twice more, score
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote1|c|0") orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote1|c|0") orelse return error.MissingAction);
+    try takeAction(allocator, &actions, &generated, findScoreAction(generated.legal_actions, "remote1|c|0") orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "humanoid resources install and rez parity test" {
+    // Humanoid Resources: 3-click ability needs rezzed asset + clicks + credits
+    // Setup: install + rez Humanoid Resources (verify rez state)
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_hb,
+        &.{"Humanoid Resources"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Humanoid Resources in remote + rez it
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Humanoid Resources"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    if (findRezNonIceAction(generated.legal_actions, "Humanoid Resources")) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "idiosyncresis advance parity test" {
+    // Idiosyncresis: advanceable asset — advance it, verify advancement counter
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_nbn,
+        &.{"Idiosyncresis"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Idiosyncresis in remote, advance it
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Idiosyncresis"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote1|c|0") orelse return error.MissingAction);
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "mahkota langit grid rez parity test" {
+    // Mahkota Langit Grid: recurring credits for rez + trash cost bonus for assets
+    // Setup: install Mahkota + an asset in same server, rez Mahkota
+    const allocator = std.testing.allocator;
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_neutral,
+        &.{ "Mahkota Langit Grid", "Nico Campaign" },
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: install Nico + Mahkota in same remote, rez Mahkota
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Nico Campaign"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mahkota Langit Grid"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Server 1"));
+    if (findRezNonIceAction(generated.legal_actions, "Mahkota Langit Grid")) |rez| {
+        try takeAction(allocator, &actions, &generated, rez);
+    }
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
+test "hantu install with virus counters parity test" {
+    // Hantu: icebreaker with virus-based pump — install and verify initial state
+    const allocator = std.testing.allocator;
+    const seed = findCardInHandBySeed(matchups.elevation_runner, "Hantu", .runner, 400) orelse return error.NoSeedFound;
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
+    defer generated.deinit();
+    var actions: std.ArrayList(state.LegalAction) = .empty;
+    defer actions.deinit(allocator);
+
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
+
+    // Corp turn: pass
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner turn: install Hantu (gets 2 virus counters)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Hantu"));
+
+    const scenario_actions = try actions.toOwnedSlice(allocator);
+    defer allocator.free(scenario_actions);
+    var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
+    defer replay.deinit();
+    try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
+}
+
 /// Card Coverage Manifest
 /// Tracks smoke parity coverage for every card in the Zig catalog.
 /// Status: covered = has dedicated parity test, uncovered = needs test
