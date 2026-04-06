@@ -552,6 +552,9 @@ fn expectOptionalString(expected: ?[]const u8, actual: ?[]const u8) !void {
 
 fn normalizePromptType(prompt_type: ?[]const u8) ?[]const u8 {
     const text = prompt_type orelse return null;
+    // "waiting" prompts are UI-only in Clojure (shown to the other player while one side has a prompt).
+    // The Zig engine doesn't model these — treat them as null for comparison.
+    if (std.mem.eql(u8, text, "waiting")) return null;
     if (std.mem.eql(u8, text, "install-destination")) return "other";
     if (std.mem.eql(u8, text, "access-choice")) return "other";
     if (std.mem.eql(u8, text, "hq-access")) return "other";
@@ -2144,12 +2147,12 @@ fn expectSnapshotMatches(expected: state.GameSnapshot, actual: state.GameSnapsho
     try std.testing.expectEqual(expected.state.runner.keep, actual.state.runner.keep);
     try std.testing.expectEqual(expected.state.rng_seed.?, actual.state.rng_seed.?);
     try expectOptionalString(
-        if (expected.state.corp.prompt_state) |prompt| prompt.prompt_type else null,
-        if (actual.state.corp.prompt_state) |prompt| normalizePromptTypeForComparison(prompt.prompt_type) else null,
+        normalizePromptType(if (expected.state.corp.prompt_state) |prompt| prompt.prompt_type else null),
+        normalizePromptType(if (actual.state.corp.prompt_state) |prompt| normalizePromptTypeForComparison(prompt.prompt_type) else null),
     );
     try expectOptionalString(
-        if (expected.state.runner.prompt_state) |prompt| prompt.prompt_type else null,
-        if (actual.state.runner.prompt_state) |prompt| normalizePromptTypeForComparison(prompt.prompt_type) else null,
+        normalizePromptType(if (expected.state.runner.prompt_state) |prompt| prompt.prompt_type else null),
+        normalizePromptType(if (actual.state.runner.prompt_state) |prompt| normalizePromptTypeForComparison(prompt.prompt_type) else null),
     );
     try expectLiveActions(expected.legal_actions, actual.legal_actions);
     try expectServers(expected.state.corp.servers, actual.state.corp.servers);
@@ -9385,9 +9388,9 @@ test "phat gioan power counter and score damage parity test" {
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
-    // Sericulture now at 3 adv (scoreable). Score triggers Phật Gioan damage.
-    // Score action diverges in prompt handling — snapshot before score to verify multi-turn advance.
-    // TODO: fix score + Phat Gioan damage prompt parity
+    // Score → Phật Gioan damage prompt fires (1 counter: "Do 1 net damage" + "...: Do 2 net damage")
+    // Snapshot WITH prompt open — exercises full score + damage prompt generation
+    try takeAction(allocator, &actions, &generated, findScoreAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);

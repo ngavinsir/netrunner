@@ -5654,9 +5654,10 @@ pub fn beginPhatGioanDamagePrompt(generated: *Game, card: *state.CardInstance) !
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
     const counters = card.power_counter;
-    // Damage 1: always available (no counter cost), up to 3
+    // Damage N costs (N-1) counters: damage 1 = free, damage 2 = 1 counter, damage 3 = 2 counters
+    // Max damage = min(counters + 1, 3)
     var i: u8 = 1;
-    while (i <= @min(counters, 3)) : (i += 1) {
+    while (i <= @min(counters + 1, 3)) : (i += 1) {
         // Clojure: damage 1 = "Do 1 net damage" (free), damage N>1 = "Hosted power counter[, ...]: Do N net damage"
         if (i == 1) {
             try choices.append(allocator, stringChoice(try std.fmt.allocPrint(allocator, "Do {d} net damage", .{i})));
