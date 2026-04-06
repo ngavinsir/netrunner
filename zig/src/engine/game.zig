@@ -34,6 +34,7 @@ pub const EventSource = struct {
     server_index: u16 = 0,
     parent_index: u16 = 0,
     payload: ?state.EffectContext.EventPayload = null,
+    priority: u16 = 10,
 };
 
 pub const PendingEffect = union(enum) {
@@ -1521,42 +1522,14 @@ pub fn applyStartTurn(
             generated.turn_events = .{};
             resetInstalledAbilityUsage(generated);
 
-            // Start-of-turn: take 1 credit from each card with place_credits ability and counters
-            for (generated.runner_rig_resources.items) |*card| {
-                if (card.place_credits_per_turn and card.credit_counter > 0) {
-                    card.credit_counter -= 1;
-                    generated.runner_credit += 1;
-                    generated.systemMsg(.runner, card.code orelse 0, "Runner gains 1 [credit] from {s}.", .{card.title});
-                }
-            }
+            // Runner start-of-turn auto_take_credits and place_credits_per_turn removed:
+            // now handled via event_abilities on individual cards (Open Market, Smartware Distributor)
+            // with proper priority sorting through the event system.
 
-            // Start-of-turn: auto-take credits from loaded resources (Open Market)
-            {
-                var ri: usize = 0;
-                while (ri < generated.runner_rig_resources.items.len) {
-                    var card = &generated.runner_rig_resources.items[ri];
-                    if (card.auto_take_credits and card.credit_counter > 0) {
-                        const take = @min(card.credit_counter, card.take_credits_amount);
-                        card.credit_counter -= take;
-                        generated.runner_credit += take;
-                        generated.systemMsg(.runner, card.code orelse 0, "Runner takes {d} [credit{s}] from {s}.", .{
-                            take, if (take != 1) "s" else "", card.title,
-                        });
-                        if (card.trash_on_empty and card.credit_counter == 0) {
-                            if (card.draw_on_empty > 0) try drawCards(generated, .runner, card.draw_on_empty);
-                            if (card.clicks_on_empty > 0) generated.runner_click += card.clicks_on_empty;
-                            const trashed = generated.runner_rig_resources.orderedRemove(ri);
-                            try appendDiscardCard(generated, .runner, trashed);
-                            continue;
-                        }
-                    }
-                    ri += 1;
-                }
-            }
             generated.active_player = .runner;
             generated.end_turn = false;
 
-            // Fire runner_turn_begins event (MuslihaT: peek at top card)
+            // Fire runner_turn_begins event (MuslihaT, Open Market, Smartware Distributor)
             if (try fireEvent(generated, .runner_turn_begins)) return;
 
             generated.decision_side = .runner;
@@ -2310,7 +2283,7 @@ pub fn addAdvancementCounter(
     return card.*;
 }
 
-fn removeServerIfEmpty(
+pub fn removeServerIfEmpty(
     generated: *Game,
     server_index: usize,
 ) !void {
@@ -2501,8 +2474,6 @@ pub fn findRunnerResourceIndex(generated: *const Game, code: u32) ?usize {
 }
 
 fn appendEventHandlersForCard(
-    generated: *Game,
-    allocator: std.mem.Allocator,
     card: state.CardInstance,
     side: state.Side,
     zone: CardZone,
@@ -2511,11 +2482,13 @@ fn appendEventHandlersForCard(
     parent_index: u16,
     event: state.GameEvent,
     payload: state.EffectContext.EventPayload,
+    handlers: *std.ArrayListUnmanaged(EventSource),
+    allocator: std.mem.Allocator,
 ) !void {
     if (card.code == null) return;
     for (card.event_abilities, 0..) |ability, ability_index| {
         if (ability.event != event) continue;
-        try generated.pending_effects.append(allocator, .{ .event_handler = .{
+        try handlers.append(allocator, .{
             .code = card.code.?,
             .event = event,
             .side = side,
@@ -2525,7 +2498,8 @@ fn appendEventHandlersForCard(
             .server_index = server_index,
             .parent_index = parent_index,
             .payload = payload,
-        } });
+            .priority = ability.automatic_priority,
+        });
     }
 }
 
@@ -2647,44 +2621,67 @@ pub fn hasActivePrompt(generated: *const Game) bool {
     return false;
 }
 
+/// Compare event handlers: active player first, then priority ascending.
+fn cmpEventHandler(active_player: state.Side, a: EventSource, b: EventSource) bool {
+    // Active player first
+    const a_active: u1 = if (a.side == active_player) 0 else 1;
+    const b_active: u1 = if (b.side == active_player) 0 else 1;
+    if (a_active != b_active) return a_active < b_active;
+    // Then by priority ascending (lower fires first)
+    return a.priority < b.priority;
+}
+
 /// Collect all matching event handlers into the pending effects queue.
+/// Sorts by: active player first, then automatic_priority ascending.
 /// Does NOT drain — caller decides when to drain.
 pub fn collectEventHandlers(generated: *Game, payload: state.EffectContext.EventPayload) !void {
     const allocator = generated.backing_allocator;
     const event = payload.kind;
 
-    try appendEventHandlersForCard(generated, allocator, generated.corp_identity, .corp, .identity, 0, 0, 0, event, payload);
-    try appendEventHandlersForCard(generated, allocator, generated.runner_identity, .runner, .identity, 0, 0, 0, event, payload);
+    var handlers: std.ArrayListUnmanaged(EventSource) = .empty;
+    defer handlers.deinit(allocator);
+
+    try appendEventHandlersForCard(generated.corp_identity, .corp, .identity, 0, 0, 0, event, payload, &handlers, allocator);
+    try appendEventHandlersForCard(generated.runner_identity, .runner, .identity, 0, 0, 0, event, payload, &handlers, allocator);
 
     for (generated.runner_rig_hardware.items, 0..) |hw, idx| {
-        try appendEventHandlersForCard(generated, allocator, hw, .runner, .runner_hardware, @intCast(idx), 0, 0, event, payload);
+        try appendEventHandlersForCard(hw, .runner, .runner_hardware, @intCast(idx), 0, 0, event, payload, &handlers, allocator);
     }
     for (generated.runner_rig_resources.items, 0..) |res, idx| {
-        try appendEventHandlersForCard(generated, allocator, res, .runner, .runner_resource, @intCast(idx), 0, 0, event, payload);
+        try appendEventHandlersForCard(res, .runner, .runner_resource, @intCast(idx), 0, 0, event, payload, &handlers, allocator);
     }
     for (generated.runner_rig_program.items, 0..) |prog, idx| {
-        try appendEventHandlersForCard(generated, allocator, prog, .runner, .runner_program, @intCast(idx), 0, 0, event, payload);
+        try appendEventHandlersForCard(prog, .runner, .runner_program, @intCast(idx), 0, 0, event, payload, &handlers, allocator);
     }
     for (generated.corp_servers.items, 0..) |server, server_idx| {
         for (server.content.items, 0..) |card, card_idx| {
             if (!card.rezzed) continue;
-            try appendEventHandlersForCard(generated, allocator, card, .corp, .corp_server_content, @intCast(card_idx), @intCast(server_idx), 0, event, payload);
+            try appendEventHandlersForCard(card, .corp, .corp_server_content, @intCast(card_idx), @intCast(server_idx), 0, event, payload, &handlers, allocator);
         }
         for (server.ices.items, 0..) |ice, ice_idx| {
             // Rezzed ice can have event abilities (e.g., Funhouse on-encounter)
             if (ice.rezzed) {
-                try appendEventHandlersForCard(generated, allocator, ice, .corp, .corp_server_content, @intCast(ice_idx), @intCast(server_idx), 0, event, payload);
+                try appendEventHandlersForCard(ice, .corp, .corp_server_content, @intCast(ice_idx), @intCast(server_idx), 0, event, payload, &handlers, allocator);
             }
             for (ice.hosted, 0..) |hosted, hosted_idx| {
-                try appendEventHandlersForCard(generated, allocator, hosted, .runner, .corp_ice_hosted, @intCast(hosted_idx), @intCast(server_idx), @intCast(ice_idx), event, payload);
+                try appendEventHandlersForCard(hosted, .runner, .corp_ice_hosted, @intCast(hosted_idx), @intCast(server_idx), @intCast(ice_idx), event, payload, &handlers, allocator);
             }
         }
     }
     // Corp scored agendas — skip agenda_scored/agenda_stolen (those fire through card_effect separately)
     if (event != .agenda_scored and event != .agenda_stolen) {
         for (generated.corp_scored.items, 0..) |card, idx| {
-            try appendEventHandlersForCard(generated, allocator, card, .corp, .corp_scored, @intCast(idx), 0, 0, event, payload);
+            try appendEventHandlersForCard(card, .corp, .corp_scored, @intCast(idx), 0, 0, event, payload, &handlers, allocator);
         }
+    }
+
+    // Sort: active player first, then priority ascending
+    const active_player = generated.active_player;
+    std.mem.sort(EventSource, handlers.items, active_player, cmpEventHandler);
+
+    // Append sorted handlers to pending effects
+    for (handlers.items) |h| {
+        try generated.pending_effects.append(allocator, .{ .event_handler = h });
     }
 }
 
@@ -5365,7 +5362,6 @@ pub fn applySuccessfulRunEffects(generated: *Game) !void {
 fn completeRunWithoutAccess(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.runner_successful_run_this_turn = true;
-    try applySourceCardOnSuccessfulRun(generated);
     // Clear prompts before firing events so we can detect if an event sets a new one
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -5388,7 +5384,6 @@ fn completeRunWithoutAccess(generated: *Game) !void {
 fn completeRunAfterAccess(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.runner_successful_run_this_turn = true;
-    try applySourceCardOnSuccessfulRun(generated);
     // Clear prompts before firing events so we can detect if an event sets a new one
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -5411,7 +5406,6 @@ fn completeRunAfterAccess(generated: *Game) !void {
 pub fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
     const allocator = generated.arena.allocator();
     generated.runner_successful_run_this_turn = true;
-    try applySourceCardOnSuccessfulRun(generated);
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
     try applyIdentityOnSuccessfulRun(generated);
@@ -7575,41 +7569,8 @@ fn resetInstalledAbilityUsage(game: *Game) void {
     }
 }
 
-fn applyCorpStartOfTurnAbilities(game: *Game) !void {
-    // Nico Campaign and similar: auto-take credits at start of corp turn
-    var server_index: usize = 0;
-    while (server_index < game.corp_servers.items.len) {
-        var removed_server = false;
-        var i: usize = 0;
-        while (i < game.corp_servers.items[server_index].content.items.len) {
-            var card = &game.corp_servers.items[server_index].content.items[i];
-            if (card.auto_take_credits and card.rezzed and card.credit_counter > 0) {
-                const take = @min(card.credit_counter, card.take_credits_amount);
-                card.credit_counter -= take;
-                game.corp_credit += take;
-                if (card.draw_on_take > 0) {
-                    try drawCards(game, .corp, card.draw_on_take);
-                }
-
-                if (card.trash_on_empty and card.credit_counter == 0) {
-                    if (card.draw_on_empty > 0) try drawCards(game, .corp, card.draw_on_empty);
-                    if (card.clicks_on_empty > 0) game.corp_click += card.clicks_on_empty;
-                    const trashed = game.corp_servers.items[server_index].content.orderedRemove(i);
-                    try appendDiscardCard(game, .corp, trashed);
-                    const server_count = game.corp_servers.items.len;
-                    try removeServerIfEmpty(game, server_index);
-                    if (game.corp_servers.items.len < server_count) {
-                        removed_server = true;
-                        break;
-                    }
-                    continue; // Don't increment i
-                }
-            }
-            i += 1;
-        }
-        if (!removed_server) server_index += 1;
-    }
-}
+// Corp start-of-turn auto_take_credits removed: now handled via event_abilities on individual cards
+// (Nico Campaign, Otto Campaign, Anthill Excavation Contract) with proper priority sorting.
 
 fn endCorpPhase12(generated: *Game) !void {
     const allocator = generated.arena.allocator();
@@ -7632,10 +7593,6 @@ fn endCorpPhase12(generated: *Game) !void {
     clearInstalledThisTurnFlags(generated);
 
     _ = try fireEvent(generated, .corp_turn_begins);
-    if (generated.game_over) return;
-
-    // Auto-trigger start-of-turn abilities (Nico Campaign)
-    try applyCorpStartOfTurnAbilities(generated);
     if (generated.game_over) return;
 
     // If a corp prompt was opened during start-of-turn events (e.g., AU Co. peek, Plutus auto-play),
@@ -7661,26 +7618,8 @@ fn clearInstalledThisTurnFlags(game: *Game) void {
     }
 }
 
-fn applySourceCardOnSuccessfulRun(game: *Game) !void {
-    const run = game.run orelse return;
-    const source_id = run.source_instance_id orelse return;
-
-    // Find the source card in runner's rig by instance_id
-    for (game.runner_rig_resources.items, 0..) |*card, idx| {
-        if (card.instance_id == source_id and card.credit_counter > 0) {
-            const take = @min(card.credit_counter, card.take_credits_amount);
-            card.credit_counter -= take;
-            game.runner_credit += take;
-
-            // Trash card if empty and trash_on_empty
-            if (card.trash_on_empty and card.credit_counter == 0) {
-                const trashed = game.runner_rig_resources.orderedRemove(idx);
-                try appendDiscardCard(game, .runner, trashed);
-            }
-            return;
-        }
-    }
-}
+// applySourceCardOnSuccessfulRun removed: Red Team now uses event_abilities
+// with proper priority sorting through the event system.
 
 fn runnerRdAccessBonus(generated: *const Game) u8 {
     return clampStaticTotal(sumStaticEffects(generated, .runner, .rd_access, null));

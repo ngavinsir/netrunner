@@ -101,6 +101,7 @@ const fireEventWith = runtime.fireEventWith;
 const isAbilityUsedThisTurn = runtime.isAbilityUsedThisTurn;
 const markAbilityUsedThisTurn = runtime.markAbilityUsedThisTurn;
 const trashCorpServerCardByInstanceId = game_engine.trashCorpServerCardByInstanceId;
+const removeServerIfEmpty = game_engine.removeServerIfEmpty;
 const trashRunnerRigCardByInstanceId = game_engine.trashRunnerRigCardByInstanceId;
 const beginNetDamageOnAccessPrompt = game_engine.beginNetDamageOnAccessPrompt;
 const beginByteAmbushPrompt = game_engine.beginByteAmbushPrompt;
@@ -498,6 +499,7 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Identity",
         .event_abilities = &.{.{
             .event = .corp_end_turn,
+            .automatic_priority = state.Priority.gain_credits,
             .handler = &struct {
                 fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
@@ -752,11 +754,30 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .trash_cost = 2,
         .install = .{ .kind = .corp_remote_only },
-        .auto_take_credits = true,
         .initial_credit_counters = 9,
         .take_credits_amount = 3,
         .trash_on_empty = true,
         .draw_on_empty = 1,
+        .event_abilities = &.{.{
+            .event = .corp_turn_begins,
+            .automatic_priority = state.Priority.draw_cards,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (card.credit_counter == 0) return;
+                    const g = gameFromEffectContext(ctx);
+                    const take = @min(card.credit_counter, card.take_credits_amount);
+                    card.credit_counter -= take;
+                    g.corp_credit += take;
+                    g.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to take {d} [credit{s}].", .{
+                        card.title, take, if (take != 1) "s" else "",
+                    });
+                    if (card.trash_on_empty and card.credit_counter == 0) {
+                        if (card.draw_on_empty > 0) try drawCards(g, .corp, card.draw_on_empty);
+                        try trashCorpServerCardByInstanceId(g, card.instance_id);
+                    }
+                }
+            }.handle,
+        }},
     },
     .{ .title = "Regolith Mining License", .side = .corp, .code = 30071, .card_type = "Asset", .cost = 2, .trash_cost = 3, .install = .{ .kind = .corp_remote_only }, .initial_credit_counters = 15, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
@@ -1287,8 +1308,8 @@ pub const all_cards = [_]CardSpec{
         .cost = 5,
         .runner_install = .{ .kind = .resource },
         .initial_credit_counters = 12,
-        .take_credits_amount = 3, // read by applySourceCardOnSuccessfulRun
-        .trash_on_empty = true, // read by applySourceCardOnSuccessfulRun
+        .take_credits_amount = 3,
+        .trash_on_empty = true,
         .abilities = &.{.{
             .cost = .{ .clicks = 1 },
             .label = "Make a run on a central server",
@@ -1313,14 +1334,46 @@ pub const all_cards = [_]CardSpec{
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
                 }
             }.handle,
+        }}, .event_abilities = &.{.{
+            .event = .successful_run_ends,
+            .automatic_priority = state.Priority.gain_credits,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (card.credit_counter == 0) return;
+                    const g = gameFromEffectContext(ctx);
+                    const run = g.run orelse return;
+                    if (run.source_instance_id == null or run.source_instance_id.? != card.instance_id) return;
+                    const take = @min(card.credit_counter, card.take_credits_amount);
+                    card.credit_counter -= take;
+                    g.runner_credit += take;
+                    g.systemMsg(.runner, card.code orelse 0, "Runner uses {s} to gain {d} [credit{s}].", .{
+                        card.title, take, if (take != 1) "s" else "",
+                    });
+                    if (card.trash_on_empty and card.credit_counter == 0) {
+                        try trashRunnerRigCardByInstanceId(g, card.instance_id);
+                    }
+                }
+            }.handle,
         }},
     },
-    .{ .title = "Smartware Distributor", .side = .runner, .code = 30033, .card_type = "Resource", .cost = 0, .runner_install = .{ .kind = .resource }, .place_credits_per_turn = true, .abilities = &.{.{
+    .{ .title = "Smartware Distributor", .side = .runner, .code = 30033, .card_type = "Resource", .cost = 0, .runner_install = .{ .kind = .resource }, .abilities = &.{.{
         .cost = .{ .clicks = 1 },
         .label = "Place 3 [Credits] on this card",
         .on_use = &struct {
             fn handle(_: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 card.credit_counter += 3;
+            }
+        }.handle,
+    }}, .event_abilities = &.{.{
+        .event = .runner_turn_begins,
+        .automatic_priority = state.Priority.gain_credits,
+        .handler = &struct {
+            fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                if (card.credit_counter == 0) return;
+                const g = gameFromEffectContext(ctx);
+                card.credit_counter -= 1;
+                g.runner_credit += 1;
+                g.systemMsg(.runner, card.code orelse 0, "Runner gains 1 [credit] from {s}.", .{card.title});
             }
         }.handle,
     }} },
@@ -2413,6 +2466,7 @@ pub const all_cards = [_]CardSpec{
         // "Whenever a subroutine resolves during a run: gain 1cr. First time each turn: Corp trashes 1 from HQ."
         .event_abilities = &.{.{
             .event = .successful_run_ends,
+            .automatic_priority = state.Priority.force_discard,
             .handler = &struct {
                 fn handle(ctx: *state.EffectContext, self_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
@@ -3685,6 +3739,34 @@ pub const all_cards = [_]CardSpec{
         .strength = 3,
         .install = .{ .kind = .corp_server_choice },
         .subroutines = &.{ .{ .resolve = &resolveTagOrPayCreditsEtr, .amount = 3, .label = "Sub 0" }, .{ .resolve = &resolveEtrIfTagged, .label = "End the run if the Runner is tagged" } },
+        .event_abilities = blk: {
+            const H = struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (!card.rezzed) return;
+                    const g = gameFromEffectContext(ctx);
+                    const payload = ctx.event orelse return;
+                    const agenda_server = payload.server_index orelse return;
+                    // Find which server this ICE is on and trash self if it matches
+                    for (g.corp_servers.items, 0..) |*server, si| {
+                        for (server.ices.items, 0..) |ice, ii| {
+                            if (ice.instance_id == card.instance_id) {
+                                if (si == agenda_server) {
+                                    const trashed = server.ices.orderedRemove(ii);
+                                    try appendDiscardCard(g, .corp, trashed);
+                                    g.systemMsg(.corp, 35080, "Corp trashes Lamplighter.", .{});
+                                    try removeServerIfEmpty(g, si);
+                                }
+                                return;
+                            }
+                        }
+                    }
+                }
+            };
+            break :blk &[_]state.EventAbility{
+                .{ .event = .agenda_scored, .automatic_priority = state.Priority.pre_draw_cards, .handler = &H.handle },
+                .{ .event = .agenda_stolen, .automatic_priority = state.Priority.pre_draw_cards, .handler = &H.handle },
+            };
+        },
     },
     // --- Elevation Assets ---
     .{
@@ -3835,11 +3917,30 @@ pub const all_cards = [_]CardSpec{
         .cost = 2,
         .trash_cost = 2,
         .install = .{ .kind = .corp_remote_only },
-        .auto_take_credits = true,
         .initial_credit_counters = 6,
         .take_credits_amount = 2,
         .trash_on_empty = true,
         .clicks_on_empty = 2,
+        .event_abilities = &.{.{
+            .event = .corp_turn_begins,
+            .automatic_priority = state.Priority.gain_credits,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (card.credit_counter == 0) return;
+                    const g = gameFromEffectContext(ctx);
+                    const take = @min(card.credit_counter, card.take_credits_amount);
+                    card.credit_counter -= take;
+                    g.corp_credit += take;
+                    g.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to take {d} [credit{s}].", .{
+                        card.title, take, if (take != 1) "s" else "",
+                    });
+                    if (card.trash_on_empty and card.credit_counter == 0) {
+                        if (card.clicks_on_empty > 0) g.corp_click += card.clicks_on_empty;
+                        try trashCorpServerCardByInstanceId(g, card.instance_id);
+                    }
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Byte!",
@@ -3966,6 +4067,7 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{
             .{
                 .event = .corp_turn_begins,
+                .automatic_priority = state.Priority.gain_credits,
                 .handler = &struct {
                     fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                         if (!card.rezzed) return;
@@ -4001,11 +4103,30 @@ pub const all_cards = [_]CardSpec{
         .cost = 3,
         .trash_cost = 1,
         .install = .{ .kind = .corp_remote_only },
-        .auto_take_credits = true,
         .initial_credit_counters = 8,
         .take_credits_amount = 4,
         .trash_on_empty = true,
         .draw_on_take = 1,
+        .event_abilities = &.{.{
+            .event = .corp_turn_begins,
+            .automatic_priority = state.Priority.draw_cards,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (card.credit_counter == 0) return;
+                    const g = gameFromEffectContext(ctx);
+                    const take = @min(card.credit_counter, card.take_credits_amount);
+                    card.credit_counter -= take;
+                    g.corp_credit += take;
+                    if (card.draw_on_take > 0) try drawCards(g, .corp, card.draw_on_take);
+                    g.systemMsg(.corp, card.code orelse 0, "Corp uses {s} to take {d} [credit{s}].", .{
+                        card.title, take, if (take != 1) "s" else "",
+                    });
+                    if (card.trash_on_empty and card.credit_counter == 0) {
+                        try trashCorpServerCardByInstanceId(g, card.instance_id);
+                    }
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Plutus",
@@ -6064,7 +6185,6 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{ "Job", "Location" },
         .cost = 2,
         .runner_install = .{ .kind = .resource, .mu_cost = 0 },
-        .auto_take_credits = true,
         .initial_credit_counters = 6,
         .take_credits_amount = 1,
         .trash_on_empty = true,
@@ -6078,6 +6198,25 @@ pub const all_cards = [_]CardSpec{
                 }
             }.check,
         },
+        .event_abilities = &.{.{
+            .event = .runner_turn_begins,
+            .automatic_priority = state.Priority.gain_credits,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                    if (card.credit_counter == 0) return;
+                    const g = gameFromEffectContext(ctx);
+                    const take = @min(card.credit_counter, card.take_credits_amount);
+                    card.credit_counter -= take;
+                    g.runner_credit += take;
+                    g.systemMsg(.runner, card.code orelse 0, "Runner takes {d} [credit{s}] from {s}.", .{
+                        take, if (take != 1) "s" else "", card.title,
+                    });
+                    if (card.trash_on_empty and card.credit_counter == 0) {
+                        try trashRunnerRigCardByInstanceId(g, card.instance_id);
+                    }
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "\"Knickknack\" O'Brian",
@@ -6209,6 +6348,7 @@ pub const all_cards = [_]CardSpec{
         .draw_on_auto_trash = 1,
         .event_abilities = &.{.{
             .event = .run_begins,
+            .automatic_priority = state.Priority.draw_cards,
             .handler = &struct {
                 fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
