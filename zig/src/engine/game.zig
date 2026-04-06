@@ -9774,3 +9774,106 @@ test "Madani can host from grip and then install a hosted program" {
     try std.testing.expect(findPromptChoiceAction(generated.legal_actions, .runner, "Install a hosted program") == null);
     try std.testing.expect(findPromptChoiceAction(generated.legal_actions, .runner, "Host programs from grip") != null);
 }
+
+// --- Plutus rez cost scenario tests ---
+
+fn findRezAction(actions: []const state.LegalAction, title: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind == .rez_non_ice and a.card_title != null and std.mem.eql(u8, a.card_title.?, title)) return a;
+    }
+    return null;
+}
+
+fn setupPlutusInstalled(allocator: std.mem.Allocator) !Game {
+    var generated = try createInitialSnapshot(allocator, elevation_weyland, 1);
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try corpStartTurnFull(&generated);
+    // Clear hand and install Plutus manually
+    generated.corp_hand.clearRetainingCapacity();
+    var plutus = try makeGameCard(&generated, try lookupRequiredCardSpec(35073));
+    plutus.rezzed = false;
+    // Install into a new remote
+    try generated.corp_servers.append(generated.backing_allocator, .{ .name = try generated.arena.allocator().dupe(u8, "remote1") });
+    try generated.corp_servers.items[generated.corp_servers.items.len - 1].content.append(generated.backing_allocator, plutus);
+    generated.corp_credit = 10;
+    return generated;
+}
+
+test "Plutus rez cost: corp has scored agenda, chooses forfeit" {
+    var generated = try setupPlutusInstalled(std.testing.allocator);
+    defer generated.deinit();
+    // Give corp a scored agenda
+    var agenda = try makeGameCard(&generated, try lookupRequiredCardSpec(30067)); // Offworld Office (2 AP)
+    agenda.agenda_points = 2;
+    try generated.corp_scored.append(generated.backing_allocator, agenda);
+    generated.corp_agenda_point = 2;
+    // Set up actions and rez
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    const rez = findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction;
+    try applyAction(&generated, rez);
+    try std.testing.expect(generated.corp_prompt_state != null);
+    try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
+    // Choose forfeit
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Forfeit Offworld Office") });
+    try std.testing.expectEqual(@as(usize, 0), generated.corp_scored.items.len);
+    try std.testing.expectEqual(@as(u8, 0), generated.corp_agenda_point);
+    var found_rezzed = false;
+    for (generated.corp_servers.items) |server| {
+        for (server.content.items) |card| {
+            if (card.code != null and card.code.? == 35073 and card.rezzed) found_rezzed = true;
+        }
+    }
+    try std.testing.expect(found_rezzed);
+}
+
+test "Plutus rez cost: no agenda, 1 card in HQ, trashes it" {
+    var generated = try setupPlutusInstalled(std.testing.allocator);
+    defer generated.deinit();
+    try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(30075)));
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
+    try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash up to 3 cards from HQ") });
+    try std.testing.expectEqualStrings("plutus-trash-hq", generated.corp_prompt_state.?.prompt_type);
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-trash-hq", .choice = generated.corp_prompt_state.?.choices[0] });
+    try std.testing.expectEqual(@as(usize, 0), generated.corp_hand.items.len);
+}
+
+test "Plutus rez cost: no agenda, 4 cards in HQ, trashes 3" {
+    var generated = try setupPlutusInstalled(std.testing.allocator);
+    defer generated.deinit();
+    var i: u8 = 0;
+    while (i < 4) : (i += 1) {
+        try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(30075)));
+    }
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash up to 3 cards from HQ") });
+    var t: u8 = 0;
+    while (t < 3) : (t += 1) {
+        try std.testing.expectEqualStrings("plutus-trash-hq", generated.corp_prompt_state.?.prompt_type);
+        try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-trash-hq", .choice = generated.corp_prompt_state.?.choices[0] });
+    }
+    try std.testing.expectEqual(@as(usize, 1), generated.corp_hand.items.len);
+}
+
+test "Plutus rez cost: no agenda, no HQ cards, auto-derezzes" {
+    var generated = try setupPlutusInstalled(std.testing.allocator);
+    defer generated.deinit();
+    generated.decision_side = .corp;
+    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    const credit_before = generated.corp_credit;
+    try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
+    var found_rezzed = false;
+    for (generated.corp_servers.items) |server| {
+        for (server.content.items) |card| {
+            if (card.code != null and card.code.? == 35073 and card.rezzed) found_rezzed = true;
+        }
+    }
+    try std.testing.expect(!found_rezzed);
+    try std.testing.expectEqual(credit_before, generated.corp_credit);
+}
