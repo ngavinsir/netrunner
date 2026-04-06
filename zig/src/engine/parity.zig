@@ -2109,6 +2109,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "mitra-ice-swap")) return "select";
     if (std.mem.eql(u8, prompt_type, "plutus-transaction")) return "select";
     if (std.mem.eql(u8, prompt_type, "plutus-rez-cost")) return "select";
+    if (std.mem.eql(u8, prompt_type, "plutus-trash-hq")) return "select";
     if (std.mem.eql(u8, prompt_type, "poetri-server")) return "select";
     if (std.mem.eql(u8, prompt_type, "peek-rd-trash-one")) return "select";
     if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";

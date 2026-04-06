@@ -212,6 +212,42 @@ fn runnerGainCreditsPlayAbility(comptime credits: u16, comptime draw: u8, compti
 
 const GE = @import("game.zig");
 
+fn beginPlutusTrashPrompt(g: *GE.Game, trashed_so_far: u8) !void {
+    if (trashed_so_far >= 3 or g.corp_hand.items.len == 0) {
+        g.systemMsg(.corp, 35073, "Plutus: Corp trashes {d} card(s) from HQ as additional rez cost.", .{trashed_so_far});
+        return;
+    }
+    const allocator = g.arena.allocator();
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    for (g.corp_hand.items) |c| {
+        try choices.append(allocator, stringChoice(try allocator.dupe(u8, c.title)));
+    }
+    g.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "plutus-trash-hq"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .ability_ref = .{ .source_instance_id = 0, .ability_index = trashed_so_far },
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, ct: []const u8) anyerror!void {
+                const cg = gameFromEffectContext(cctx);
+                const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
+                const done = ref.ability_index;
+                cg.corp_prompt_state = null;
+                for (cg.corp_hand.items, 0..) |c, idx| {
+                    if (std.mem.eql(u8, c.title, ct)) {
+                        const trashed = cg.corp_hand.orderedRemove(idx);
+                        try appendDiscardCard(cg, .corp, trashed);
+                        break;
+                    }
+                }
+                try beginPlutusTrashPrompt(cg, done + 1);
+            }
+        }.choice,
+    };
+    g.decision_side = .corp;
+    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+}
+
 fn showGamedragonHostPrompt(g: *GE.Game, gd_iid: u32, is_rehost: bool) !void {
     const allocator = g.arena.allocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
@@ -4098,12 +4134,9 @@ pub const all_cards = [_]CardSpec{
                                             }
                                         }
                                     } else if (std.mem.eql(u8, ct, "Trash 3 cards from HQ")) {
-                                        var trashed: u8 = 0;
-                                        while (trashed < 3 and cg.corp_hand.items.len > 0) : (trashed += 1) {
-                                            const t = cg.corp_hand.orderedRemove(0);
-                                            try appendDiscardCard(cg, .corp, t);
-                                        }
-                                        cg.systemMsg(.corp, 35073, "Plutus: Corp trashes 3 cards from HQ as additional rez cost.", .{});
+                                        // Corp chooses which 3 cards to trash
+                                        try beginPlutusTrashPrompt(cg, 0);
+                                        return;
                                     }
                                 }
                             }.choice,
