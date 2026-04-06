@@ -5499,7 +5499,15 @@ fn appendAccessAbilityChoices(
                 }
                 _ = is_agenda;
                 _ = allocator;
-                choices[idx] = stringChoice(ability.label orelse "Use ability");
+                choices[idx] = .{
+                    .kind = .string,
+                    .text = ability.label orelse "Use ability",
+                    .card = .{
+                        .title = card.title,
+                        .code = card.code,
+                        .side = card.side,
+                    },
+                };
                 idx += 1;
             }
         }

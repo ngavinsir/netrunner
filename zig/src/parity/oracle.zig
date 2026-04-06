@@ -964,6 +964,32 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Access-choice: when the choice has a card reference (access ability like Gourmand),
+        // send as card-based choice so the Clojure oracle can resolve it via cid matching.
+        if (std.mem.eql(u8, action.prompt_type.?, "access-choice")) {
+            if (action.choice) |choice| {
+                if (choice.card) |card| {
+                    try writer.writeByte('{');
+                    try writeJsonFieldString(writer, "kind", "prompt-choice", false);
+                    try writeJsonFieldString(writer, "side", sideName(action.side), true);
+                    // Send choice as card-based for oracle resolution
+                    try writer.writeAll(",\"choice\":{\"choice-type\":\"card\",\"card\":{");
+                    if (card.title) |title| {
+                        try writeJsonFieldString(writer, "title", title, false);
+                    }
+                    if (card.code) |code| {
+                        try writer.writeAll(",\"code\":");
+                        try std.fmt.format(writer, "{d}", .{code});
+                    }
+                    if (card.side) |side| {
+                        try writeJsonFieldString(writer, "side", if (side == .corp) "Corp" else "Runner", true);
+                    }
+                    try writer.writeAll("}}");
+                    try writer.writeByte('}');
+                    return;
+                }
+            }
+        }
     }
 
     // Translate rez_non_ice into a "rez" action with card-locator for Clojure

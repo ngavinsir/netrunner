@@ -768,8 +768,16 @@
                                ;; Raw card choices (e.g. runner-host-choice passes card objects directly)
                                (first (filter #(= (select-non-nil-keys % [:code :title :printed-title :side])
                                                   card)
-                                              choices)))
-                       (first (filter #(= (:value %) value) choices)))]
+                                              choices))
+                               ;; Access ability choices: wrapped as {:value {:cid X :title "[CardName] Label"} :uuid ...}
+                               ;; Match by card title appearing within the choice's :value :title
+                               (when-let [card-title (:title card)]
+                                 (first (filter #(when-let [vt (:title (:value %))]
+                                                   (string/includes? vt card-title))
+                                                choices))))
+                       (or (first (filter #(= (:value %) value) choices))
+                           ;; Fallback: match by :value :title for access ability choices
+                           (first (filter #(= (:title (:value %)) value) choices))))]
         (if (:uuid match) {:uuid (:uuid match)} match)
         value)
 
