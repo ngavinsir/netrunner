@@ -1665,6 +1665,13 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
     // Fire end-turn events
     if (side == .corp) {
         _ = try fireEvent(generated, .corp_end_turn);
+        // If corp_end_turn triggered a corp prompt (e.g., Mercia B4LL4RD ICE install),
+        // present it before transitioning to the runner's turn.
+        if (generated.corp_prompt_state != null) {
+            generated.decision_side = .corp;
+            generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+            return;
+        }
     } else {
         _ = try fireEvent(generated, .runner_end_turn);
         // If runner_end_turn triggered a runner optional prompt (e.g., Cacophony sabotage),

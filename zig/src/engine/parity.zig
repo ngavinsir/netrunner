@@ -9423,8 +9423,9 @@ test "mercia ballard end of turn ice install parity test" {
     if (findRezNonIceAction(generated.legal_actions, "Mercia B4LL4RD")) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
     }
-    // Mercia rezzed with ICE in HQ. End-of-turn trigger auto-selects ICE → shows server prompt.
-    // Full end-of-turn flow has oracle decision-side divergence at this seed — snapshot before end-turn.
+    // Mercia rezzed with ICE in HQ — end-of-turn will auto-select ICE + show server prompt.
+    // Engine fix ensures decision_side=corp when end-of-turn prompt opens.
+    // Full end-of-turn server pick diverges in corp-install cost model — tested up to rez.
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);

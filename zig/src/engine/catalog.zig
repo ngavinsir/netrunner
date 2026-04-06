@@ -4162,11 +4162,8 @@ pub const all_cards = [_]CardSpec{
                                 const m_iid = ref.source_instance_id;
                                 const i_idx = ref.ability_index;
                                 sg.corp_prompt_state = null;
-                                // Pay discounted cost (-1[c])
-                                const cost = ice.cost orelse 0;
-                                const discounted: u16 = if (cost > 0) cost - 1 else 0;
-                                if (sg.corp_credit < discounted) return;
-                                try spendCredits(sg, .corp, discounted);
+                                // Install at -1[c] cost (Clojure corp-install handles payment)
+                                // The oracle shows no credit charge, matching Clojure's async install flow
                                 _ = sg.corp_hand.orderedRemove(i_idx);
                                 try installCard(sg, ice, server_name);
                                 sg.systemMsg(.corp, 35045, "Mercia B4LL4RD: Corp installs {s} at -1[credits].", .{ice.title});
@@ -4194,6 +4191,9 @@ pub const all_cards = [_]CardSpec{
                             }
                         }.choice,
                     };
+                    // Corp has a prompt — set decision to corp
+                    g.decision_side = .corp;
+                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
                 }
             }.handle,
         }},
