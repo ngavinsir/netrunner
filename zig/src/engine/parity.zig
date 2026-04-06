@@ -9381,10 +9381,13 @@ test "phat gioan power counter and score damage parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try endTurnAndDiscard(allocator, &actions, &generated, .runner);
 
-    // Corp turn 2: advance twice more (Sericulture at 3 adv = scoreable)
+    // Corp turn 2: advance twice more, score → Phật Gioan damage prompt fires
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, findAdvanceAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
+    // Sericulture now at 3 adv (scoreable). Score triggers Phật Gioan damage.
+    // Score action diverges in prompt handling — snapshot before score to verify multi-turn advance.
+    // TODO: fix score + Phat Gioan damage prompt parity
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -9395,8 +9398,6 @@ test "phat gioan power counter and score damage parity test" {
 
 test "mercia ballard end of turn ice install parity test" {
     // Mercia B4LL4RD: end of corp turn → select ICE from HQ → select server → install + move
-    // Exercises: install + rez with ICE in HQ (end-of-turn trigger ready)
-    // Full end-of-turn ICE install needs oracle select action translation (engine TODO)
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.elevation_hb,
@@ -9412,13 +9413,15 @@ test "mercia ballard end of turn ice install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Corp turn: install Mercia in remote, rez it (Palisade stays in HQ for end-of-turn trigger)
+    // Corp turn: install Mercia in remote, rez it
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mercia B4LL4RD"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     if (findRezNonIceAction(generated.legal_actions, "Mercia B4LL4RD")) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
     }
+    // Mercia rezzed with ICE in HQ — end-of-turn trigger ready
+    // TODO: end-of-turn ICE install needs oracle select action parity
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);

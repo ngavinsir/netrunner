@@ -108,6 +108,7 @@ pub const fireEventWith = game.fireEventWith;
 pub const isAbilityUsedThisTurn = game.isAbilityUsedThisTurn;
 pub const markAbilityUsedThisTurn = game.markAbilityUsedThisTurn;
 pub const beginByteAmbushPrompt = game.beginByteAmbushPrompt;
+pub const beginPhatGioanDamagePrompt = game.beginPhatGioanDamagePrompt;
 pub const beginSabotagePrompt = game.beginSabotagePrompt;
 pub const bypassCurrentIce = game.bypassCurrentIce;
 pub const beginStartTurnSequence = game.beginStartTurnSequence;

@@ -5647,6 +5647,58 @@ fn applyNetDamageOnAccessChoice(
 }
 
 /// Byte! (35050): Corp may pay 4cr on access to give runner 1 tag + 3 net damage.
+/// Phật Gioan Baotixita: on agenda scored/stolen, choose damage amount.
+/// Choice text matches Clojure: "Do N net damage" with "Hosted power counter: " prefix for cost.
+pub fn beginPhatGioanDamagePrompt(generated: *Game, card: *state.CardInstance) !void {
+    const allocator = generated.arena.allocator();
+    var choices: std.ArrayList(state.PromptChoice) = .empty;
+    defer choices.deinit(allocator);
+    const counters = card.power_counter;
+    // Damage 1: always available (no counter cost), up to 3
+    var i: u8 = 1;
+    while (i <= @min(counters, 3)) : (i += 1) {
+        // Clojure: damage 1 = "Do 1 net damage" (free), damage N>1 = "Hosted power counter[, ...]: Do N net damage"
+        if (i == 1) {
+            try choices.append(allocator, stringChoice(try std.fmt.allocPrint(allocator, "Do {d} net damage", .{i})));
+        } else {
+            // Build cost prefix: "Hosted power counter" repeated (i-1) times
+            var prefix: std.ArrayList(u8) = .empty;
+            defer prefix.deinit(allocator);
+            var j: u8 = 0;
+            while (j < i - 1) : (j += 1) {
+                if (j > 0) try prefix.appendSlice(allocator, ", ");
+                try prefix.appendSlice(allocator, "Hosted power counter");
+            }
+            try choices.append(allocator, stringChoice(try std.fmt.allocPrint(allocator, "{s}: Do {d} net damage", .{ prefix.items, i })));
+        }
+    }
+    if (choices.items.len == 0) return;
+    generated.corp_prompt_state = .{
+        .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
+        .choices = try choices.toOwnedSlice(allocator),
+        .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                const cg = gameFromEffectContext(cctx);
+                const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
+                cg.corp_prompt_state = null;
+                // Parse damage amount from "Do N net damage" or "...: Do N net damage"
+                const do_pos = std.mem.indexOf(u8, choice_text, "Do ") orelse return;
+                const n = std.fmt.parseInt(u8, choice_text[do_pos + 3 .. do_pos + 4], 10) catch return;
+                const live_card = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
+                const cost: u8 = if (n > 1) n - 1 else 0;
+                if (live_card.power_counter < cost) return;
+                live_card.power_counter -= cost;
+                try trashRandomRunnerHandCards(cg, n);
+                updateTerminalState(cg);
+                cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita to do {d} net damage.", .{n});
+            }
+        }.choice,
+    };
+    generated.decision_side = .corp;
+    generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
+}
+
 pub fn beginByteAmbushPrompt(generated: *Game, accessed: state.CardInstance) !bool {
     const allocator = generated.arena.allocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;

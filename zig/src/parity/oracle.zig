@@ -978,28 +978,6 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
-        // Phật Gioan: Zig "Remove N power counters to do N net damage" → Clojure "Do N net damage"
-        if (std.mem.eql(u8, action.prompt_type.?, "phat-net-damage")) {
-            try writer.writeByte('{');
-            try writeJsonFieldString(writer, "kind", "prompt-choice", false);
-            try writeJsonFieldString(writer, "side", sideName(action.side), true);
-            if (action.choice) |choice| {
-                if (choice.text) |text| {
-                    if (std.mem.eql(u8, text, "No action")) {
-                        try writeJsonFieldString(writer, "choice", "No action", true);
-                    } else {
-                        // Extract damage count from "Remove N power counter(s) to do N net damage"
-                        // Map to Clojure's "Do N net damage" format
-                        const n = if (text.len > 7) text[7] else '1';
-                        var buf: [32]u8 = undefined;
-                        const mapped = std.fmt.bufPrint(&buf, "Do {c} net damage", .{n}) catch "Do 1 net damage";
-                        try writeJsonFieldString(writer, "choice", mapped, true);
-                    }
-                }
-            }
-            try writer.writeByte('}');
-            return;
-        }
         // Mercia B4LL4RD ICE selection: translate to Clojure "select" action for the ICE card
         if (std.mem.eql(u8, action.prompt_type.?, "mercia-install-ice")) {
             if (action.choice) |choice| {

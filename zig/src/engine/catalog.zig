@@ -103,6 +103,7 @@ const trashCorpServerCardByInstanceId = game_engine.trashCorpServerCardByInstanc
 const trashRunnerRigCardByInstanceId = game_engine.trashRunnerRigCardByInstanceId;
 const beginNetDamageOnAccessPrompt = game_engine.beginNetDamageOnAccessPrompt;
 const beginByteAmbushPrompt = game_engine.beginByteAmbushPrompt;
+const beginPhatGioanDamagePrompt = game_engine.beginPhatGioanDamagePrompt;
 const beginSabotagePrompt = runtime.beginSabotagePrompt;
 const bypassCurrentIce = runtime.bypassCurrentIce;
 const beginStartTurnSequence = runtime.beginStartTurnSequence;
@@ -3887,40 +3888,7 @@ pub const all_cards = [_]CardSpec{
                     fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                         if (!card.rezzed) return;
                         if (card.power_counter == 0) return;
-                        const g = gameFromEffectContext(ctx);
-                        const allocator = g.arena.allocator();
-                        const max_spend: u8 = @min(card.power_counter, 3);
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        var i: u8 = 1;
-                        while (i <= max_spend) : (i += 1) {
-                            const text = try std.fmt.allocPrint(allocator, "Remove {d} power counter{s} to do {d} net damage", .{ i, if (i != 1) "s" else "", i });
-                            try choices.append(allocator, stringChoice(text));
-                        }
-                        try choices.append(allocator, stringChoice("No action"));
-                        g.corp_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                            .on_choice = &struct {
-                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
-                                    const cg = gameFromEffectContext(cctx);
-                                    const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
-                                    cg.corp_prompt_state = null;
-                                    if (std.mem.eql(u8, choice_text, "No action")) return;
-                                    if (!std.mem.startsWith(u8, choice_text, "Remove ")) return;
-                                    const n = std.fmt.parseInt(u8, choice_text[7..8], 10) catch return;
-                                    const live_card = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
-                                    if (live_card.power_counter < n) return;
-                                    live_card.power_counter -= n;
-                                    try trashRandomRunnerHandCards(cg, n);
-                                    updateTerminalState(cg);
-                                    cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
-                                }
-                            }.choice,
-                        };
-                        g.decision_side = .corp;
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                        try beginPhatGioanDamagePrompt(gameFromEffectContext(ctx), card);
                     }
                 }.handle,
             },
@@ -3930,40 +3898,7 @@ pub const all_cards = [_]CardSpec{
                     fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                         if (!card.rezzed) return;
                         if (card.power_counter == 0) return;
-                        const g = gameFromEffectContext(ctx);
-                        const allocator = g.arena.allocator();
-                        const max_spend: u8 = @min(card.power_counter, 3);
-                        var choices: std.ArrayList(state.PromptChoice) = .empty;
-                        defer choices.deinit(allocator);
-                        var i: u8 = 1;
-                        while (i <= max_spend) : (i += 1) {
-                            const text = try std.fmt.allocPrint(allocator, "Remove {d} power counter{s} to do {d} net damage", .{ i, if (i != 1) "s" else "", i });
-                            try choices.append(allocator, stringChoice(text));
-                        }
-                        try choices.append(allocator, stringChoice("No action"));
-                        g.corp_prompt_state = .{
-                            .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
-                            .choices = try choices.toOwnedSlice(allocator),
-                            .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
-                            .on_choice = &struct {
-                                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
-                                    const cg = gameFromEffectContext(cctx);
-                                    const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
-                                    cg.corp_prompt_state = null;
-                                    if (std.mem.eql(u8, choice_text, "No action")) return;
-                                    if (!std.mem.startsWith(u8, choice_text, "Remove ")) return;
-                                    const n = std.fmt.parseInt(u8, choice_text[7..8], 10) catch return;
-                                    const live_card = findCardPtrByInstanceId(cg, ref.source_instance_id) orelse return;
-                                    if (live_card.power_counter < n) return;
-                                    live_card.power_counter -= n;
-                                    try trashRandomRunnerHandCards(cg, n);
-                                    updateTerminalState(cg);
-                                    cg.systemMsg(.corp, 35051, "Corp uses Ph\xe1\xba\xadt Gioan Baotixita: removes {d} counter{s}, does {d} net damage.", .{ n, if (n != 1) "s" else "", n });
-                                }
-                            }.choice,
-                        };
-                        g.decision_side = .corp;
-                        g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                        try beginPhatGioanDamagePrompt(gameFromEffectContext(ctx), card);
                     }
                 }.handle,
             },
