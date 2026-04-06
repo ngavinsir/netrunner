@@ -223,6 +223,7 @@ fn beginPlutusTrashPrompt(g: *GE.Game, trashed_so_far: u8) !void {
     for (g.corp_hand.items) |c| {
         try choices.append(allocator, stringChoice(try allocator.dupe(u8, c.title)));
     }
+    try choices.append(allocator, stringChoice("Done"));
     g.corp_prompt_state = .{
         .prompt_type = try allocator.dupe(u8, "plutus-trash-hq"),
         .choices = try choices.toOwnedSlice(allocator),
@@ -233,6 +234,10 @@ fn beginPlutusTrashPrompt(g: *GE.Game, trashed_so_far: u8) !void {
                 const ref = (cg.corp_prompt_state orelse return).ability_ref orelse return;
                 const done = ref.ability_index;
                 cg.corp_prompt_state = null;
+                if (std.mem.eql(u8, ct, "Done")) {
+                    cg.systemMsg(.corp, 35073, "Plutus: Corp trashes {d} card(s) from HQ as additional rez cost.", .{done});
+                    return;
+                }
                 for (cg.corp_hand.items, 0..) |c, idx| {
                     if (std.mem.eql(u8, c.title, ct)) {
                         const trashed = cg.corp_hand.orderedRemove(idx);
@@ -4104,9 +4109,9 @@ pub const all_cards = [_]CardSpec{
                                 ));
                             }
                         }
-                        // Option 2: trash 3 from HQ (if HQ has 3+ cards)
-                        if (g.corp_hand.items.len >= 3) {
-                            try choices.append(allocator, stringChoice("Trash 3 cards from HQ"));
+                        // Option 2: trash up to 3 from HQ (if HQ has any cards)
+                        if (g.corp_hand.items.len > 0) {
+                            try choices.append(allocator, stringChoice("Trash up to 3 cards from HQ"));
                         }
                         if (choices.items.len == 0) {
                             // Can't pay additional cost — derez
@@ -4133,8 +4138,8 @@ pub const all_cards = [_]CardSpec{
                                                 break;
                                             }
                                         }
-                                    } else if (std.mem.eql(u8, ct, "Trash 3 cards from HQ")) {
-                                        // Corp chooses which 3 cards to trash
+                                    } else if (std.mem.eql(u8, ct, "Trash up to 3 cards from HQ")) {
+                                        // Corp chooses which cards to trash (up to 3)
                                         try beginPlutusTrashPrompt(cg, 0);
                                         return;
                                     }
