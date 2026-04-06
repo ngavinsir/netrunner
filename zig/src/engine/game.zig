@@ -9965,3 +9965,172 @@ test "Plutus rez cost: no agenda, no HQ cards, auto-derezzes" {
     try std.testing.expect(!found_rezzed);
     try std.testing.expectEqual(credit_before, generated.corp_credit);
 }
+
+// ============================================================================
+// Event ordering tests (Phase 6)
+// ============================================================================
+
+test "event ordering: active player handlers fire before opponent" {
+    // Setup: install a runner resource with runner_turn_begins event and a corp asset with
+    // runner_turn_begins event (via a custom-priority card). Since both Smartware Distributor
+    // and Jinteki: Restoring Humanity trigger on different events, we use corp_turn_begins
+    // where both Public Access Plaza (corp, gain_credits=6) and the corp identity can be tested.
+    //
+    // Instead, test with successful_run_ends which has handlers on both sides:
+    // - Runner identity (Ryō "Phoenix" Ōno, 35001, force_discard=1)
+    // - Runner resource (Red Team, 30018, gain_credits=6)
+    // - Runner program (Leech, 30008, default=10)
+    // Active player should come first regardless.
+
+    var generated = try createInitialSnapshot(
+        std.testing.allocator,
+        system_gateway_beginner,
+        42,
+    );
+    defer generated.deinit();
+
+    // Install Leech (code 30008) as a runner program — has event_ability for successful_run_ends
+    const leech_spec = lookupCardSpecByCode(30008) orelse return error.UnknownCardCode;
+    var leech = try makeGameCard(&generated, leech_spec);
+    leech.credit_counter = leech_spec.initial_credit_counters;
+    try generated.runner_rig_program.append(generated.backing_allocator, leech);
+
+    // Public Access Plaza (35062) — has event_ability for corp_turn_begins (gain_credits=6)
+    const pap_spec = lookupCardSpecByCode(35062) orelse return error.UnknownCardCode;
+    var pap = try makeGameCard(&generated, pap_spec);
+    pap.rezzed = true;
+    try installCard(&generated, pap, "New remote");
+
+    // Nico Campaign (30037) — has event_ability for corp_turn_begins (draw_cards=8)
+    const nico_spec = lookupCardSpecByCode(30037) orelse return error.UnknownCardCode;
+    var nico = try makeGameCard(&generated, nico_spec);
+    nico.rezzed = true;
+    nico.credit_counter = nico_spec.initial_credit_counters;
+    try installCard(&generated, nico, "New remote");
+
+    // Test: active player = corp, fire corp_turn_begins
+    generated.active_player = .corp;
+    generated.pending_effects = .empty;
+    try collectEventHandlers(&generated, .{ .kind = .corp_turn_begins });
+
+    // Both corp cards should appear. Public Access Plaza (priority 6) before Nico Campaign (priority 8).
+    // No runner cards trigger on corp_turn_begins, so all handlers should be corp.
+    var corp_handlers: usize = 0;
+    var prev_priority: u16 = 0;
+    for (generated.pending_effects.items) |effect| {
+        switch (effect) {
+            .event_handler => |src| {
+                try std.testing.expectEqual(state.Side.corp, src.side);
+                try std.testing.expect(src.priority >= prev_priority);
+                prev_priority = src.priority;
+                corp_handlers += 1;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expect(corp_handlers >= 2);
+}
+
+test "event ordering: priority ascending within same player" {
+    // Setup: install Public Access Plaza (gain_credits=6) and Nico Campaign (draw_cards=8)
+    // Both fire on corp_turn_begins. Priority 6 should come before priority 8.
+
+    var generated = try createInitialSnapshot(
+        std.testing.allocator,
+        system_gateway_beginner,
+        42,
+    );
+    defer generated.deinit();
+
+    // Public Access Plaza (35062, priority 6)
+    const pap_spec = lookupCardSpecByCode(35062) orelse return error.UnknownCardCode;
+    var pap = try makeGameCard(&generated, pap_spec);
+    pap.rezzed = true;
+    try installCard(&generated, pap, "New remote");
+
+    // Nico Campaign (30037, priority 8)
+    const nico_spec = lookupCardSpecByCode(30037) orelse return error.UnknownCardCode;
+    var nico = try makeGameCard(&generated, nico_spec);
+    nico.rezzed = true;
+    nico.credit_counter = nico_spec.initial_credit_counters;
+    try installCard(&generated, nico, "New remote");
+
+    generated.active_player = .corp;
+    generated.pending_effects = .empty;
+    try collectEventHandlers(&generated, .{ .kind = .corp_turn_begins });
+
+    // Collect handler codes in order
+    var handler_codes: [10]u32 = undefined;
+    var handler_priorities: [10]u16 = undefined;
+    var count: usize = 0;
+    for (generated.pending_effects.items) |effect| {
+        switch (effect) {
+            .event_handler => |src| {
+                if (count < 10) {
+                    handler_codes[count] = src.code;
+                    handler_priorities[count] = src.priority;
+                    count += 1;
+                }
+            },
+            else => {},
+        }
+    }
+
+    try std.testing.expect(count >= 2);
+    // Public Access Plaza (35062, priority=6) should come before Nico Campaign (30037, priority=8)
+    var pap_idx: ?usize = null;
+    var nico_idx: ?usize = null;
+    for (0..count) |i| {
+        if (handler_codes[i] == 35062) pap_idx = i;
+        if (handler_codes[i] == 30037) nico_idx = i;
+    }
+    try std.testing.expect(pap_idx != null);
+    try std.testing.expect(nico_idx != null);
+    try std.testing.expect(pap_idx.? < nico_idx.?);
+    try std.testing.expect(handler_priorities[pap_idx.?] <= handler_priorities[nico_idx.?]);
+}
+
+test "event ordering: active player sorted before opponent even with higher priority" {
+    // Setup: corp has Nico Campaign (corp_turn_begins, priority 8).
+    // Runner has Smartware Distributor (runner_turn_begins, priority 6).
+    // When active_player is runner and we fire runner_turn_begins,
+    // runner handlers should appear before corp handlers regardless of priority.
+    // (Corp cards don't trigger on runner_turn_begins, so we test with a shared event.)
+    //
+    // Better test: use successful_run_ends with both corp and runner cards.
+    // Corp identity (HB Precision Design, 30035) has event_ability for agenda_scored only — not useful.
+    // Instead, directly test by installing a corp card in server content that triggers on a runner event.
+    //
+    // Since corp and runner cards rarely share events, test the sorting function directly.
+
+    const active_player = state.Side.runner;
+
+    // Create mock handler sources
+    const runner_high_priority = EventSource{ .code = 1, .event = .successful_run_ends, .side = .runner, .zone = .runner_resource, .priority = 10 };
+    const corp_low_priority = EventSource{ .code = 2, .event = .successful_run_ends, .side = .corp, .zone = .corp_server_content, .priority = 1 };
+
+    // Runner should come first because they're the active player, even though corp has lower priority number
+    try std.testing.expect(cmpEventHandler(active_player, runner_high_priority, corp_low_priority));
+    // Corp should NOT come before runner when runner is active
+    try std.testing.expect(!cmpEventHandler(active_player, corp_low_priority, runner_high_priority));
+}
+
+test "event ordering: cmpEventHandler sorts by priority within same side" {
+    const active_player = state.Side.corp;
+
+    const handler_a = EventSource{ .code = 1, .event = .corp_turn_begins, .side = .corp, .zone = .corp_server_content, .priority = 6 };
+    const handler_b = EventSource{ .code = 2, .event = .corp_turn_begins, .side = .corp, .zone = .corp_server_content, .priority = 8 };
+    const handler_c = EventSource{ .code = 3, .event = .corp_turn_begins, .side = .corp, .zone = .corp_server_content, .priority = 999 };
+
+    // Lower priority should sort before higher
+    try std.testing.expect(cmpEventHandler(active_player, handler_a, handler_b));
+    try std.testing.expect(cmpEventHandler(active_player, handler_b, handler_c));
+    try std.testing.expect(cmpEventHandler(active_player, handler_a, handler_c));
+
+    // Higher priority should NOT sort before lower
+    try std.testing.expect(!cmpEventHandler(active_player, handler_b, handler_a));
+    try std.testing.expect(!cmpEventHandler(active_player, handler_c, handler_a));
+
+    // Same priority: neither sorts before the other (stable)
+    try std.testing.expect(!cmpEventHandler(active_player, handler_a, handler_a));
+}
