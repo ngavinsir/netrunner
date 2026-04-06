@@ -1052,6 +1052,23 @@ pub fn gameFromConstEffectContext(ctx: *const state.EffectContext) *const Game {
     return ctx.game_ptr;
 }
 
+/// Check if a card has GAMEDRAGON Pro hosted on it (extends pump duration to end-of-run).
+fn hasGamedragonHosted(card: state.CardInstance) bool {
+    for (card.hosted) |h| {
+        if (h.code != null and h.code.? == 35027) return true;
+    }
+    return false;
+}
+
+/// Reset encounter strength boosts, preserving pumps on GAMEDRAGON-hosted icebreakers.
+fn resetEncounterStrength(game: *Game) void {
+    for (game.runner_rig_program.items) |*card| {
+        if (!hasGamedragonHosted(card.*)) {
+            card.current_strength = null;
+        }
+    }
+}
+
 pub fn addFloatingEffect(game: *Game, effect: state.FloatingEffect) !void {
     try game.floating_effects.append(game.backing_allocator, effect);
 }
@@ -4352,10 +4369,8 @@ fn advanceEncounterPhase(generated: *Game) !void {
         if (!std.mem.eql(u8, ps.prompt_type, "run")) return; // Sub opened prompt (e.g., Brân)
     }
 
-    // Clear temporary strength boosts on all icebreakers
-    for (generated.runner_rig_program.items) |*card| {
-        card.current_strength = null;
-    }
+    // Clear temporary strength boosts (GAMEDRAGON-hosted icebreakers keep pumps until end-of-run)
+    resetEncounterStrength(generated);
 
     // Move to movement phase
     var run = &generated.run.?;
@@ -4376,10 +4391,8 @@ pub fn bypassCurrentIce(generated: *Game) !void {
     var run = &(generated.run orelse return);
     run.bypass = true;
 
-    // Clear temporary strength boosts on all icebreakers
-    for (generated.runner_rig_program.items) |*card| {
-        card.current_strength = null;
-    }
+    // Clear temporary strength boosts (GAMEDRAGON-hosted icebreakers keep pumps until end-of-run)
+    resetEncounterStrength(generated);
 
     // Log bypass
     if (run.current_ice_index) |_| {
@@ -5132,9 +5145,7 @@ fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8)
 
     // Continue with movement phase after subroutines
     const allocator = generated.arena.allocator();
-    for (generated.runner_rig_program.items) |*card| {
-        card.current_strength = null;
-    }
+    resetEncounterStrength(generated);
     const next_run = &generated.run.?;
     if (next_run.position > 0) next_run.position -= 1;
     next_run.phase = try allocator.dupe(u8, "movement");
@@ -7635,6 +7646,10 @@ fn endOfRunCleanup(game: *Game) void {
     // Expire run-scoped and encounter-scoped floating effects
     expireFloatingEffects(game, .end_of_run);
     expireFloatingEffects(game, .end_of_encounter);
+    // At end of run, ALL strength boosts expire (including GAMEDRAGON-extended ones)
+    for (game.runner_rig_program.items) |*card| {
+        card.current_strength = null;
+    }
 }
 
 fn drawCard(game: *Game, side: state.Side) !void {

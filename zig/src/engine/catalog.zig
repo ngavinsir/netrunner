@@ -2765,18 +2765,33 @@ pub const all_cards = [_]CardSpec{
                                     if (idx >= cg.corp_deck.items.len) return;
                                     const card_to_install = cg.corp_deck.orderedRemove(idx);
                                     const ik = card_to_install.install.kind;
-                                    // Temporarily put card in hand so installCorpCardFromHand can find it
+                                    // Temporarily put card in hand so installCorpCardFromHand works
                                     try cg.corp_hand.append(cg.backing_allocator, card_to_install);
                                     const hand_idx: u8 = @intCast(cg.corp_hand.items.len - 1);
-                                    const srv_choices = try installChoicesForCard(cg.arena.allocator(), ik, cg);
-                                    if (srv_choices.len == 1) {
-                                        // Only one server option — install directly
-                                        try installCorpCardFromHand(cg, hand_idx, if (srv_choices[0].text) |t| t else "New remote");
+                                    const c_alloc = cg.arena.allocator();
+                                    const srv_choices = try installChoicesForCard(c_alloc, ik, cg);
+                                    if (srv_choices.len <= 1) {
+                                        const srv = if (srv_choices.len == 1 and srv_choices[0].text != null) srv_choices[0].text.? else "New remote";
+                                        try installCorpCardFromHand(cg, hand_idx, srv);
+                                        cg.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card from R&D.", .{});
                                     } else {
-                                        // Let corp choose server
-                                        try installCorpCardFromHand(cg, hand_idx, "New remote");
+                                        cg.corp_prompt_state = .{
+                                            .prompt_type = try c_alloc.dupe(u8, "poetri-server"),
+                                            .choices = srv_choices,
+                                            .min_choices = hand_idx,
+                                            .on_choice = &struct {
+                                                fn ch(ccctx: *state.EffectContext, srv_text: []const u8) anyerror!void {
+                                                    const g3 = gameFromEffectContext(ccctx);
+                                                    const ci = (g3.corp_prompt_state orelse return).min_choices;
+                                                    g3.corp_prompt_state = null;
+                                                    try installCorpCardFromHand(g3, ci, srv_text);
+                                                    g3.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card from R&D.", .{});
+                                                }
+                                            }.ch,
+                                        };
+                                        cg.decision_side = .corp;
+                                        cg.legal_actions = try promptChoiceActions(c_alloc, .corp, cg.corp_prompt_state.?);
                                     }
-                                    cg.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card from R&D.", .{});
                                 }
                             }.choice,
                         };
@@ -2814,8 +2829,31 @@ pub const all_cards = [_]CardSpec{
                                     if (std.mem.eql(u8, choice_text, "No action")) return;
                                     for (cg.corp_hand.items, 0..) |c, idx| {
                                         if (std.mem.eql(u8, c.title, choice_text)) {
-                                            try installCorpCardFromHand(cg, @intCast(idx), "New remote");
-                                            cg.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card from HQ.", .{});
+                                            const c_alloc = cg.arena.allocator();
+                                            const ik = c.install.kind;
+                                            const srv_choices = try installChoicesForCard(c_alloc, ik, cg);
+                                            if (srv_choices.len <= 1) {
+                                                const srv = if (srv_choices.len == 1 and srv_choices[0].text != null) srv_choices[0].text.? else "New remote";
+                                                try installCorpCardFromHand(cg, @intCast(idx), srv);
+                                                cg.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card from HQ.", .{});
+                                            } else {
+                                                cg.corp_prompt_state = .{
+                                                    .prompt_type = try c_alloc.dupe(u8, "poetri-server"),
+                                                    .choices = srv_choices,
+                                                    .min_choices = @intCast(idx),
+                                                    .on_choice = &struct {
+                                                        fn ch(ccctx: *state.EffectContext, srv_text: []const u8) anyerror!void {
+                                                            const g3 = gameFromEffectContext(ccctx);
+                                                            const ci = (g3.corp_prompt_state orelse return).min_choices;
+                                                            g3.corp_prompt_state = null;
+                                                            try installCorpCardFromHand(g3, ci, srv_text);
+                                                            g3.systemMsg(.corp, 35036, "Corp uses Po\xc3\xa9tr\xc3\xaf to install a card from HQ.", .{});
+                                                        }
+                                                    }.ch,
+                                                };
+                                                cg.decision_side = .corp;
+                                                cg.legal_actions = try promptChoiceActions(c_alloc, .corp, cg.corp_prompt_state.?);
+                                            }
                                             break;
                                         }
                                     }
@@ -4009,9 +4047,71 @@ pub const all_cards = [_]CardSpec{
         .cost = 0,
         .trash_cost = 3,
         .install = .{ .kind = .corp_remote_only },
+        // "Additional rez cost: forfeit an agenda or trash 3 from HQ."
         // "Start of turn: optionally play a Transaction from Archives (RFG instead of trash)."
-        // TODO: rez cost (forfeit agenda or trash 3 from HQ) not yet implemented
-        .event_abilities = &.{.{
+        .event_abilities = &.{
+            // On-rez: require additional cost (forfeit agenda or trash 3 from HQ)
+            .{
+                .event = .corp_rez_ice, // fires for non-ice rez too via applyRezNonIce
+                .handler = &struct {
+                    fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+                        if (card.code == null or card.code.? != 35073) return;
+                        const g = gameFromEffectContext(ctx);
+                        const allocator = g.arena.allocator();
+                        var choices: std.ArrayList(state.PromptChoice) = .empty;
+                        defer choices.deinit(allocator);
+                        // Option 1: forfeit a scored agenda
+                        if (g.corp_scored.items.len > 0) {
+                            for (g.corp_scored.items) |a| {
+                                try choices.append(allocator, stringChoice(
+                                    try std.fmt.allocPrint(allocator, "Forfeit {s}", .{a.title}),
+                                ));
+                            }
+                        }
+                        // Option 2: trash 3 from HQ (if HQ has 3+ cards)
+                        if (g.corp_hand.items.len >= 3) {
+                            try choices.append(allocator, stringChoice("Trash 3 cards from HQ"));
+                        }
+                        if (choices.items.len == 0) {
+                            // Can't pay additional cost — derez
+                            card.rezzed = false;
+                            g.corp_credit += card.cost orelse 0; // refund
+                            g.systemMsg(.corp, 35073, "Plutus: Corp cannot pay additional rez cost, derezzing.", .{});
+                            return;
+                        }
+                        g.corp_prompt_state = .{
+                            .prompt_type = try allocator.dupe(u8, "plutus-rez-cost"),
+                            .choices = try choices.toOwnedSlice(allocator),
+                            .ability_ref = .{ .source_instance_id = card.instance_id },
+                            .on_choice = &struct {
+                                fn choice(cctx: *state.EffectContext, ct: []const u8) anyerror!void {
+                                    const cg = gameFromEffectContext(cctx);
+                                    cg.corp_prompt_state = null;
+                                    if (std.mem.startsWith(u8, ct, "Forfeit ")) {
+                                        const title = ct["Forfeit ".len..];
+                                        for (cg.corp_scored.items, 0..) |a, idx| {
+                                            if (std.mem.eql(u8, a.title, title)) {
+                                                _ = cg.corp_scored.orderedRemove(idx);
+                                                cg.corp_agenda_point -= a.agenda_points orelse 0;
+                                                cg.systemMsg(.corp, 35073, "Plutus: Corp forfeits {s} as additional rez cost.", .{title});
+                                                break;
+                                            }
+                                        }
+                                    } else if (std.mem.eql(u8, ct, "Trash 3 cards from HQ")) {
+                                        var trashed: u8 = 0;
+                                        while (trashed < 3 and cg.corp_hand.items.len > 0) : (trashed += 1) {
+                                            const t = cg.corp_hand.orderedRemove(0);
+                                            try appendDiscardCard(cg, .corp, t);
+                                        }
+                                        cg.systemMsg(.corp, 35073, "Plutus: Corp trashes 3 cards from HQ as additional rez cost.", .{});
+                                    }
+                                }
+                            }.choice,
+                        };
+                    }
+                }.handle,
+            },
+            .{
             .event = .corp_turn_begins,
             .handler = &struct {
                 fn handle(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
@@ -4216,25 +4316,46 @@ pub const all_cards = [_]CardSpec{
                                             const g3 = gameFromEffectContext(ccctx);
                                             g3.corp_prompt_state = null;
                                             if (!std.mem.eql(u8, ct, "No swap")) {
-                                                // Parse "HQ: title" or "Archives: title" and swap
-                                                if (std.mem.startsWith(u8, ct, "HQ: ")) {
-                                                    const title = ct["HQ: ".len..];
-                                                    for (g3.corp_hand.items, 0..) |c, idx| {
-                                                        if (std.mem.eql(u8, c.title, title)) {
-                                                            _ = g3.corp_hand.orderedRemove(idx);
-                                                            // TODO: actual swap with approached ice (complex run state manipulation)
-                                                            g3.systemMsg(.corp, 35056, "Mitra Aman: Corp swaps approached ice with {s} from HQ.", .{title});
-                                                            break;
+                                                // Find the approached ice position
+                                                const run = g3.run orelse {
+                                                    try continueServerApproach(g3);
+                                                    return;
+                                                };
+                                                const target_srv = findServerByRunPath(g3.corp_servers.items, run.server) catch {
+                                                    try continueServerApproach(g3);
+                                                    return;
+                                                };
+                                                const srv = &g3.corp_servers.items[target_srv.index];
+                                                const ice_count = srv.ices.items.len;
+                                                const ice_pos = ice_count -| (run.position + 1);
+                                                if (ice_pos < ice_count) {
+                                                    // Remove approached ice, put it where the new ice came from
+                                                    const old_ice = srv.ices.orderedRemove(ice_pos);
+                                                    var new_ice: ?state.CardInstance = null;
+                                                    if (std.mem.startsWith(u8, ct, "HQ: ")) {
+                                                        const title = ct["HQ: ".len..];
+                                                        for (g3.corp_hand.items, 0..) |c2, idx2| {
+                                                            if (std.mem.eql(u8, c2.title, title)) {
+                                                                new_ice = g3.corp_hand.orderedRemove(idx2);
+                                                                break;
+                                                            }
                                                         }
+                                                        // Old ice goes to HQ
+                                                        try g3.corp_hand.append(g3.backing_allocator, old_ice);
+                                                    } else if (std.mem.startsWith(u8, ct, "Archives: ")) {
+                                                        const title = ct["Archives: ".len..];
+                                                        for (g3.corp_discard.items, 0..) |c2, idx2| {
+                                                            if (std.mem.eql(u8, c2.title, title)) {
+                                                                new_ice = g3.corp_discard.orderedRemove(idx2);
+                                                                break;
+                                                            }
+                                                        }
+                                                        // Old ice goes to Archives
+                                                        try appendDiscardCard(g3, .corp, old_ice);
                                                     }
-                                                } else if (std.mem.startsWith(u8, ct, "Archives: ")) {
-                                                    const title = ct["Archives: ".len..];
-                                                    for (g3.corp_discard.items, 0..) |c, idx| {
-                                                        if (std.mem.eql(u8, c.title, title)) {
-                                                            _ = g3.corp_discard.orderedRemove(idx);
-                                                            g3.systemMsg(.corp, 35056, "Mitra Aman: Corp swaps approached ice with {s} from Archives.", .{title});
-                                                            break;
-                                                        }
+                                                    if (new_ice) |ni| {
+                                                        try srv.ices.insert(g3.backing_allocator, ice_pos, ni);
+                                                        g3.systemMsg(.corp, 35056, "Mitra Aman: swaps {s} with {s}.", .{ old_ice.title, ni.title });
                                                     }
                                                 }
                                             }
