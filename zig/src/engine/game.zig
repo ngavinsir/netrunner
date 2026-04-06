@@ -739,6 +739,22 @@ pub const elevation_uncovered = MatchupSpec{
     .runner = .{ .identity_code = 30076, .deck_lines = &elevation_uncovered_runner_deck }, // Catalyst
 };
 
+// Magdalene identity test: reuse neutral corp deck, Catalyst runner deck
+pub const elevation_magdalene = MatchupSpec{
+    .format = "system-gateway",
+    .agenda_point_req = 7,
+    .corp = .{ .identity_code = 30059, .deck_lines = &elevation_neutral_corp_deck }, // BTL
+    .runner = .{ .identity_code = 35024, .deck_lines = &elevation_hb_runner_deck }, // Magdalene
+};
+
+// Poetri identity test: reuse HB corp deck (has agendas), Catalyst runner deck
+pub const elevation_poetri = MatchupSpec{
+    .format = "system-gateway",
+    .agenda_point_req = 7,
+    .corp = .{ .identity_code = 35036, .deck_lines = &elevation_hb_corp_deck }, // Poetri
+    .runner = .{ .identity_code = 30076, .deck_lines = &elevation_hb_runner_deck }, // Catalyst
+};
+
 pub fn lookupCardSpecByCode(card_code: u32) ?CardSpec {
     for (all_cards) |spec| {
         if (spec.code == card_code) return spec;

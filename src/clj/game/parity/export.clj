@@ -1538,7 +1538,42 @@
                                      {:qty 1 :card "\"Knickknack\" O'Brian"}
                                      {:qty 2 :card "Hantu"} {:qty 2 :card "Sang Kancil"}
                                      {:qty 3 :card "Smartware Distributor"}
-                                     {:qty 2 :card "Open Market"} {:qty 1 :card "T400 Memory Diamond"}]])
+                                     {:qty 2 :card "Open Market"} {:qty 1 :card "T400 Memory Diamond"}]]
+                         "magdalene" [30059 "Weyland Consortium: Built to Last" 35024 "Magdalene Keino-Chemutai: Cryptarchitect"
+                                      [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Greenmail"}
+                                       {:qty 2 :card "Send a Message"} {:qty 2 :card "Orbital Superiority"}
+                                       {:qty 3 :card "Flyswatter"} {:qty 3 :card "Lamplighter"}
+                                       {:qty 3 :card "Kessleroid"} {:qty 3 :card "Palisade"}
+                                       {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Petty Cash"}
+                                       {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Regolith Mining License"}
+                                       {:qty 2 :card "Seamless Launch"} {:qty 2 :card "Mahkota Langit Grid"}]
+                                      [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                       {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                       {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                       {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                       {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                       {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                       {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                       {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                       {:qty 1 :card "T400 Memory Diamond"}]]
+                         "poetri" [35036 "Poétrï Luxury Brands: All the Rage" 30076 "The Catalyst: Convention Breaker"
+                                   [{:qty 3 :card "Offworld Office"} {:qty 2 :card "Send a Message"}
+                                    {:qty 2 :card "Aggressive Trendsetting"} {:qty 2 :card "Project Ingatan"}
+                                    {:qty 2 :card "Otto Campaign"} {:qty 2 :card "Humanoid Resources"}
+                                    {:qty 2 :card "Bumi 1.0"} {:qty 2 :card "Scatter Field"}
+                                    {:qty 3 :card "Hedge Fund"} {:qty 2 :card "Nanomanagement"}
+                                    {:qty 2 :card "Top-Down Solutions"} {:qty 2 :card "Mercia B4LL4RD"}
+                                    {:qty 3 :card "Palisade"} {:qty 2 :card "Brân 1.0"}
+                                    {:qty 2 :card "Nico Campaign"} {:qty 2 :card "Seamless Launch"}]
+                                   [{:qty 3 :card "Jailbreak"} {:qty 3 :card "Sure Gamble"}
+                                    {:qty 3 :card "Wildcat Strike"} {:qty 2 :card "VRcation"}
+                                    {:qty 1 :card "Tread Lightly"} {:qty 1 :card "Pantograph"}
+                                    {:qty 2 :card "Buzzsaw"} {:qty 2 :card "Cleaver"}
+                                    {:qty 2 :card "Echelon"} {:qty 2 :card "Unity"}
+                                    {:qty 2 :card "Conduit"} {:qty 2 :card "Leech"}
+                                    {:qty 2 :card "Fermenter"} {:qty 2 :card "Smartware Distributor"}
+                                    {:qty 2 :card "Verbal Plasticity"} {:qty 2 :card "Telework Contract"}
+                                    {:qty 1 :card "T400 Memory Diamond"}]])
                        all-card-names (concat (map :card corp-cards) (map :card runner-cards)
                                               [corp-id-title runner-id-title])
                        _ (doseq [card-name all-card-names]
