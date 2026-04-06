@@ -4045,6 +4045,15 @@ fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !vo
         }
     }
 
+    // If the on-rez handler opened a prompt (e.g., Plutus additional cost), present it
+    if (generated.corp_prompt_state) |ps| {
+        if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) {
+            generated.decision_side = .corp;
+            generated.legal_actions = try promptChoiceActions(allocator, .corp, ps);
+            return;
+        }
+    }
+
     // After rezzing, regenerate actions with updated state
     if (generated.run != null) {
         // During a run: corp still has priority

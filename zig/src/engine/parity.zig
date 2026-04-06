@@ -7253,6 +7253,63 @@ test "phat gioan install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
+test "plutus rez with trash-3 cost" {
+    // Verify Plutus rez cost mechanic: corp chooses 3 cards to trash from HQ
+    const allocator = std.testing.allocator;
+    // Find seed where Plutus is in opening hand with enough other cards
+    const seed: u64 = blk: {
+        var s: u64 = 1;
+        while (s < 200) : (s += 1) {
+            var g = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, s);
+            defer g.deinit();
+            try flow.applyMulliganChoice(&g, .corp, .keep);
+            try flow.applyMulliganChoice(&g, .runner, .keep);
+            try generator.corpStartTurnFull(&g);
+            var has_plutus = false;
+            for (g.corp_hand.items) |c| {
+                if (c.code != null and c.code.? == 35073) { has_plutus = true; break; }
+            }
+            if (has_plutus and g.corp_hand.items.len >= 4) break :blk s;
+        }
+        return error.NoSeedFound;
+    };
+    var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
+    defer generated.deinit();
+    try flow.applyMulliganChoice(&generated, .corp, .keep);
+    try flow.applyMulliganChoice(&generated, .runner, .keep);
+    try generator.corpStartTurnFull(&generated);
+    // Install Plutus
+    try flow.applyAction(&generated, findCardInstallByCode(&generated, generated.legal_actions, 35073) orelse return error.MissingAction);
+    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "install-destination", .choice = game.stringChoice("New remote") });
+    // Rez Plutus
+    const rez_action = findRezNonIceAction(generated.legal_actions, "Plutus") orelse return error.MissingAction;
+    try flow.applyAction(&generated, rez_action);
+    // Should have plutus-rez-cost prompt
+    try std.testing.expect(generated.corp_prompt_state != null);
+    try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
+    // Choose trash 3 from HQ
+    const hand_before = generated.corp_hand.items.len;
+    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = game.stringChoice("Trash 3 cards from HQ") });
+    // Pick 3 cards
+    var trashed: u8 = 0;
+    while (trashed < 3) : (trashed += 1) {
+        if (generated.corp_prompt_state == null) break;
+        if (!std.mem.eql(u8, generated.corp_prompt_state.?.prompt_type, "plutus-trash-hq")) break;
+        const first_choice = generated.corp_prompt_state.?.choices[0];
+        try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-trash-hq", .choice = first_choice });
+    }
+    // Verify 3 cards were trashed from HQ
+    try std.testing.expectEqual(hand_before - 3, generated.corp_hand.items.len);
+    // Plutus should be rezzed
+    for (generated.corp_servers.items) |server| {
+        for (server.content.items) |card| {
+            if (card.code != null and card.code.? == 35073) {
+                try std.testing.expect(card.rezzed);
+            }
+        }
+    }
+}
+
 test "plutus install parity test" {
     const allocator = std.testing.allocator;
     const seed: u64 = blk: {
