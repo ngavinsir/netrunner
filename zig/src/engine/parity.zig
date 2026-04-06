@@ -2101,6 +2101,9 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "lie-low")) return "other";
     if (std.mem.eql(u8, prompt_type, "lie-low-tags")) return "other";
     if (std.mem.eql(u8, prompt_type, "scrounge-install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "humanoid-install-card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "humanoid-install-server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "humanoid-operation")) return "select";
     if (std.mem.eql(u8, prompt_type, "peek-rd-trash-one")) return "select";
     if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";
     if (std.mem.eql(u8, prompt_type, "muslihat-reveal")) return "other";
