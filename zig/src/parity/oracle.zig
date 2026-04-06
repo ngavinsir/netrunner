@@ -2270,7 +2270,17 @@ fn getOptionalCardCode(object: std.json.ObjectMap, key: []const u8) !?u32 {
     return switch (value) {
         .null => null,
         .integer => |integer| try castInteger(u32, integer),
-        .string => |text| try std.fmt.parseInt(u32, text, 10),
+        .string => |text| std.fmt.parseInt(u32, text, 10) catch {
+            // Handle non-numeric codes like "35057flip" for flipped identities
+            // Parse the numeric prefix
+            var end: usize = 0;
+            for (text) |c| {
+                if (c < '0' or c > '9') break;
+                end += 1;
+            }
+            if (end == 0) return null;
+            return std.fmt.parseInt(u32, text[0..end], 10) catch null;
+        },
         else => error.UnexpectedType,
     };
 }

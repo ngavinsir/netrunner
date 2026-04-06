@@ -185,14 +185,10 @@ pub const CardSpec = struct {
 
 fn corpGainCreditsPlayAbility(comptime credits: u16, comptime draw: u8) state.AbilitySpec {
     return .{ .is_play = true, .on_use = &struct {
-        fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
+        fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
             const g = gameFromEffectContext(ctx);
             g.corp_credit += credits;
             if (draw > 0) try drawCards(g, .corp, draw);
-            if (credits > 0) {
-                g.turn_events.operation_played_count += 1;
-                _ = try fireEventWith(g, .{ .kind = .operation_played, .source_code = card.code });
-            }
         }
     }.play };
 }

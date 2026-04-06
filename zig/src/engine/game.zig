@@ -3550,8 +3550,21 @@ fn playCorpOperation(
     try spendClicks(generated, .corp, 1);
     try spendCredits(generated, .corp, card.cost orelse 0);
     try logCorpOperationPlay(generated, card, false);
+    // Resolve the operation effect first (like Clojure's play-event order)
     try resolveCorpOperation(generated, card);
     try appendDiscardCard(generated, .corp, card);
+    // Fire operation_played event AFTER resolution (for Nebula flip, Zwicky draw, etc.)
+    // Only fire immediately if no prompt is active (prompt-opening operations like KPI
+    // will fire the event after prompt resolution via logCorpOperationPlayed)
+    generated.turn_events.operation_played_count += 1;
+    if (!hasActivePrompt(generated)) {
+        _ = try fireEventWith(generated, .{ .kind = .operation_played, .source_code = card.code });
+        // Refresh legal actions if event handler changed game state (e.g. Nebula +1 click)
+        if (!hasActivePrompt(generated)) {
+            generated.decision_side = .corp;
+            generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+        }
+    }
 }
 
 fn applyCorpFlashback(generated: *Game, card_index: u8) !void {
@@ -3566,6 +3579,10 @@ fn applyCorpFlashback(generated: *Game, card_index: u8) !void {
     try resolveCorpOperation(generated, card);
     // Flashback always gains 1 click (only Petty Cash uses flashback)
     generated.corp_click += 1;
+    // Fire operation_played event AFTER resolution
+    generated.turn_events.operation_played_count += 1;
+    _ = try fireEventWith(generated, .{ .kind = .operation_played, .source_code = card.code });
+    if (hasActivePrompt(generated)) return;
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
 }

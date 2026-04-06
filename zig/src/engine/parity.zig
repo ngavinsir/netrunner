@@ -9258,13 +9258,14 @@ test "gamedragon pro host icebreaker parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-test "nebula talent mgmt operation play parity test" {
-    // Nebula: play operation on corp turn 1 — verify operation_played event fires
-    // Note: end-turn flip cannot be tested via oracle (oracle crashes on end-turn for flip identities)
+test "nebula talent mgmt flip and click gain parity test" {
+    // Nebula: play operation → end of turn flip to back + gain 1cr
+    // On back face: play non-Terminal operation → gain 1 click
     const allocator = std.testing.allocator;
+    // Need 2 operations: one for turn 1 (triggers flip), one for turn 2 (triggers click gain on back face)
     const seed = findOpeningHandsBySeed(
         matchups.elevation_nbn,
-        &.{"Hedge Fund"},
+        &.{ "Hedge Fund", "Seamless Launch" },
         &.{},
         400,
     ) orelse return error.NoSeedFound;
@@ -9276,9 +9277,22 @@ test "nebula talent mgmt operation play parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Corp turn 1: play Hedge Fund (operation_played event fires, tracked for Nebula flip)
+    // Corp turn 1: play Hedge Fund (operation_played count > 0), end turn → flip to back + 1cr
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Hedge Fund"));
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner turn 1: pass
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try endTurnAndDiscard(allocator, &actions, &generated, .runner);
+
+    // Corp turn 2: play Seamless Launch on back face → should gain 1 click from Nebula ability
+    try takeCorpStartTurn(allocator, &actions, &generated);
+    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Seamless Launch"));
+    // Seamless Launch targets an installed card — resolve the prompt if any
+    if (findPromptText(generated.legal_actions, "Done")) |a| {
+        try takeAction(allocator, &actions, &generated, a);
+    }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
