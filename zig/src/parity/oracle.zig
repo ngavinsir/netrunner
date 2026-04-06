@@ -964,6 +964,20 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
+        // Byte! ambush: Zig uses "No action" / "Pay 4 [Credits]...", Clojure uses "No" / "Yes"
+        if (std.mem.eql(u8, action.prompt_type.?, "byte-ambush")) {
+            try writer.writeByte('{');
+            try writeJsonFieldString(writer, "kind", "prompt-choice", false);
+            try writeJsonFieldString(writer, "side", sideName(action.side), true);
+            if (action.choice) |choice| {
+                if (choice.text) |text| {
+                    const mapped = if (std.mem.eql(u8, text, "No action")) "No" else "Yes";
+                    try writeJsonFieldString(writer, "choice", mapped, true);
+                }
+            }
+            try writer.writeByte('}');
+            return;
+        }
         // Access-choice: when the choice has a card reference (access ability like Gourmand),
         // send as card-based choice so the Clojure oracle can resolve it via cid matching.
         if (std.mem.eql(u8, action.prompt_type.?, "access-choice")) {

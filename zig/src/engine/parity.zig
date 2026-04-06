@@ -2091,6 +2091,7 @@ fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     if (std.mem.eql(u8, prompt_type, "fransofia-bypass")) return "other";
     if (std.mem.eql(u8, prompt_type, "conduit-counter")) return "other";
     if (std.mem.eql(u8, prompt_type, "clearinghouse-trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "byte-ambush")) return "other";
     if (std.mem.eql(u8, prompt_type, "spin-doctor-shuffle")) return "select";
     if (std.mem.eql(u8, prompt_type, "bangun-faceup")) return "other";
     if (std.mem.eql(u8, prompt_type, "bangun-bluff")) return "other";
@@ -9329,10 +9330,11 @@ test "byte ambush on access parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
-    // Runner turn: start run on the Byte! server — run initiates approach
-    // (Byte! ambush fires on access; full resolution has decision-side parity gap — engine TODO)
+    // Runner turn: run the remote — Byte! ambush fires on access
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try applyRunAction(allocator, &actions, &generated, "Server 1");
+    // Resolve run — Byte! ambush prompt appears for corp (pay/no action)
+    try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
@@ -9623,13 +9625,13 @@ test "idiosyncresis advance and start of turn parity test" {
 }
 
 test "mahkota langit grid trash cost increase parity test" {
-    // Mahkota Langit Grid: +2 trash cost for assets in same server + recurring credits
-    // Exercises: install + rez with asset in same server (trash cost static ability active)
-    // (Runner access has run-completion parity gap — engine TODO)
+    // Mahkota Langit Grid: +2 trash cost for assets, recurring credits for rez
+    // Exercises: install Mahkota alone, rez it, end turn (recurring credits refill),
+    // runner runs and accesses Mahkota (trash_cost=2)
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.elevation_neutral,
-        &.{ "Mahkota Langit Grid", "Nico Campaign" },
+        &.{"Mahkota Langit Grid"},
         &.{},
         400,
     ) orelse return error.NoSeedFound;
@@ -9641,15 +9643,19 @@ test "mahkota langit grid trash cost increase parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
 
-    // Corp turn: install Nico + Mahkota in same remote, rez Mahkota
+    // Corp turn: install Mahkota alone in remote, rez it
     try takeCorpStartTurn(allocator, &actions, &generated);
-    try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Nico Campaign"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mahkota Langit Grid"));
-    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Server 1"));
+    try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     if (findRezNonIceAction(generated.legal_actions, "Mahkota Langit Grid")) |rez| {
         try takeAction(allocator, &actions, &generated, rez);
     }
+    try endTurnAndDiscard(allocator, &actions, &generated, .corp);
+
+    // Runner turn: run the server — single card access (Mahkota, trash_cost=2)
+    try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
+    try applyRunAction(allocator, &actions, &generated, "Server 1");
+    try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
