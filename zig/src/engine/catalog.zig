@@ -4104,9 +4104,9 @@ pub const all_cards = [_]CardSpec{
                                 ));
                             }
                         }
-                        // Option 2: trash up to 3 from HQ (if HQ has any cards)
-                        if (g.corp_hand.items.len > 0) {
-                            try choices.append(allocator, stringChoice("Trash up to 3 cards from HQ"));
+                        // Option 2: trash 3 from HQ (requires 3+ cards in HQ)
+                        if (g.corp_hand.items.len >= 3) {
+                            try choices.append(allocator, stringChoice("Trash 3 cards from HQ"));
                         }
                         if (choices.items.len == 0) {
                             // Can't pay additional cost — derez
@@ -4133,7 +4133,7 @@ pub const all_cards = [_]CardSpec{
                                                 break;
                                             }
                                         }
-                                    } else if (std.mem.eql(u8, ct, "Trash up to 3 cards from HQ")) {
+                                    } else if (std.mem.eql(u8, ct, "Trash 3 cards from HQ")) {
                                         // Corp chooses which cards to trash (up to 3)
                                         try beginPlutusTrashPrompt(cg, 0);
                                         return;

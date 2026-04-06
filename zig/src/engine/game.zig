@@ -9828,18 +9828,24 @@ test "Plutus rez cost: corp has scored agenda, chooses forfeit" {
     try std.testing.expect(found_rezzed);
 }
 
-test "Plutus rez cost: no agenda, 1 card in HQ, trashes it" {
+test "Plutus rez cost: no agenda, 1 card in HQ, cannot rez" {
     var generated = try setupPlutusInstalled(std.testing.allocator);
     defer generated.deinit();
     try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(30075)));
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    const credit_before = generated.corp_credit;
     try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
-    try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash up to 3 cards from HQ") });
-    try std.testing.expectEqualStrings("plutus-trash-hq", generated.corp_prompt_state.?.prompt_type);
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-trash-hq", .choice = generated.corp_prompt_state.?.choices[0] });
-    try std.testing.expectEqual(@as(usize, 0), generated.corp_hand.items.len);
+    // Can't pay: no agenda and <3 HQ cards → auto-derez + refund
+    var found_rezzed = false;
+    for (generated.corp_servers.items) |server| {
+        for (server.content.items) |card| {
+            if (card.code != null and card.code.? == 35073 and card.rezzed) found_rezzed = true;
+        }
+    }
+    try std.testing.expect(!found_rezzed);
+    try std.testing.expectEqual(credit_before, generated.corp_credit);
+    try std.testing.expectEqual(@as(usize, 1), generated.corp_hand.items.len); // HQ untouched
 }
 
 test "Plutus rez cost: no agenda, 4 cards in HQ, trashes 3" {
@@ -9852,7 +9858,7 @@ test "Plutus rez cost: no agenda, 4 cards in HQ, trashes 3" {
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
     try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash up to 3 cards from HQ") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash 3 cards from HQ") });
     var t: u8 = 0;
     while (t < 3) : (t += 1) {
         try std.testing.expectEqualStrings("plutus-trash-hq", generated.corp_prompt_state.?.prompt_type);

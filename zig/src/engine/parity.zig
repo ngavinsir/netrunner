@@ -7289,7 +7289,7 @@ test "plutus rez with trash-3 cost" {
     try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
     // Choose trash 3 from HQ
     const hand_before = generated.corp_hand.items.len;
-    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = game.stringChoice("Trash up to 3 cards from HQ") });
+    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = game.stringChoice("Trash 3 cards from HQ") });
     // Pick 3 cards
     var trashed: u8 = 0;
     while (trashed < 3) : (trashed += 1) {
