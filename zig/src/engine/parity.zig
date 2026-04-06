@@ -8854,21 +8854,12 @@ test "mycoweb install parity test" {
 
 test "ip enforcement parity test" {
     const allocator = std.testing.allocator;
-    // Use a seed where IP Enforcement is in the deck but NOT in opening hand
-    // (avoids action-count mismatch from unplayable card in hand)
-    const seed: u64 = blk: {
-        var s: u64 = 1;
-        while (s < 400) : (s += 1) {
-            var g = generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, s) catch continue;
-            defer g.deinit();
-            var found_in_hand = false;
-            for (g.corp_hand.items) |c| {
-                if (c.code != null and c.code.? == 35066) { found_in_hand = true; break; }
-            }
-            if (!found_in_hand) break :blk s;
-        }
-        return error.NoSeedFound;
-    };
+    const seed = findOpeningHandsBySeed(
+        matchups.elevation_uncovered,
+        &.{"IP Enforcement"},
+        &.{},
+        400,
+    ) orelse return error.NoSeedFound;
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;

@@ -4224,14 +4224,8 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Gray Ops"},
         .cost = 0,
 
-        .abilities = &.{.{ .is_play = true, .req = &struct {
-            fn req(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
-                const g = gameFromConstEffectContext(ctx);
-                // Requires runner to be tagged and have stolen agendas
-                const tagged = if (g.runner_tag) |t| t.is_tagged else false;
-                return tagged and g.runner_scored.items.len > 0;
-            }
-        }.req, .on_use = &struct {
+        // No play req — the Clojure lets you play it anytime; tag cost is handled at execution
+        .abilities = &.{.{ .is_play = true, .on_use = &struct {
             fn play(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
                 const g = gameFromEffectContext(ctx);
                 // "As additional cost, remove X tags. Install 1 agenda from Runner's score area with X printed AP."
