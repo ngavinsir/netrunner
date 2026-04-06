@@ -9475,6 +9475,12 @@ test "Bling free install hosts and can play hosted card" {
     try completeRunnerInstall(&generated, 0, bling, 0, false);
 
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items.len);
+    // Bling hosting is now optional — resolve the prompt
+    if (generated.runner_prompt_state) |ps| {
+        if (std.mem.eql(u8, ps.prompt_type, "bling-host")) {
+            try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "bling-host", .choice = stringChoice("Host the top card of your stack on Bling") });
+        }
+    }
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items[0].hosted.len);
     try std.testing.expectEqualStrings("Sure Gamble", generated.runner_rig_hardware.items[0].hosted[0].title);
 
