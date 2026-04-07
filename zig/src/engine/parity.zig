@@ -538,8 +538,9 @@ fn findServerSlotByName(servers: []const state.ServerSlot, name: []const u8) ?st
 }
 
 fn expectOptionalString(expected: ?[]const u8, actual: ?[]const u8) !void {
+    const normalized_expected = normalizePromptType(expected);
     const normalized_actual = normalizePromptType(actual);
-    if (expected) |lhs| {
+    if (normalized_expected) |lhs| {
         if (normalized_actual) |rhs| {
             try std.testing.expectEqualStrings(lhs, rhs);
         } else {
