@@ -127,11 +127,8 @@ fn expectOptionalRun(expected: ?state.RunState, actual: ?state.RunState) !void {
         try std.testing.expectEqual(lhs.position, rhs.position);
         try std.testing.expectEqual(lhs.corp_auto_no_action, rhs.corp_auto_no_action);
         try std.testing.expectEqual(lhs.no_action, rhs.no_action);
-        try std.testing.expectEqualStrings(lhs.phase, rhs.phase);
-        try std.testing.expectEqual(lhs.server.len, rhs.server.len);
-        for (lhs.server, rhs.server) |left, right| {
-            try std.testing.expectEqualStrings(left, right);
-        }
+        try std.testing.expectEqual(lhs.phase, rhs.phase);
+        try std.testing.expectEqual(lhs.server, rhs.server);
     } else {
         try std.testing.expect(actual == null);
     }
@@ -2544,7 +2541,14 @@ fn takeAction(
     generated: *generator.Game,
     selected: state.LegalAction,
 ) !void {
-    try actions.append(allocator, selected);
+    // Dupe dynamic string fields that may reference ephemeral arena memory,
+    // since applyAction will flip the double-buffer and eventually free them.
+    var stored = selected;
+    if (selected.server) |s| stored.server = try allocator.dupe(u8, s);
+    if (selected.choice) |c| {
+        if (c.text) |t| stored.choice.?.text = try allocator.dupe(u8, t);
+    }
+    try actions.append(allocator, stored);
     try flow.applyAction(generated, selected);
 }
 
@@ -2988,8 +2992,8 @@ test "e2e beginner game plays to completion with oracle parity" {
                 std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 if (oracle_snapshot.state.run != null or gen_snapshot.state.run != null)
                     std.debug.print("  run: oracle={s} zig={s}\n", .{
-                        if (oracle_snapshot.state.run) |r| r.phase else "null",
-                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                        if (oracle_snapshot.state.run) |r| r.phase.toStr() else "null",
+                        if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
                 const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
@@ -3061,7 +3065,7 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
         if (gen.runner_prompt_state) |ps| std.debug.print("  runner_prompt={s} choices={d}\n", .{ ps.prompt_type, ps.choices.len });
         if (gen.run) |run| {
             std.debug.print("  run: phase={s} pos={d} no_action={s} jack_out={}\n", .{
-                run.phase,
+                run.phase.toStr(),
                 run.position,
                 if (run.no_action) |na| @tagName(na) else "null",
                 run.jack_out_available,
@@ -4822,8 +4826,8 @@ test "e2e complete game plays to completion with oracle parity" {
                 std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
                     std.debug.print("  run: oracle={s} zig={s}\n", .{
-                        if (replay.snapshot.state.run) |r| r.phase else "null",
-                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                        if (replay.snapshot.state.run) |r| r.phase.toStr() else "null",
+                        if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
                 const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
@@ -4910,8 +4914,8 @@ test "e2e intermediate game plays to completion with oracle parity" {
                 std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ replay.snapshot.state.runner.credit, gen_snapshot.state.runner.credit, replay.snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 if (replay.snapshot.state.run != null or gen_snapshot.state.run != null)
                     std.debug.print("  run: oracle={s} zig={s}\n", .{
-                        if (replay.snapshot.state.run) |r| r.phase else "null",
-                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                        if (replay.snapshot.state.run) |r| r.phase.toStr() else "null",
+                        if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
                 const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
@@ -4990,8 +4994,8 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 if (oracle_snapshot.state.run != null or gen_snapshot.state.run != null)
                     std.debug.print("  run: oracle={s} zig={s}\n", .{
-                        if (oracle_snapshot.state.run) |r| r.phase else "null",
-                        if (gen_snapshot.state.run) |r| r.phase else "null",
+                        if (oracle_snapshot.state.run) |r| r.phase.toStr() else "null",
+                        if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  oracle prompts: corp={s} runner={s}\n", .{
                     if (oracle_snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
@@ -5081,7 +5085,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
             generated.end_turn,
         });
         std.debug.print("  run={s} corp_prompt={s} runner_prompt={s}\n", .{
-            if (generated.run) |run| run.phase else "null",
+            if (generated.run) |run| run.phase.toStr() else "null",
             if (generated.corp_prompt_state) |ps| ps.prompt_type else "null",
             if (generated.runner_prompt_state) |ps| ps.prompt_type else "null",
         });

@@ -776,12 +776,48 @@ pub const LogEntry = struct {
     card_code: u32, // 0 = no associated card
 };
 
+pub const LogRingBuffer = struct {
+    entries: [max_entries]LogEntry = undefined,
+    start: usize = 0,
+    len: usize = 0,
+    allocator: std.mem.Allocator,
+
+    const max_entries = 256;
+
+    pub fn append(self: *LogRingBuffer, entry: LogEntry) void {
+        if (self.len == max_entries) {
+            const oldest_idx = self.start;
+            self.allocator.free(self.entries[oldest_idx].text);
+            self.entries[oldest_idx] = entry;
+            self.start = (self.start + 1) % max_entries;
+        } else {
+            const write_idx = (self.start + self.len) % max_entries;
+            self.entries[write_idx] = entry;
+            self.len += 1;
+        }
+    }
+
+    pub fn get(self: *const LogRingBuffer, index: usize) LogEntry {
+        const actual_idx = (self.start + index) % max_entries;
+        return self.entries[actual_idx];
+    }
+
+    pub fn deinit(self: *LogRingBuffer) void {
+        for (0..self.len) |i| {
+            const idx = (self.start + i) % max_entries;
+            self.allocator.free(self.entries[idx].text);
+        }
+    }
+};
+
 pub const Game = struct {
     arena: std.heap.ArenaAllocator,
+    ephemeral_arenas: [2]std.heap.ArenaAllocator,
+    ephemeral_index: u1 = 0,
     backing_allocator: std.mem.Allocator,
 
     // --- Game log (engine-level, like Clojure's system-msg) ---
-    log_entries: std.ArrayListUnmanaged(LogEntry) = .empty,
+    log_entries: LogRingBuffer,
 
     // --- Internal card collections (source of truth) ---
     corp_hand: std.ArrayListUnmanaged(state.CardInstance) = .empty,
@@ -865,6 +901,11 @@ pub const Game = struct {
     // Typed effect context (replaces @ptrCast to anyopaque)
     effect_ctx: state.EffectContext = .{ .game_ptr = undefined },
 
+    /// Returns the current ephemeral allocator (for allocations that live until the next applyAction call).
+    pub fn ephemeralAllocator(self: *Game) std.mem.Allocator {
+        return self.ephemeral_arenas[self.ephemeral_index].allocator();
+    }
+
     pub fn deinit(self: *Game) void {
         for (self.corp_servers.items) |*server| {
             server.ices.deinit(self.backing_allocator);
@@ -885,23 +926,20 @@ pub const Game = struct {
         self.pending_effects.deinit(self.backing_allocator);
         self.floating_effects.deinit(self.backing_allocator);
         self.pending_sprint_selections.deinit(self.backing_allocator);
-        for (self.log_entries.items) |entry| {
-            self.backing_allocator.free(entry.text);
-        }
-        self.log_entries.deinit(self.backing_allocator);
+        self.log_entries.deinit();
+        self.ephemeral_arenas[0].deinit();
+        self.ephemeral_arenas[1].deinit();
         self.arena.deinit();
         self.* = undefined;
     }
 
     pub fn systemMsg(self: *Game, side: state.Side, card_code: u32, comptime fmt: []const u8, args: anytype) void {
         const text = std.fmt.allocPrint(self.backing_allocator, fmt, args) catch return;
-        self.log_entries.append(self.backing_allocator, .{
+        self.log_entries.append(.{
             .side = side,
             .text = text,
             .card_code = card_code,
-        }) catch {
-            self.backing_allocator.free(text);
-        };
+        });
     }
 
     pub fn hasInstalledCards(self: *const Game) bool {
@@ -910,7 +948,7 @@ pub const Game = struct {
 
     pub fn toSnapshot(self: *Game) !state.GameSnapshot {
         refreshDerivedStates(self);
-        const allocator = self.arena.allocator();
+        const allocator = self.ephemeralAllocator();
 
         // Deep clone servers
         const servers = try allocator.alloc(state.ServerSlot, self.corp_servers.items.len);
@@ -1072,7 +1110,7 @@ pub fn gameFromConstEffectContext(ctx: *const state.EffectContext) *const Game {
 
 /// Check if a card has GAMEDRAGON Pro hosted on it (extends pump duration to end-of-run).
 fn hasGamedragonHosted(card: state.CardInstance) bool {
-    for (card.hosted) |h| {
+    for (card.hosted.items) |h| {
         if (h.code != null and h.code.? == 35027) return true;
     }
     return false;
@@ -1205,7 +1243,7 @@ pub fn sumStaticEffects(
             total += sumStaticEffectsInCards(game, game.runner_rig_resources.items, kind, target);
             for (game.corp_servers.items) |server| {
                 for (server.ices.items) |ice| {
-                    total += sumStaticEffectsInCards(game, ice.hosted, kind, target);
+                    total += sumStaticEffectsInCards(game, ice.hosted.items, kind, target);
                 }
             }
         },
@@ -1279,7 +1317,9 @@ pub fn createInitialSnapshot(
 
     var game = Game{
         .arena = arena,
+        .ephemeral_arenas = .{ std.heap.ArenaAllocator.init(backing_allocator), std.heap.ArenaAllocator.init(backing_allocator) },
         .backing_allocator = backing_allocator,
+        .log_entries = .{ .allocator = backing_allocator },
     };
     errdefer game.deinit();
 
@@ -1318,7 +1358,7 @@ pub fn createInitialSnapshot(
     game.corp_agenda_point_req = matchup.agenda_point_req;
     game.corp_keep = .undecided;
     game.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "mulligan"),
+        .prompt_type = "mulligan",
         .choices = mulligan_prompt,
         .source_card = null,
     };
@@ -1329,7 +1369,7 @@ pub fn createInitialSnapshot(
     game.runner_agenda_point_req = matchup.agenda_point_req;
     game.runner_keep = .undecided;
     game.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "waiting"),
+        .prompt_type = "waiting",
         .choices = &.{},
         .source_card = null,
     };
@@ -1369,6 +1409,12 @@ pub fn applyAction(
     action: state.LegalAction,
 ) !void {
     if (generated.decision_side != action.side) return error.NotCurrentDecision;
+
+    // Flip to the other ephemeral arena and reset it. Data from the previous
+    // action (on the other arena) remains valid for reading action parameters
+    // and prompt state during this call.
+    generated.ephemeral_index ^= 1;
+    _ = generated.ephemeral_arenas[generated.ephemeral_index].reset(.retain_capacity);
 
     switch (action.kind) {
         .prompt_choice => {
@@ -1446,7 +1492,7 @@ pub fn applyMulliganChoice(
     if (choice == .undecided) return error.InvalidChoice;
     if (generated.decision_side != side) return error.NotCurrentDecision;
 
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const hand = handList(generated, side).items;
     const deck = deckList(generated, side).items;
     switch (side) {
@@ -1475,13 +1521,13 @@ pub fn applyMulliganChoice(
     switch (side) {
         .corp => {
             generated.corp_prompt_state = .{
-                .prompt_type = try allocator.dupe(u8, "waiting"),
+                .prompt_type = "waiting",
                 .choices = &.{},
                 .source_card = null,
             };
 
             generated.runner_prompt_state = .{
-                .prompt_type = try allocator.dupe(u8, "mulligan"),
+                .prompt_type = "mulligan",
                 .choices = try dupPromptChoices(allocator),
                 .source_card = null,
             };
@@ -1503,7 +1549,7 @@ pub fn applyStartTurn(
 ) !void {
     if (generated.decision_side != side) return error.NotCurrentDecision;
 
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     if (!generated.end_turn) return error.TurnAlreadyStarted;
 
     generated.systemMsg(side, 0, "{s} starts their turn.", .{sideName(side)});
@@ -1565,7 +1611,7 @@ pub fn applyEndTurn(
 }
 
 fn beginDiscardPrompt(generated: *Game, side: state.Side, discard_count: usize) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const hand = handList(generated, side).items;
     const choices = try allocator.alloc(state.PromptChoice, hand.len);
     for (hand, 0..) |card, idx| {
@@ -1583,7 +1629,7 @@ fn beginDiscardPrompt(generated: *Game, side: state.Side, discard_count: usize) 
         .corp => generated.corp_prompt_state,
         .runner => generated.runner_prompt_state,
     }) = .{
-        .prompt_type = try allocator.dupe(u8, prompt_discard),
+        .prompt_type = prompt_discard,
         .choices = choices,
         .source_card = null,
         .min_choices = @intCast(discard_count),
@@ -1626,7 +1672,7 @@ fn applyDiscardChoice(generated: *Game, side: state.Side, choice_text: []const u
     if (side == .runner) {
         _ = try fireEvent(generated, .runner_discarded_to_hand_size);
         if (generated.runner_prompt_state) |ps| {
-            const allocator = generated.arena.allocator();
+            const allocator = generated.ephemeralAllocator();
             generated.decision_side = .runner;
             generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
             return;
@@ -1646,7 +1692,7 @@ fn finishEndTurn(generated: *Game, side: state.Side) !void {
     generated.systemMsg(side, 0, "{s} ends their turn.", .{sideName(side)});
     const next_side = otherSide(side);
     generated.end_turn = true;
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     // Clear any discard prompt
     switch (side) {
         .corp => generated.corp_prompt_state = null,
@@ -1827,7 +1873,7 @@ fn applyPromptChoice(
         // Only auto-update opening actions if the handler didn't change decision_side
         // AND there's no active run (run prompts must handle their own continuation).
         if (generated.decision_side == decision_before and generated.run == null) {
-            const allocator = generated.arena.allocator();
+            const allocator = generated.ephemeralAllocator();
             if (side == .corp) {
                 generated.decision_side = .corp;
                 generated.legal_actions = try corpOpeningActionsForState(allocator, generated);
@@ -1846,7 +1892,7 @@ fn applyPromptChoice(
             generated.corp_prompt_state = null;
             if (try resumePendingEffects(generated)) return;
             generated.decision_side = .corp;
-            generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+            generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
             return;
         }
         // Find the card in Archives by title and move to HQ
@@ -1860,7 +1906,7 @@ fn applyPromptChoice(
         generated.corp_prompt_state = null;
         if (try resumePendingEffects(generated)) return;
         generated.decision_side = .corp;
-        generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+        generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
         return;
     }
 
@@ -1943,7 +1989,7 @@ fn applyCorpBasicActionAbility(
     }
 
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 fn applyRunnerBasicActionAbility(
@@ -1983,7 +2029,7 @@ fn applyRunnerBasicActionAbility(
 
     generated.decision_side = .runner;
     generated.legal_actions = try runnerOpeningActionsForState(
-        generated.arena.allocator(),
+        generated.ephemeralAllocator(),
         generated,
     );
 }
@@ -1995,7 +2041,7 @@ const InstalledTarget = struct {
 };
 
 fn beginAdvanceInstalledPrompt(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const choices = try installedCardChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) {
         generated.decision_side = .corp;
@@ -2004,7 +2050,7 @@ fn beginAdvanceInstalledPrompt(generated: *Game) !void {
     }
 
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_advance_installed),
+        .prompt_type = prompt_advance_installed,
         .choices = choices,
         .source_card = null,
     };
@@ -2023,16 +2069,16 @@ fn applyAdvanceInstalledChoice(
     generated.systemMsg(.corp, advanced_card.code orelse 0, "Corp spends [click] and pays 1 [credit] to advance {s}.", .{advanced_card.title});
     generated.corp_prompt_state = null;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 fn beginScoreAgendaPrompt(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const choices = try scoreableAgendaChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return error.UnsupportedAbility;
 
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_score_agenda),
+        .prompt_type = prompt_score_agenda,
         .choices = choices,
         .source_card = null,
     };
@@ -2345,7 +2391,7 @@ pub fn purgeVirusCounters(generated: *Game) void {
     // Also purge from trojans hosted on ICE
     for (generated.corp_servers.items) |*server| {
         for (server.ices.items) |*ice| {
-            for (ice.hosted) |*hosted| {
+            for (ice.hosted.items) |*hosted| {
                 hosted.virus_counter = 0;
             }
         }
@@ -2442,11 +2488,11 @@ fn findCardByEventSource(generated: *Game, src: EventSource) ?*state.CardInstanc
                 const server = &generated.corp_servers.items[src.server_index];
                 if (src.parent_index < server.ices.items.len) {
                     const ice = &server.ices.items[src.parent_index];
-                    if (src.index < ice.hosted.len) {
-                        const card = &ice.hosted[src.index];
+                    if (src.index < ice.hosted.items.len) {
+                        const card = &ice.hosted.items[src.index];
                         if (card.code != null and card.code.? == src.code) return card;
                     }
-                    for (ice.hosted) |*card| {
+                    for (ice.hosted.items) |*card| {
                         if (card.code != null and card.code.? == src.code) return card;
                     }
                 }
@@ -2580,14 +2626,14 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                     return false;
                 }
 
-                const allocator = generated.arena.allocator();
+                const allocator = generated.ephemeralAllocator();
                 generated.runner_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, "waiting"),
+                    .prompt_type = "waiting",
                     .choices = &.{},
                     .source_card = null,
                 };
                 generated.corp_prompt_state = .{
-                    .prompt_type = try allocator.dupe(u8, prompt_access_cleanup),
+                    .prompt_type = prompt_access_cleanup,
                     .choices = try singleStringChoice(allocator, "Done"),
                     .source_card = info.accessed,
                 };
@@ -2607,7 +2653,7 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                 }
                 generated.corp_prompt_state = null;
                 generated.decision_side = .corp;
-                generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+                generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
                 return false;
             },
         }
@@ -2678,7 +2724,7 @@ pub fn collectEventHandlers(generated: *Game, payload: state.EffectContext.Event
             if (ice.rezzed) {
                 try appendEventHandlersForCard(ice, .corp, .corp_server_content, @intCast(ice_idx), @intCast(server_idx), 0, event, payload, &handlers, allocator);
             }
-            for (ice.hosted, 0..) |hosted, hosted_idx| {
+            for (ice.hosted.items, 0..) |hosted, hosted_idx| {
                 try appendEventHandlersForCard(hosted, .runner, .corp_ice_hosted, @intCast(hosted_idx), @intCast(server_idx), @intCast(ice_idx), event, payload, &handlers, allocator);
             }
         }
@@ -2736,14 +2782,14 @@ fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
         generated.runner_prompt_state = null;
         if (try resumePendingEffects(generated)) return;
         generated.decision_side = .corp;
-        generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+        generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
         return;
     }
 
     if (generated.tao_first_ice == null) {
         // First ICE selected — store it and present second pick (excluding the first)
         generated.tao_first_ice = choice_text;
-        const allocator = generated.arena.allocator();
+        const allocator = generated.ephemeralAllocator();
         var choices: std.ArrayList(state.PromptChoice) = .empty;
         defer choices.deinit(allocator);
         for (generated.corp_servers.items, 0..) |server, si| {
@@ -2755,7 +2801,7 @@ fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
         }
         try choices.append(allocator, stringChoice("Done"));
         generated.runner_prompt_state = .{
-            .prompt_type = try allocator.dupe(u8, "tao-swap-ice"),
+            .prompt_type = "tao-swap-ice",
             .choices = try choices.toOwnedSlice(allocator),
             .source_card = null,
             .min_choices = 1,
@@ -2784,7 +2830,7 @@ fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
     generated.runner_prompt_state = null;
     if (try resumePendingEffects(generated)) return;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
@@ -2804,15 +2850,11 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     installed_card.credit_counter = installed_card.initial_credit_counters;
     clearAbilityUsage(&installed_card);
     // Host trojan on the ICE card (matching Clojure's model)
-    const allocator = generated.arena.allocator();
     var ice = &generated.corp_servers.items[server_idx].ices.items[ice_idx];
-    const new_hosted = try allocator.alloc(state.CardInstance, ice.hosted.len + 1);
-    @memcpy(new_hosted[0..ice.hosted.len], ice.hosted);
-    new_hosted[ice.hosted.len] = installed_card;
-    ice.hosted = new_hosted;
+    try ice.hosted.append(generated.arena.allocator(), installed_card);
     generated.runner_install_context = .{ .install_cost = pending.runner_install_cost };
     defer generated.runner_install_context = null;
-    applyRunnerInstalledCardCounters(generated, &ice.hosted[ice.hosted.len - 1]);
+    applyRunnerInstalledCardCounters(generated, &ice.hosted.items[ice.hosted.items.len - 1]);
 
     generated.turn_events.programs_installed_this_turn += 1;
     if (generated.runner_memory) |*mem| {
@@ -2823,7 +2865,7 @@ fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     generated.runner_prompt_state = null;
     if (try resumePendingEffects(generated)) return;
     generated.decision_side = .runner;
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 pub fn runner_had_successful_run_last_turn(generated: *const Game) bool {
@@ -2904,7 +2946,7 @@ pub fn isIcebreaker(card: state.CardInstance) bool {
 fn iceHasSubtype(ice: state.CardInstance, subtype: []const u8) bool {
     if (hasSubtype(ice, subtype)) return true;
     // Chromatophores: hosted trojan with gain_subtype adds all subtypes to host ICE
-    for (ice.hosted) |hosted| {
+    for (ice.hosted.items) |hosted| {
         for (hosted.static_abilities) |sa| {
             if (sa.kind == .gain_subtype) return true;
         }
@@ -2923,7 +2965,7 @@ pub fn canBreakIceType(breaker: state.CardInstance, ice: state.CardInstance) boo
 pub fn effectiveStrength(card: state.CardInstance) u8 {
     var base: i16 = @intCast(card.current_strength orelse card.strength orelse 0);
     // Add unconditional strength bonuses from hosted items (e.g., GAMEDRAGON Pro)
-    for (card.hosted) |hosted| {
+    for (card.hosted.items) |hosted| {
         for (hosted.static_abilities) |sa| {
             if (sa.kind == .self_strength and sa.req == null) {
                 base += sa.value;
@@ -2933,7 +2975,7 @@ pub fn effectiveStrength(card: state.CardInstance) u8 {
     return if (base > 0) @intCast(base) else 0;
 }
 
-fn effectiveIceStrength(g: *const Game, card: state.CardInstance, server_path: []const []const u8, ice_strength_modifier: i8) u8 {
+fn effectiveIceStrength(g: *const Game, card: state.CardInstance, server_path: state.ServerPath, ice_strength_modifier: i8) u8 {
     _ = server_path;
     const base = card.strength orelse 0;
     const static_bonus = sumCardStaticEffects(g, &card, .self_strength, null);
@@ -2951,7 +2993,7 @@ pub fn effectiveIceStrengthForDisplay(generated: *const Game, server_index: usiz
 
     var modifier: i8 = 0;
     if (generated.run) |run| {
-        if (run.server.len > 0 and std.mem.eql(u8, run.server[0], server.name)) {
+        if (run.server.matchesName(server.name)) {
             if (run.current_ice_index) |current_ice_idx| {
                 const ice_count = server.ices.items.len;
                 if (current_ice_idx < ice_count) {
@@ -2964,13 +3006,12 @@ pub fn effectiveIceStrengthForDisplay(generated: *const Game, server_index: usiz
         }
     }
 
-    const server_path = [_][]const u8{server.name};
-    return effectiveIceStrength(generated, ice, &server_path, modifier);
+    const server_path = state.ServerPath.fromInternalName(server.name) catch return null;
+    return effectiveIceStrength(generated, ice, server_path, modifier);
 }
 
-fn isRemoteServerPath(server_path: []const []const u8) bool {
-    if (server_path.len == 0) return false;
-    return std.mem.startsWith(u8, server_path[0], "remote");
+fn isRemoteServerPath(server_path: state.ServerPath) bool {
+    return server_path == .remote;
 }
 
 pub fn wildcat_strike_choices(allocator: std.mem.Allocator) ![]const state.PromptChoice {
@@ -3009,10 +3050,10 @@ fn applyCorpPlayFromHand(
     }
 
     if (card.install.kind != .none) {
-        const allocator = generated.arena.allocator();
+        const allocator = generated.ephemeralAllocator();
         const is_ice = std.mem.eql(u8, card_type, "ICE");
         generated.corp_prompt_state = .{
-            .prompt_type = try allocator.dupe(u8, prompt_install_destination),
+            .prompt_type = prompt_install_destination,
             .choices = if (is_ice)
                 try iceInstallChoices(allocator, generated)
             else
@@ -3059,7 +3100,7 @@ fn applyPendingInstallChoice(
     generated.corp_prompt_state = null;
     generated.pending_install = null;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 fn iceInstallCost(generated: *const Game, choice_text: []const u8) u16 {
@@ -3165,7 +3206,7 @@ fn applyTrashOnAccess(generated: *Game, accessed: state.CardInstance) !void {
 }
 
 pub fn finishAccessCard(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_prompt_state = null;
 
     if (generated.run == null) {
@@ -3180,7 +3221,7 @@ pub fn finishAccessCard(generated: *Game) !void {
     // (matches Clojure's recursive access flow — no continues between accesses)
     if (run.accesses_remaining > 0) {
         if (try prepareNextAccess(generated)) {
-            run.phase = try allocator.dupe(u8, "success");
+            run.phase = .success;
             generated.decision_side = .runner;
             if (generated.runner_prompt_state) |ps| {
                 generated.legal_actions = try promptChoiceActions(allocator, .runner, ps);
@@ -3191,8 +3232,8 @@ pub fn finishAccessCard(generated: *Game) !void {
         }
     }
 
-    if (std.mem.eql(u8, run.server[0], "rnd")) {
-        run.phase = try allocator.dupe(u8, "success");
+    if (run.server == .rnd) {
+        run.phase = .success;
         generated.decision_side = .runner;
         generated.legal_actions = try continueActionsForRun(allocator, .runner, run.*);
         return;
@@ -3213,7 +3254,7 @@ fn applyStealAgendaChoice(
     generated.systemMsg(.runner, accessed.code orelse 0, "Runner steals {s} and gains {d} agenda point{s}.", .{
         accessed.title, stolen_points, if (stolen_points != 1) "s" else "",
     });
-    const is_central = if (generated.run) |run| isCentralRunServer(run.server) else false;
+    const is_central = if (generated.run) |run| run.server.isCentral() else false;
     // Apply tags_on_steal floating effects immediately on steal
     const tags_from_effects = sumFloatingEffects(generated, .tags_on_steal);
     if (tags_from_effects > 0) {
@@ -3246,17 +3287,17 @@ pub fn beginRezIceFreePrompt(
     generated: *Game,
     accessed: state.CardInstance,
 ) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const choices = try rezIceFreeChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return false;
 
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "waiting"),
+        .prompt_type = "waiting",
         .choices = &.{},
         .source_card = null,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_rez_ice_free),
+        .prompt_type = prompt_rez_ice_free,
         .choices = choices,
         .source_card = accessed,
     };
@@ -3273,17 +3314,17 @@ pub fn beginRezIceFreePromptForScore(
     generated: *Game,
     scored_agenda: state.CardInstance,
 ) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const choices = try rezIceFreeChoices(allocator, generated.corp_servers.items);
     if (choices.len == 0) return false;
 
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_rez_ice_free_score),
+        .prompt_type = prompt_rez_ice_free_score,
         .choices = choices,
         .source_card = scored_agenda,
     };
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "waiting"),
+        .prompt_type = "waiting",
         .choices = &.{},
         .source_card = null,
     };
@@ -3319,7 +3360,7 @@ fn applyRezIceFreeScoreChoice(
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 fn continueOrCompleteAfterSteal(
@@ -3329,13 +3370,13 @@ fn continueOrCompleteAfterSteal(
     updateTerminalState(generated);
     if (generated.game_over) return;
 
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     if (is_central) {
         generated.runner_prompt_state = null;
         generated.corp_prompt_state = null;
         generated.run.?.no_action = null;
         if (generated.run.?.accesses_remaining > 0) {
-            generated.run.?.phase = try allocator.dupe(u8, "success");
+            generated.run.?.phase = .success;
             generated.decision_side = .corp;
             generated.legal_actions = try continueActionsForRun(allocator, .corp, generated.run);
             return;
@@ -3394,7 +3435,7 @@ fn applyJackOut(
     if (!run.jack_out_available) return error.JackOutNotAvailable;
 
     generated.systemMsg(.runner, 0, "Runner jacks out.", .{});
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     endOfRunCleanup(generated);
     generated.run = null;
     generated.corp_prompt_state = null;
@@ -3503,7 +3544,7 @@ fn applyUseSubroutine(
     }
 
     // Generate new legal actions - still in encounter, can break more or continue
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.decision_side = .runner;
     generated.legal_actions = try encounterActionsForState(allocator, generated, ice.*);
 }
@@ -3514,7 +3555,7 @@ fn removeRunAccessedCard(
 ) !void {
     const access_index = run.access_card_index orelse return error.MissingAccessTarget;
     const target_server = try findServerByRunPath(generated.corp_servers.items, run.server);
-    if (std.mem.eql(u8, run.server[0], "hq")) {
+    if (run.server == .hq) {
         if (access_index >= generated.corp_hand.items.len) return error.MissingAccessTarget;
         _ = generated.corp_hand.orderedRemove(access_index);
         // Adjust tracked accessed indexes: shift down indexes > removed index
@@ -3523,12 +3564,12 @@ fn removeRunAccessedCard(
         }
         return;
     }
-    if (std.mem.eql(u8, run.server[0], "rnd")) {
+    if (run.server == .rnd) {
         if (access_index >= generated.corp_deck.items.len) return error.MissingAccessTarget;
         _ = generated.corp_deck.orderedRemove(access_index);
         return;
     }
-    if (std.mem.eql(u8, run.server[0], "archives")) {
+    if (run.server == .archives) {
         if (access_index >= generated.corp_discard.items.len) return error.MissingAccessTarget;
         _ = generated.corp_discard.orderedRemove(access_index);
         return;
@@ -3614,7 +3655,7 @@ fn playCorpOperation(
         // Refresh legal actions if event handler changed game state (e.g. Nebula +1 click)
         if (!hasActivePrompt(generated)) {
             generated.decision_side = .corp;
-            generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+            generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
         }
     }
 }
@@ -3636,7 +3677,7 @@ fn applyCorpFlashback(generated: *Game, card_index: u8) !void {
     _ = try fireEventWith(generated, .{ .kind = .operation_played, .source_code = card.code });
     if (hasActivePrompt(generated)) return;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 pub fn logCorpOperationPlay(generated: *Game, card: state.CardInstance, from_archives: bool) !void {
@@ -3668,7 +3709,7 @@ pub fn resolveCorpOperation(generated: *Game, card: state.CardInstance) !void {
     try handler(effectContext(generated), &mutable_card);
     if (generated.corp_prompt_state != null or generated.runner_prompt_state != null) return;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
 }
 
 pub fn applyRunnerPlayFromHand(
@@ -3743,9 +3784,9 @@ pub fn runnerHandInstallableByEffect(generated: *const Game, card: state.CardIns
 }
 
 pub fn beginRunnerOptionalInstallConfirmPrompt(generated: *Game, source_instance_id: u32, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "runner-bonus-install-confirm"),
+        .prompt_type = "runner-bonus-install-confirm",
         .choices = try allocator.dupe(state.PromptChoice, &.{ stringChoice("Yes"), stringChoice("No") }),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -3755,7 +3796,7 @@ pub fn beginRunnerOptionalInstallConfirmPrompt(generated: *Game, source_instance
 }
 
 pub fn beginRunnerOptionalInstallPrompt(generated: *Game, source_instance_id: u32, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
 
@@ -3772,7 +3813,7 @@ pub fn beginRunnerOptionalInstallPrompt(generated: *Game, source_instance_id: u3
 
     try choices.append(allocator, stringChoice("No action"));
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "runner-bonus-install"),
+        .prompt_type = "runner-bonus-install",
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -3790,7 +3831,7 @@ pub fn beginRunnerInstallFromHand(generated: *Game, card_index: u8, spend_click:
     const install_cost = runnerInstallCostForCard(generated, &card);
 
     if (hasSubtype(card, "Trojan")) {
-        const allocator = generated.arena.allocator();
+        const allocator = generated.ephemeralAllocator();
         var choices: std.ArrayList(state.PromptChoice) = .empty;
         defer choices.deinit(allocator);
         for (generated.corp_servers.items, 0..) |server, si| {
@@ -3807,7 +3848,7 @@ pub fn beginRunnerInstallFromHand(generated: *Game, card_index: u8, spend_click:
             .runner_spend_click = spend_click,
         };
         generated.runner_prompt_state = .{
-            .prompt_type = try allocator.dupe(u8, "trojan-host"),
+            .prompt_type = "trojan-host",
             .choices = try choices.toOwnedSlice(allocator),
             .source_card = card,
         };
@@ -3832,7 +3873,7 @@ pub fn beginRunnerInstallFromHand(generated: *Game, card_index: u8, spend_click:
 }
 
 pub fn completeRunnerInstall(generated: *Game, card_index: u8, _: state.CardInstance, install_cost: u16, spend_click: bool) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     // Auto-spend eligible pay-credits for runner install
     const target_card = if (card_index < generated.runner_hand.items.len) &generated.runner_hand.items[card_index] else null;
     const actual_cost = spendPayCredits(generated, install_cost, .runner_install, target_card);
@@ -3918,28 +3959,28 @@ fn applyRun(
     if (generated.active_player != side) return error.NotActivePlayer;
     if (side != .runner) return error.UnsupportedSide;
 
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     try spendClicks(generated, .runner, 1);
 
-    const run_server = try canonicalRunServer(allocator, server);
+    const run_server = try canonicalRunServer(server);
     generated.systemMsg(.runner, 0, "Runner spends [click] to make a run on {s}.", .{server});
     trackMadeRun(generated, run_server);
     const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
     const initial_position: u8 = @intCast(target_server.slot.ices.items.len);
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "run"),
+        .prompt_type = "run",
         .choices = &.{},
         .source_card = null,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "run"),
+        .prompt_type = "run",
         .choices = &.{},
         .source_card = null,
     };
     generated.run = .{
         .server = run_server,
         .position = initial_position,
-        .phase = try allocator.dupe(u8, "initiation"),
+        .phase = .initiation,
         .encounter_phase = .none,
         .current_ice_index = null,
         .corp_auto_no_action = false,
@@ -3961,8 +4002,8 @@ pub fn applyRunFromAbility(
     server: []const u8,
     source_instance_id: ?u32,
 ) !void {
-    const allocator = generated.arena.allocator();
-    const run_server = try canonicalRunServer(allocator, server);
+    const allocator = generated.ephemeralAllocator();
+    const run_server = try canonicalRunServer(server);
     const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
     const initial_position: u8 = @intCast(target_server.slot.ices.items.len);
 
@@ -3970,19 +4011,19 @@ pub fn applyRunFromAbility(
     trackMadeRun(generated, run_server);
 
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "run"),
+        .prompt_type = "run",
         .choices = &.{},
         .source_card = null,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "run"),
+        .prompt_type = "run",
         .choices = &.{},
         .source_card = null,
     };
     generated.run = .{
         .server = run_server,
         .position = initial_position,
-        .phase = try allocator.dupe(u8, "initiation"),
+        .phase = .initiation,
         .encounter_phase = .none,
         .current_ice_index = null,
         .corp_auto_no_action = false,
@@ -4004,7 +4045,7 @@ fn applyContinue(
     generated: *Game,
     side: state.Side,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
 
     // Corp phase 12: both sides pass priority before main phase
     if (generated.corp_phase_12) {
@@ -4025,7 +4066,7 @@ fn applyContinue(
     if (run.* == null) return error.NoRunInProgress;
     if (generated.decision_side != side) return error.NotCurrentDecision;
 
-    if (std.mem.eql(u8, run.*.?.phase, "success")) return try advanceSuccessPhase(generated, side);
+    if (run.*.?.phase == .success) return try advanceSuccessPhase(generated, side);
 
     if (run.*.?.no_action == null) {
         run.*.?.no_action = side;
@@ -4037,16 +4078,16 @@ fn applyContinue(
     if (run.*.?.no_action.? == side) return error.InvalidAction;
 
     run.*.?.no_action = null;
-    if (std.mem.eql(u8, run.*.?.phase, "initiation")) return try advanceInitiationPhase(generated);
-    if (std.mem.eql(u8, run.*.?.phase, "approach-ice")) return try advanceApproachIcePhase(generated);
-    if (std.mem.eql(u8, run.*.?.phase, "encounter-ice")) return try advanceEncounterPhase(generated);
-    if (std.mem.eql(u8, run.*.?.phase, "movement")) return try advanceMovementPhase(generated);
+    if (run.*.?.phase == .initiation) return try advanceInitiationPhase(generated);
+    if (run.*.?.phase == .approach_ice) return try advanceApproachIcePhase(generated);
+    if (run.*.?.phase == .encounter_ice) return try advanceEncounterPhase(generated);
+    if (run.*.?.phase == .movement) return try advanceMovementPhase(generated);
 
     return error.UnsupportedRunPhase;
 }
 
 fn applyRezApproachedIce(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const target = (try currentApproachedIce(generated)) orelse return error.UnsupportedChoice;
     if (target.ice.rezzed) return error.UnsupportedChoice;
     const rez_cost = target.ice.cost orelse 0;
@@ -4080,9 +4121,9 @@ fn applyRezApproachedIce(generated: *Game) !void {
 }
 
 fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !void {
-    const allocator = generated.arena.allocator();
-    const server_path = [_][]const u8{server_name};
-    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, &server_path);
+    const allocator = generated.ephemeralAllocator();
+    const server_path = try state.ServerPath.fromInternalName(server_name);
+    const target_server = try findMutableServerByRunPath(generated.corp_servers.items, server_path);
     const server = &generated.corp_servers.items[target_server.index];
 
     if (card_index >= server.content.items.len) return error.InvalidCardIndex;
@@ -4144,7 +4185,7 @@ const ApproachedIceTarget = struct {
 // Find approached ice using internal mutable state
 fn currentApproachedIceInternal(generated: *const Game) !?ApproachedIceTarget {
     const run = generated.run orelse return null;
-    if (!std.mem.eql(u8, run.phase, "approach-ice")) return null;
+    if (run.phase != .approach_ice) return null;
     if (run.position == 0) return null;
 
     const target_server = try findMutableServerByRunPath(generated.corp_servers.items, run.server);
@@ -4166,22 +4207,19 @@ const MutableServerLookup = struct {
 // Find server by run path using internal MutableServer state
 pub fn findMutableServerByRunPath(
     servers: []const MutableServer,
-    run_server: []const []const u8,
+    server_path: state.ServerPath,
 ) !MutableServerLookup {
-    if (run_server.len == 0) return error.UnsupportedServer;
-    if (std.mem.eql(u8, run_server[0], "hq") and servers.len > 0) {
-        return .{ .index = 0, .server = servers[0] };
-    }
-    if (std.mem.eql(u8, run_server[0], "rnd") and servers.len > 1) {
-        return .{ .index = 1, .server = servers[1] };
-    }
-    if (std.mem.eql(u8, run_server[0], "archives") and servers.len > 2) {
-        return .{ .index = 2, .server = servers[2] };
-    }
-    for (servers, 0..) |server, idx| {
-        if (std.mem.eql(u8, server.name, run_server[0])) {
-            return .{ .index = idx, .server = server };
-        }
+    switch (server_path) {
+        .hq => if (servers.len > 0) return .{ .index = 0, .server = servers[0] },
+        .rnd => if (servers.len > 1) return .{ .index = 1, .server = servers[1] },
+        .archives => if (servers.len > 2) return .{ .index = 2, .server = servers[2] },
+        .remote => {
+            for (servers, 0..) |server, idx| {
+                if (server_path.matchesName(server.name)) {
+                    return .{ .index = idx, .server = server };
+                }
+            }
+        },
     }
     return error.UnknownServer;
 }
@@ -4192,7 +4230,7 @@ fn currentApproachedIce(generated: *const Game) !?ApproachedIceTarget {
 }
 
 fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
     if (generated.corp_prompt_state) |corp_prompt| {
         if (!std.mem.eql(u8, corp_prompt.prompt_type, "run")) {
@@ -4222,7 +4260,7 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
     // Runner's success continue: both sides have now passed.
     run.no_action = null;
     if (try prepareNextAccess(generated)) {
-        run.phase = try allocator.dupe(u8, "success");
+        run.phase = .success;
         generated.decision_side = .corp;
         generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
         return;
@@ -4231,9 +4269,9 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
 }
 
 fn enterSuccessAccessPhase(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
-    run.phase = try allocator.dupe(u8, "success");
+    run.phase = .success;
     if (try prepareNextAccess(generated)) {
         // Clojure resolves the successful-run window directly into breach/access
         // unless a prompt interrupts that sequence.
@@ -4257,13 +4295,13 @@ fn enterSuccessAccessPhase(generated: *Game) !void {
 }
 
 fn advanceInitiationPhase(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
     if (run.position == 0) {
-        run.phase = try allocator.dupe(u8, "movement");
+        run.phase = .movement;
         run.jack_out_available = false;
     } else {
-        run.phase = try allocator.dupe(u8, "approach-ice");
+        run.phase = .approach_ice;
         run.jack_out_available = false;
     }
     generated.decision_side = .corp;
@@ -4271,14 +4309,14 @@ fn advanceInitiationPhase(generated: *Game) !void {
 }
 
 fn advanceApproachIcePhase(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
 
     // Check if there's approached ice to encounter
     if (try currentApproachedIce(generated)) |target| {
         if (target.ice.rezzed) {
             // Enter encounter phase - runner gets to use icebreakers
-            run.phase = try allocator.dupe(u8, "encounter-ice");
+            run.phase = .encounter_ice;
             run.encounter_phase = .encounter;
             // Store runner-perspective ice index for applyUseSubroutine
             const ice_count = generated.corp_servers.items[target.server_index].ices.items.len;
@@ -4313,7 +4351,7 @@ fn advanceApproachIcePhase(generated: *Game) !void {
 
     // Unrezzed or no ice - move to movement
     if (run.position > 0) run.position -= 1;
-    run.phase = try allocator.dupe(u8, "movement");
+    run.phase = .movement;
     run.jack_out_available = true;
     run.no_action = null;
     // Corp gets priority first in movement phase (matching Clojure)
@@ -4336,7 +4374,7 @@ pub fn openBreakSubPrompt(
     breaker: state.CardInstance,
     subs_selected: u8,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const break_count = if (breaker.abilities.len > 0) @max(@as(u8, 1), breaker.abilities[0].break_count) else 1;
 
     // Build choices: each unbroken sub + "Done"
@@ -4358,7 +4396,7 @@ pub fn openBreakSubPrompt(
     try choices_list.append(allocator, stringChoice("Done"));
 
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_break_sub),
+        .prompt_type = prompt_break_sub,
         .choices = try choices_list.toOwnedSlice(allocator),
         .source_card = breaker,
     };
@@ -4370,7 +4408,7 @@ pub fn openBreakSubPrompt(
 }
 
 fn applyBreakSubChoice(generated: *Game, choice_text: []const u8) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const prompt = generated.runner_prompt_state orelse return error.MissingPrompt;
     const breaker = prompt.source_card orelse return error.MissingSourceCard;
     const run = &generated.run.?;
@@ -4425,7 +4463,7 @@ fn applyBreakSubChoice(generated: *Game, choice_text: []const u8) !void {
 }
 
 fn advanceEncounterPhase(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
 
     // Both sides passed during encounter — check bypass or fire unbroken subroutines
     if (generated.run.?.bypass) {
@@ -4453,7 +4491,7 @@ fn advanceEncounterPhase(generated: *Game) !void {
     // Move to movement phase
     var run = &generated.run.?;
     if (run.position > 0) run.position -= 1;
-    run.phase = try allocator.dupe(u8, "movement");
+    run.phase = .movement;
     run.encounter_phase = .none;
     run.current_ice_index = null;
     run.jack_out_available = true;
@@ -4465,7 +4503,7 @@ fn advanceEncounterPhase(generated: *Game) !void {
 
 /// Bypass the currently encountered ice: skip subroutines, clean up encounter, move to movement.
 pub fn bypassCurrentIce(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     var run = &(generated.run orelse return);
     run.bypass = true;
 
@@ -4479,7 +4517,7 @@ pub fn bypassCurrentIce(generated: *Game) !void {
 
     // Move to movement phase (skip subroutine resolution)
     if (run.position > 0) run.position -= 1;
-    run.phase = try allocator.dupe(u8, "movement");
+    run.phase = .movement;
     run.encounter_phase = .none;
     run.current_ice_index = null;
     run.bypass = false;
@@ -4493,7 +4531,7 @@ pub fn bypassCurrentIce(generated: *Game) !void {
 // Each returns true to stop processing further subroutines, false to continue.
 
 pub fn resolveEndTheRun(generated: *Game, _: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     endOfRunCleanup(generated);
     generated.run = null;
     generated.corp_prompt_state = null;
@@ -4523,7 +4561,7 @@ pub fn resolveTagRunner(generated: *Game, _: state.SubroutineContext) anyerror!b
 }
 
 pub fn resolveTraceTag(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     const run = &(generated.run orelse return error.NoRunInProgress);
     run.pending_subroutine = .{
@@ -4539,7 +4577,7 @@ pub fn resolveTraceTag(generated: *Game, ctx: state.SubroutineContext) anyerror!
         try choices.append(allocator, stringChoice(text));
     }
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "trace"),
+        .prompt_type = "trace",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4565,7 +4603,7 @@ pub fn resolveCorpGainsCredits(generated: *Game, ctx: state.SubroutineContext) a
 }
 
 pub fn resolveNetDamageConditionalEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     // Diviner: do N net damage, if trashed card has odd cost, end the run
     const hand_before = generated.runner_hand.items.len;
     try trashRandomRunnerHandCards(generated, ctx.amount);
@@ -4592,7 +4630,7 @@ pub fn resolveNetDamageConditionalEtr(generated: *Game, ctx: state.SubroutineCon
 }
 
 pub fn resolveRunnerLosesCreditsOrEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     // Whitespace sub2: end the run if runner has N credits or less
     const total_credits = generated.runner_credit + generated.runner_run_credit;
     if (total_credits <= ctx.amount) {
@@ -4609,7 +4647,7 @@ pub fn resolveRunnerLosesCreditsOrEtr(generated: *Game, ctx: state.SubroutineCon
 }
 
 pub fn resolveNetDamageThenJackOut(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     // Karunā sub1: do N net damage, then runner may jack out
     try trashRandomRunnerHandCards(generated, ctx.amount);
@@ -4627,12 +4665,12 @@ pub fn resolveNetDamageThenJackOut(generated: *Game, ctx: state.SubroutineContex
     try choices.append(allocator, stringChoice("Jack out"));
     try choices.append(allocator, stringChoice("Continue"));
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "jack-out"),
+        .prompt_type = "jack-out",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "waiting"),
+        .prompt_type = "waiting",
         .choices = &.{},
         .source_card = null,
     };
@@ -4642,7 +4680,7 @@ pub fn resolveNetDamageThenJackOut(generated: *Game, ctx: state.SubroutineContex
 }
 
 pub fn resolveGiveTagOrPayCredits(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     // Funhouse sub: give 1 tag unless runner pays N credits
     const run = &(generated.run orelse return error.NoRunInProgress);
@@ -4659,7 +4697,7 @@ pub fn resolveGiveTagOrPayCredits(generated: *Game, ctx: state.SubroutineContext
         try choices.append(allocator, stringChoice(text));
     }
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "trace"),
+        .prompt_type = "trace",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4674,7 +4712,7 @@ pub fn resolveInstallIceFromHqArchives(generated: *Game, ctx: state.SubroutineCo
 }
 
 pub fn resolveTrashProgramOrEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     if (generated.runner_rig_program.items.len == 0) {
         try completeUnsuccessfulRun(generated);
@@ -4692,7 +4730,7 @@ pub fn resolveTrashProgramOrEtr(generated: *Game, ctx: state.SubroutineContext) 
         try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
     }
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "ballista-trash"),
+        .prompt_type = "ballista-trash",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4738,7 +4776,7 @@ pub fn resolveConditionalEtrThreat(generated: *Game, ctx: state.SubroutineContex
 }
 
 pub fn resolveNetDamageUnlessEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     // Semak-samun: ETR unless runner suffers N net damage
     const run = &(generated.run orelse return error.NoRunInProgress);
@@ -4753,7 +4791,7 @@ pub fn resolveNetDamageUnlessEtr(generated: *Game, ctx: state.SubroutineContext)
     const text = try std.fmt.allocPrint(allocator, "Suffer {d} net damage", .{ctx.amount});
     try choices.append(allocator, stringChoice(text));
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "net-damage-or-etr"),
+        .prompt_type = "net-damage-or-etr",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4763,7 +4801,7 @@ pub fn resolveNetDamageUnlessEtr(generated: *Game, ctx: state.SubroutineContext)
 }
 
 pub fn resolveTrashProgramOrResourceOrEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     // Biawak: trash 1 program or 1 resource, or ETR if none
     const has_programs = generated.runner_rig_program.items.len > 0;
@@ -4793,7 +4831,7 @@ pub fn resolveTrashProgramOrResourceOrEtr(generated: *Game, ctx: state.Subroutin
         }
     }
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "ballista-trash"),
+        .prompt_type = "ballista-trash",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4810,7 +4848,7 @@ pub fn resolveRunnerLosesCreditsAndNetDamage(generated: *Game, ctx: state.Subrou
 }
 
 pub fn resolveTagOrPayCreditsEtr(generated: *Game, ctx: state.SubroutineContext) anyerror!bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const ice = generated.corp_servers.items[ctx.server_index].ices.items[ctx.ice_index];
     // Lamplighter: give 1 tag unless runner pays N; then ETR if tagged
     const run = &(generated.run orelse return error.NoRunInProgress);
@@ -4827,7 +4865,7 @@ pub fn resolveTagOrPayCreditsEtr(generated: *Game, ctx: state.SubroutineContext)
         try choices.append(allocator, stringChoice(text));
     }
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "trace"),
+        .prompt_type = "trace",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4930,7 +4968,7 @@ fn beginBranInstallIcePrompt(
     ice_index: usize,
     subroutine_index: u8,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
 
     // Build list of ice cards in HQ and Archives
@@ -4969,7 +5007,7 @@ fn beginBranInstallIcePrompt(
 
     // Set corp prompt
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "other"),
+        .prompt_type = "other",
         .choices = try choices.toOwnedSlice(allocator),
         .on_choice = &struct {
             fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
@@ -4989,7 +5027,7 @@ fn beginAnselInstallPrompt(
     ice_index: usize,
     subroutine_index: u8,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
 
     // Build list of installable cards from HQ and Archives
@@ -5028,7 +5066,7 @@ fn beginAnselInstallPrompt(
     };
 
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "ansel-install"),
+        .prompt_type = "ansel-install",
         .choices = try choices.toOwnedSlice(allocator),
     };
 
@@ -5040,7 +5078,7 @@ fn applyAnselInstallChoice(
     generated: *Game,
     choice_text: []const u8,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = generated.run orelse return error.NoRunInProgress;
     const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
 
@@ -5082,7 +5120,7 @@ fn applyAnselInstallChoice(
 
     const current_run = &generated.run.?;
     if (current_run.position > 0) current_run.position -= 1;
-    current_run.phase = try allocator.dupe(u8, "movement");
+    current_run.phase = .movement;
     current_run.jack_out_available = true;
     current_run.no_action = null;
     // Corp gets priority first in movement phase (matching Clojure)
@@ -5094,7 +5132,7 @@ pub fn applyBranInstallIceChoice(
     generated: *Game,
     choice_text: []const u8,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = generated.run orelse return error.NoRunInProgress;
     const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
 
@@ -5142,7 +5180,7 @@ pub fn applyBranInstallIceChoice(
     // Continue with movement phase
     const current_run = &generated.run.?;
     if (current_run.position > 0) current_run.position -= 1;
-    current_run.phase = try allocator.dupe(u8, "movement");
+    current_run.phase = .movement;
     current_run.jack_out_available = true;
     current_run.no_action = null;
     // Corp gets priority first in movement phase (matching Clojure)
@@ -5151,7 +5189,7 @@ pub fn applyBranInstallIceChoice(
 }
 
 fn applyBallistaTrashChoice(generated: *Game, choice_text: []const u8) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = generated.run orelse return error.NoRunInProgress;
     const pending = run.pending_subroutine orelse return error.MissingPendingSubroutine;
 
@@ -5185,7 +5223,7 @@ fn applyBallistaTrashChoice(generated: *Game, choice_text: []const u8) !void {
     // Continue with movement phase
     const current_run = &generated.run.?;
     if (current_run.position > 0) current_run.position -= 1;
-    current_run.phase = try allocator.dupe(u8, "movement");
+    current_run.phase = .movement;
     current_run.jack_out_available = true;
     current_run.no_action = null;
     // Corp gets priority first in movement phase (matching Clojure)
@@ -5222,11 +5260,11 @@ fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8)
     if (generated.game_over) return;
 
     // Continue with movement phase after subroutines
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     resetEncounterStrength(generated);
     const next_run = &generated.run.?;
     if (next_run.position > 0) next_run.position -= 1;
-    next_run.phase = try allocator.dupe(u8, "movement");
+    next_run.phase = .movement;
     next_run.encounter_phase = .none;
     next_run.current_ice_index = null;
     next_run.jack_out_available = true;
@@ -5237,7 +5275,7 @@ fn applyTraceChoice(generated: *Game, side: state.Side, choice_text: []const u8)
 }
 
 fn applyJackOutPromptChoice(generated: *Game, choice_text: []const u8) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
 
     generated.runner_prompt_state = null;
     generated.corp_prompt_state = null;
@@ -5272,7 +5310,7 @@ fn applyJackOutPromptChoice(generated: *Game, choice_text: []const u8) !void {
         }
         const next_run = &generated.run.?;
         if (next_run.position > 0) next_run.position -= 1;
-        next_run.phase = try allocator.dupe(u8, "movement");
+        next_run.phase = .movement;
         next_run.encounter_phase = .none;
         next_run.current_ice_index = null;
         next_run.jack_out_available = true;
@@ -5287,7 +5325,7 @@ fn applyJackOutPromptChoice(generated: *Game, choice_text: []const u8) !void {
 }
 
 fn advanceMovementPhase(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
 
     // Clear jack-out flag since both players passed
@@ -5296,7 +5334,7 @@ fn advanceMovementPhase(generated: *Game) !void {
 
     // Check for more ice or success
     if (run.position > 0) {
-        run.phase = try allocator.dupe(u8, "approach-ice");
+        run.phase = .approach_ice;
         generated.decision_side = .corp;
         generated.legal_actions = try continueActionsForRun(allocator, .corp, run.*);
         return;
@@ -5308,7 +5346,7 @@ fn advanceMovementPhase(generated: *Game) !void {
     }
 
     try applySuccessfulRunEffects(generated);
-    run.phase = try allocator.dupe(u8, "success");
+    run.phase = .success;
     if (try fireEvent(generated, .successful_run)) {
         return;
     }
@@ -5318,10 +5356,9 @@ fn advanceMovementPhase(generated: *Game) !void {
 /// Continue a run after a server-approach prompt was resolved (e.g. Mitra Aman declined).
 /// Mirrors the flow that follows checkServerApproachAbilities returning false.
 pub fn continueServerApproach(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
     const run = &(generated.run orelse return);
     try applySuccessfulRunEffects(generated);
-    run.phase = try allocator.dupe(u8, "success");
+    run.phase = .success;
     if (try fireEvent(generated, .successful_run)) return;
     try enterSuccessAccessPhase(generated);
 }
@@ -5332,7 +5369,7 @@ pub fn prepareNextAccess(generated: *Game) !bool {
     try ensureAccessesInitialized(generated);
 
     if (run.accesses_remaining == 0) return false;
-    if (std.mem.eql(u8, run.server[0], "hq")) {
+    if (run.server == .hq) {
         if (generated.corp_hand.items.len == 0) {
             run.accesses_remaining = 0;
             return false;
@@ -5360,7 +5397,7 @@ pub fn prepareNextAccess(generated: *Game) !bool {
     rememberAccessedIndex(run, maybe_access.?.index);
     run.accesses_remaining -= 1;
     if (try beginAccessFlow(generated, maybe_access.?.card)) return true;
-    if (std.mem.eql(u8, run.server[0], "rnd")) {
+    if (run.server == .rnd) {
         return try beginNoActionAccessPrompt(generated, maybe_access.?.card);
     }
     return run.accesses_remaining > 0;
@@ -5372,12 +5409,12 @@ fn ensureAccessesInitialized(generated: *Game) !void {
 
     const floating_access = sumFloatingEffects(generated, .access_bonus);
     var bonus: u8 = if (floating_access > 0) @intCast(floating_access) else 0;
-    if (std.mem.eql(u8, run.server[0], "hq") and generated.turn_events.runner_hq_breaches == 0) {
+    if (run.server == .hq and generated.turn_events.runner_hq_breaches == 0) {
         bonus += runner_installed_hq_access_bonus(generated);
         generated.turn_events.runner_hq_breaches += 1;
     }
     // Conduit: R&D access bonus = virus counters on Conduit
-    if (std.mem.eql(u8, run.server[0], "rnd")) {
+    if (run.server == .rnd) {
         bonus += runnerRdAccessBonus(generated);
     }
     run.accesses_remaining = 1 + bonus;
@@ -5392,7 +5429,7 @@ pub fn applySuccessfulRunEffects(generated: *Game) !void {
 }
 
 fn completeRunWithoutAccess(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_successful_run_this_turn = true;
     // Clear prompts before firing events so we can detect if an event sets a new one
     generated.corp_prompt_state = null;
@@ -5414,7 +5451,7 @@ fn completeRunWithoutAccess(generated: *Game) !void {
 }
 
 fn completeRunAfterAccess(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_successful_run_this_turn = true;
     // Clear prompts before firing events so we can detect if an event sets a new one
     generated.corp_prompt_state = null;
@@ -5436,7 +5473,7 @@ fn completeRunAfterAccess(generated: *Game) !void {
 }
 
 pub fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_successful_run_this_turn = true;
     generated.corp_prompt_state = null;
     generated.runner_prompt_state = null;
@@ -5457,7 +5494,7 @@ pub fn completeSuccessfulRunWithCorpPriority(generated: *Game) !void {
 }
 
 pub fn completeUnsuccessfulRun(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     _ = try fireEvent(generated, .run_ends);
     endOfRunCleanup(generated);
     generated.run = null;
@@ -5472,7 +5509,7 @@ fn beginAccessFlow(
     generated: *Game,
     accessed: state.CardInstance,
 ) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const no_steal_or_trash = hasFloatingEffect(generated, .prevent_steal_or_trash);
     if (try fireEvent(generated, .access)) return true;
     if (generated.game_over) return true;
@@ -5494,7 +5531,7 @@ fn beginAccessFlow(
             return try beginNoActionAccessPrompt(generated, accessed);
         }
         generated.runner_prompt_state = .{
-            .prompt_type = try allocator.dupe(u8, prompt_access_choice),
+            .prompt_type = prompt_access_choice,
             .choices = try singleStringChoice(allocator, "Steal"),
             .source_card = accessed,
         };
@@ -5505,9 +5542,9 @@ fn beginAccessFlow(
 }
 
 fn beginNoActionAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_access_choice),
+        .prompt_type = prompt_access_choice,
         .choices = try singleStringChoice(allocator, "No action"),
         .source_card = accessed,
     };
@@ -5606,7 +5643,7 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
         }
         break :blk @intCast(@max(0, @as(i32, tc) + bonus));
     } else null;
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const no_steal_or_trash = hasFloatingEffect(generated, .prevent_steal_or_trash);
     const is_agenda = if (accessed.card_type) |ct| std.mem.eql(u8, ct, "Agenda") else false;
 
@@ -5632,7 +5669,7 @@ fn beginTrashAccessPrompt(generated: *Game, accessed: state.CardInstance) !bool 
     choices[idx] = stringChoice("No action");
     generated.systemMsg(.runner, accessed.code orelse 0, "Runner accesses {s}.", .{accessed.title});
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_access_choice),
+        .prompt_type = prompt_access_choice,
         .choices = choices,
         .source_card = accessed,
     };
@@ -5643,7 +5680,7 @@ pub fn beginNetDamageOnAccessPrompt(
     generated: *Game,
     accessed: state.CardInstance,
 ) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     // Urtica Cipher: 2 base damage + advancement counters, costs 2 credits
     const damage: u8 = 2 + accessed.advancement_counter;
     const cost: u16 = 2;
@@ -5657,7 +5694,7 @@ pub fn beginNetDamageOnAccessPrompt(
     try choices.append(allocator, stringChoice("No action"));
 
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "net-damage-on-access"),
+        .prompt_type = "net-damage-on-access",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = accessed,
     };
@@ -5684,7 +5721,7 @@ fn applyNetDamageOnAccessChoice(
     if (try beginTrashAccessPrompt(generated, accessed)) {
         generated.decision_side = .runner;
         generated.legal_actions = try promptChoiceActions(
-            generated.arena.allocator(),
+            generated.ephemeralAllocator(),
             .runner,
             generated.runner_prompt_state.?,
         );
@@ -5699,7 +5736,7 @@ fn applyNetDamageOnAccessChoice(
 /// Phật Gioan Baotixita: on agenda scored/stolen, choose damage amount.
 /// Choice text matches Clojure: "Do N net damage" with "Hosted power counter: " prefix for cost.
 pub fn beginPhatGioanDamagePrompt(generated: *Game, card: *state.CardInstance) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
     const counters = card.power_counter;
@@ -5724,7 +5761,7 @@ pub fn beginPhatGioanDamagePrompt(generated: *Game, card: *state.CardInstance) !
     }
     if (choices.items.len == 0) return;
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "phat-net-damage"),
+        .prompt_type = "phat-net-damage",
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
         .on_choice = &struct {
@@ -5750,7 +5787,7 @@ pub fn beginPhatGioanDamagePrompt(generated: *Game, card: *state.CardInstance) !
 }
 
 pub fn beginByteAmbushPrompt(generated: *Game, accessed: state.CardInstance) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
     if (generated.corp_credit >= 4) {
@@ -5758,7 +5795,7 @@ pub fn beginByteAmbushPrompt(generated: *Game, accessed: state.CardInstance) !bo
     }
     try choices.append(allocator, stringChoice("No action"));
     generated.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "byte-ambush"),
+        .prompt_type = "byte-ambush",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = accessed,
     };
@@ -5782,7 +5819,7 @@ fn applyByteAmbushChoice(generated: *Game, choice_text: []const u8) !void {
     if (try beginTrashAccessPrompt(generated, accessed)) {
         generated.decision_side = .runner;
         generated.legal_actions = try promptChoiceActions(
-            generated.arena.allocator(),
+            generated.ephemeralAllocator(),
             .runner,
             generated.runner_prompt_state.?,
         );
@@ -5794,7 +5831,7 @@ fn applyByteAmbushChoice(generated: *Game, choice_text: []const u8) !void {
 /// Transition to the next side's start-turn sequence.
 /// Call this from on_choice handlers triggered at end-of-turn to continue the game.
 pub fn beginStartTurnSequence(g: *Game, side: state.Side) !void {
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     g.decision_side = side;
     g.legal_actions = try startTurnActions(allocator, side);
 }
@@ -5802,7 +5839,7 @@ pub fn beginStartTurnSequence(g: *Game, side: state.Side) !void {
 /// Generic: show corp the top `count` cards of R&D and let them pick one to trash; rest are drawn.
 /// `source_iid` is stored in ability_ref so the handler can log with the correct card.
 pub fn beginPeekRdTopPrompt(g: *Game, count: u8, source_iid: u32) !void {
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     const deck = g.corp_deck.items;
     const actual: u8 = @intCast(@min(count, deck.len));
     if (actual == 0) return; // nothing to peek
@@ -5814,7 +5851,7 @@ pub fn beginPeekRdTopPrompt(g: *Game, count: u8, source_iid: u32) !void {
         ));
     }
     g.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "peek-rd-trash-one"),
+        .prompt_type = "peek-rd-trash-one",
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_iid, .ability_index = actual },
         .on_choice = &struct {
@@ -5848,7 +5885,7 @@ pub fn beginPeekRdTopPrompt(g: *Game, count: u8, source_iid: u32) !void {
 /// Sabotage N: Corp chooses N cards to trash from HQ and/or top of R&D.
 /// After completion, transitions to corp start of turn.
 pub fn beginSabotagePrompt(g: *Game, count: u8) !void {
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     if (count == 0) {
         try beginStartTurnSequence(g, .corp);
         return;
@@ -5886,7 +5923,7 @@ pub fn beginSabotagePrompt(g: *Game, count: u8) !void {
     }
     // Store remaining count in ability_ref.ability_index
     g.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "sabotage"),
+        .prompt_type = "sabotage",
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = 0, .ability_index = count },
         .on_choice = &struct {
@@ -5926,9 +5963,9 @@ pub fn beginSabotagePrompt(g: *Game, count: u8) !void {
 }
 
 fn beginHqAccessChoicePrompt(generated: *Game) !bool {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_hq_access),
+        .prompt_type = prompt_hq_access,
         .choices = try singleStringChoice(allocator, "Card from hand"),
         .source_card = null,
     };
@@ -5953,7 +5990,7 @@ fn applyHqAccessChoice(
     if (try beginAccessFlow(generated, accessed)) {
         generated.decision_side = .runner;
         generated.legal_actions = try promptChoiceActions(
-            generated.arena.allocator(),
+            generated.ephemeralAllocator(),
             .runner,
             generated.runner_prompt_state.?,
         );
@@ -5964,13 +6001,13 @@ fn applyHqAccessChoice(
     // (matches Clojure's recursive access-helper-hq behavior — no continues between accesses)
     if (run.accesses_remaining > 0) {
         if (try prepareNextAccess(generated)) {
-            run.phase = try generated.arena.allocator().dupe(u8, "success");
+            run.phase = .success;
             generated.decision_side = .runner;
             // If a prompt was set (e.g., another hq-access), use it
             if (generated.runner_prompt_state) |ps| {
-                generated.legal_actions = try promptChoiceActions(generated.arena.allocator(), .runner, ps);
+                generated.legal_actions = try promptChoiceActions(generated.ephemeralAllocator(), .runner, ps);
             } else {
-                generated.legal_actions = try continueActionsForRun(generated.arena.allocator(), .runner, run.*);
+                generated.legal_actions = try continueActionsForRun(generated.ephemeralAllocator(), .runner, run.*);
             }
             return;
         }
@@ -5985,10 +6022,10 @@ const AccessTarget = struct {
 
 fn nextAccessTarget(generated: *Game) !?AccessTarget {
     const run = &generated.run.?;
-    if (std.mem.eql(u8, run.server[0], "rnd")) {
+    if (run.server == .rnd) {
         return nextIndexedAccessTarget(generated.corp_deck.items, run.accessed_count);
     }
-    if (std.mem.eql(u8, run.server[0], "archives")) {
+    if (run.server == .archives) {
         return nextIndexedAccessTarget(generated.corp_discard.items, run.accessed_count);
     }
     const target_server = try findServerByRunPath(generated.corp_servers.items, run.server);
@@ -6136,7 +6173,7 @@ pub fn continueActionsForRunWithRez(
 
 fn canRezApproachedIce(game: *const Game) !bool {
     const run = game.run orelse return false;
-    if (!std.mem.eql(u8, run.phase, "approach-ice")) return false;
+    if (run.phase != .approach_ice) return false;
     const target = try currentApproachedIce(@constCast(game)) orelse return false;
     if (target.ice.rezzed) return false;
     const rez_cost = target.ice.cost orelse 0;
@@ -6168,7 +6205,7 @@ fn corpRezNonIceActions(allocator: std.mem.Allocator, game: *const Game) ![]cons
                 .side = .corp,
                 .card_title = card.title,
                 .card_index = @intCast(card_idx),
-                .server = if (run.server.len > 0) run.server[0] else null,
+                .server = target_server.slot.name,
             };
             idx += 1;
         }
@@ -6181,14 +6218,14 @@ fn corpRezNonIceActions(allocator: std.mem.Allocator, game: *const Game) ![]cons
 pub fn isInEncounter(ctx: *const state.EffectContext, _: *const state.CardInstance) bool {
     const g = gameFromConstEffectContext(ctx);
     const run = g.run orelse return false;
-    return std.mem.eql(u8, run.phase, "encounter-ice");
+    return run.phase == .encounter_ice;
 }
 
 pub fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
     const g = gameFromEffectContext(ctx);
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     const run = g.run orelse return error.NoRunInProgress;
-    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+    if (run.phase != .encounter_ice) return error.UnsupportedAbility;
 
     const icebreaker = card;
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
@@ -6227,9 +6264,9 @@ pub fn encounterBreakHandler(ctx: *state.EffectContext, card: *state.CardInstanc
 
 pub fn encounterPumpHandler(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
     const g = gameFromEffectContext(ctx);
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     const run = g.run orelse return error.NoRunInProgress;
-    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+    if (run.phase != .encounter_ice) return error.UnsupportedAbility;
 
     var icebreaker = card;
 
@@ -6271,7 +6308,7 @@ pub fn encounterPumpHandler(ctx: *state.EffectContext, card: *state.CardInstance
 
 pub fn encounterLeechHandler(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
     const g = gameFromEffectContext(ctx);
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     if (g.run == null) return error.NoRunInProgress;
     card.virus_counter -= 1;
     try addFloatingEffect(g, .{
@@ -6296,7 +6333,7 @@ pub fn encounterLeechHandler(ctx: *state.EffectContext, card: *state.CardInstanc
 pub fn encounterBotulusHandler(ctx: *state.EffectContext, card: *state.CardInstance) anyerror!void {
     const g = gameFromEffectContext(ctx);
     const run = g.run orelse return error.NoRunInProgress;
-    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+    if (run.phase != .encounter_ice) return error.UnsupportedAbility;
 
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
     const target_server = try findMutableServerByRunPath(g.corp_servers.items, run.server);
@@ -6315,9 +6352,9 @@ pub fn encounterBotulusHandler(ctx: *state.EffectContext, card: *state.CardInsta
 
 pub fn encounterBioroidHandler(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
     const g = gameFromEffectContext(ctx);
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     const run = g.run orelse return error.NoRunInProgress;
-    if (!std.mem.eql(u8, run.phase, "encounter-ice")) return error.UnsupportedAbility;
+    if (run.phase != .encounter_ice) return error.UnsupportedAbility;
 
     const current_ice_idx = run.current_ice_index orelse return error.NoIceEncountered;
     const target_server = try findMutableServerByRunPath(g.corp_servers.items, run.server);
@@ -6407,7 +6444,7 @@ pub fn encounterActionsForState(
             non_icebreaker_ability_count += countCardAbilityActions(generated, .runner, card);
         }
         // Botulus: hosted cards on ICE with abilities
-        for (ice.hosted) |hosted| {
+        for (ice.hosted.items) |hosted| {
             if (hosted.abilities.len > 0 and hosted.virus_counter > 0) {
                 botulus_count += 1;
             }
@@ -6445,7 +6482,7 @@ pub fn encounterActionsForState(
                 .kind = .use_installed_ability,
                 .side = .runner,
                 .card_index = @intCast(combined_idx),
-                .card_title = try allocator.dupe(u8, card.title),
+                .card_title = card.title,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
                 .label = try std.fmt.allocPrint(allocator, "Break subroutines with {s}", .{card.title}),
             };
@@ -6453,7 +6490,7 @@ pub fn encounterActionsForState(
         }
 
         // Bioroid break: emit from ICE abilities with allow_opponent_use
-        next = try emitCardAbilityActions(allocator, generated, .runner, ice, actions, next);
+        next = try emitCardAbilityActions(generated, .runner, ice, actions, next);
 
         // Pump actions: icebreakers with abilities[1] = pump
         for (generated.runner_rig_program.items, 0..) |card, card_idx| {
@@ -6471,7 +6508,7 @@ pub fn encounterActionsForState(
                 .kind = .use_installed_ability,
                 .side = .runner,
                 .card_index = @intCast(combined_idx),
-                .card_title = try allocator.dupe(u8, card.title),
+                .card_title = card.title,
                 .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 1 },
                 .label = try std.fmt.allocPrint(allocator, "+{d} strength to {s}", .{ pump_spec.pump_amount, card.title }),
             };
@@ -6481,16 +6518,16 @@ pub fn encounterActionsForState(
         // Non-icebreaker programs with encounter abilities (e.g. Leech)
         for (generated.runner_rig_program.items) |card| {
             if (isIcebreaker(card)) continue;
-            next = try emitCardAbilityActions(allocator, generated, .runner, card, actions, next);
+            next = try emitCardAbilityActions(generated, .runner, card, actions, next);
         }
 
         // Botulus: hosted cards on ICE with abilities
-        for (ice.hosted) |hosted| {
+        for (ice.hosted.items) |hosted| {
             if (hosted.abilities.len == 0 or hosted.virus_counter == 0) continue;
             actions[next] = .{
                 .kind = .use_installed_ability,
                 .side = .runner,
-                .card_title = try allocator.dupe(u8, hosted.title),
+                .card_title = hosted.title,
                 .ability_ref = .{ .source_instance_id = hosted.instance_id, .ability_index = 0 },
                 .label = try std.fmt.allocPrint(allocator, "Break 1 subroutine with {s}", .{hosted.title}),
             };
@@ -6560,7 +6597,7 @@ pub fn corpOpeningActionsForState(
             .kind = .play_from_hand,
             .side = .corp,
             .card_index = @intCast(idx),
-            .card_title = try allocator.dupe(u8, card.title),
+            .card_title = card.title,
         };
         next += 1;
     }
@@ -6570,33 +6607,33 @@ pub fn corpOpeningActionsForState(
             .kind = .flashback,
             .side = .corp,
             .card_index = @intCast(idx),
-            .card_title = try allocator.dupe(u8, card.title),
+            .card_title = card.title,
         };
         next += 1;
     }
     for (servers) |server| {
         for (server.content.items) |card| {
             if (card.rezzed) {
-                next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
+                next = try emitCardAbilityActions(g, .corp, card, actions, next);
             }
         }
     }
     for (g.runner_rig_resources.items) |card| {
-        next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
+        next = try emitCardAbilityActions(g, .corp, card, actions, next);
     }
     for (g.runner_rig_program.items) |card| {
-        next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
+        next = try emitCardAbilityActions(g, .corp, card, actions, next);
     }
     for (g.runner_rig_hardware.items) |card| {
-        next = try emitCardAbilityActions(allocator, g, .corp, card, actions, next);
+        next = try emitCardAbilityActions(g, .corp, card, actions, next);
     }
 
     if (g.corp_click >= 1) {
-        actions[next] = try basicAbilityAction(allocator, .corp, .gain_credit, "Gain 1 [Credits]");
+        actions[next] = basicAbilityAction(.corp, .gain_credit, "Gain 1 [Credits]");
         next += 1;
     }
     if (g.corp_click >= 1 and g.corp_deck.items.len > 0) {
-        actions[next] = try basicAbilityAction(allocator, .corp, .draw_card, "Draw 1 card");
+        actions[next] = basicAbilityAction(.corp, .draw_card, "Draw 1 card");
         next += 1;
     }
     // Per-card advance actions — only advanceable cards per rule 1.18.3:
@@ -6646,7 +6683,7 @@ pub fn corpOpeningActionsForState(
                     .kind = .score,
                     .side = .corp,
                     .choice = stringChoice(text),
-                    .card_title = try allocator.dupe(u8, card.title),
+                    .card_title = card.title,
                     .basic_action = .score_agenda,
                 };
                 next += 1;
@@ -6654,7 +6691,7 @@ pub fn corpOpeningActionsForState(
         }
     }
     if (g.corp_click >= 3) {
-        actions[next] = try basicAbilityAction(allocator, .corp, .purge_viruses, "Purge virus counters");
+        actions[next] = basicAbilityAction(.corp, .purge_viruses, "Purge virus counters");
         next += 1;
     }
 
@@ -6787,26 +6824,26 @@ pub fn runnerOpeningActionsForState(
             .kind = .play_from_hand,
             .side = .runner,
             .card_index = @intCast(idx),
-            .card_title = try allocator.dupe(u8, card.title),
+            .card_title = card.title,
         };
         next += 1;
     }
     for (g.runner_rig_resources.items) |card| {
-        next = try emitCardAbilityActions(allocator, g, .runner, card, actions, next);
+        next = try emitCardAbilityActions(g, .runner, card, actions, next);
     }
     for (g.runner_rig_program.items) |card| {
-        next = try emitCardAbilityActions(allocator, g, .runner, card, actions, next);
+        next = try emitCardAbilityActions(g, .runner, card, actions, next);
     }
     for (g.runner_rig_hardware.items) |card| {
-        next = try emitCardAbilityActions(allocator, g, .runner, card, actions, next);
+        next = try emitCardAbilityActions(g, .runner, card, actions, next);
     }
 
     if (g.runner_click >= 1) {
-        actions[next] = try basicAbilityAction(allocator, .runner, .gain_credit, "Gain 1 [Credits]");
+        actions[next] = basicAbilityAction(.runner, .gain_credit, "Gain 1 [Credits]");
         next += 1;
     }
     if (g.runner_click >= 1 and g.runner_deck.items.len > 0) {
-        actions[next] = try basicAbilityAction(allocator, .runner, .draw_card, "Draw 1 card");
+        actions[next] = basicAbilityAction(.runner, .draw_card, "Draw 1 card");
         next += 1;
     }
     if (g.runner_click >= 1) {
@@ -6820,7 +6857,7 @@ pub fn runnerOpeningActionsForState(
         }
     }
     if (g.runner_click >= 1 and g.runner_credit >= 2 and is_runner_tagged(g.runner_tag)) {
-        actions[next] = try basicAbilityAction(allocator, .runner, .remove_tag, "Remove 1 tag");
+        actions[next] = basicAbilityAction(.runner, .remove_tag, "Remove 1 tag");
         next += 1;
     }
     for (g.runner_identity.abilities, 0..) |ability, ability_idx| {
@@ -6835,9 +6872,9 @@ pub fn runnerOpeningActionsForState(
             actions[next] = .{
                 .kind = .use_identity_ability,
                 .side = .runner,
-                .card_title = try allocator.dupe(u8, g.runner_identity.title),
+                .card_title = g.runner_identity.title,
                 .ability_ref = .{ .source_instance_id = g.runner_identity.instance_id, .ability_index = @intCast(ability_idx) },
-                .label = try allocator.dupe(u8, ability.label orelse "Use identity ability"),
+                .label = ability.label orelse "Use identity ability",
             };
             next += 1;
         }
@@ -6847,16 +6884,15 @@ pub fn runnerOpeningActionsForState(
 }
 
 fn basicAbilityAction(
-    allocator: std.mem.Allocator,
     side: state.Side,
     basic_action: state.BasicAction,
     label: []const u8,
-) !state.LegalAction {
+) state.LegalAction {
     return .{
         .kind = .use_ability,
         .side = side,
         .basic_action = basic_action,
-        .label = try allocator.dupe(u8, label),
+        .label = label,
     };
 }
 
@@ -6880,7 +6916,6 @@ fn countCardAbilityActions(generated: *const Game, side: state.Side, card: state
 }
 
 fn emitCardAbilityActions(
-    allocator: std.mem.Allocator,
     generated: *const Game,
     side: state.Side,
     card: state.CardInstance,
@@ -6903,9 +6938,9 @@ fn emitCardAbilityActions(
         actions[next] = .{
             .kind = .use_installed_ability,
             .side = side,
-            .card_title = try allocator.dupe(u8, card.title),
+            .card_title = card.title,
             .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = @intCast(ability_idx) },
-            .label = try allocator.dupe(u8, ability.label orelse "Use ability"),
+            .label = ability.label orelse "Use ability",
         };
         next += 1;
     }
@@ -6992,10 +7027,10 @@ fn deepCloneCard(allocator: std.mem.Allocator, card: state.CardInstance) !state.
         cloned.subtypes = subtypes_copy;
     }
     cloned.subroutines = try allocator.dupe(state.SubroutineSpec, card.subroutines);
-    if (card.hosted.len > 0) {
-        const hosted_copy = try allocator.alloc(state.CardInstance, card.hosted.len);
-        for (card.hosted, 0..) |h, i| hosted_copy[i] = try deepCloneCard(allocator, h);
-        cloned.hosted = hosted_copy;
+    if (card.hosted.items.len > 0) {
+        cloned.hosted = .empty;
+        try cloned.hosted.ensureTotalCapacity(allocator, card.hosted.items.len);
+        for (card.hosted.items) |h| cloned.hosted.appendAssumeCapacity(try deepCloneCard(allocator, h));
     }
     return cloned;
 }
@@ -7056,10 +7091,7 @@ pub fn appendHostedCard(
     host: *state.CardInstance,
     card: state.CardInstance,
 ) !void {
-    const hosted = try allocator.alloc(state.CardInstance, host.hosted.len + 1);
-    @memcpy(hosted[0..host.hosted.len], host.hosted);
-    hosted[host.hosted.len] = card;
-    host.hosted = hosted;
+    try host.hosted.append(allocator, card);
 }
 
 pub fn removeHostedCard(
@@ -7067,19 +7099,9 @@ pub fn removeHostedCard(
     host: *state.CardInstance,
     hosted_index: usize,
 ) !state.CardInstance {
-    if (hosted_index >= host.hosted.len) return error.InvalidCardIndex;
-    const removed = host.hosted[hosted_index];
-    if (host.hosted.len == 1) {
-        host.hosted = &.{};
-        return removed;
-    }
-    const hosted = try allocator.alloc(state.CardInstance, host.hosted.len - 1);
-    if (hosted_index > 0) @memcpy(hosted[0..hosted_index], host.hosted[0..hosted_index]);
-    if (hosted_index + 1 < host.hosted.len) {
-        @memcpy(hosted[hosted_index..], host.hosted[hosted_index + 1 ..]);
-    }
-    host.hosted = hosted;
-    return removed;
+    _ = allocator;
+    if (hosted_index >= host.hosted.items.len) return error.InvalidCardIndex;
+    return host.hosted.orderedRemove(hosted_index);
 }
 
 pub fn hostedChoiceIndex(prompt: state.PromptState, choice_text: []const u8) ?usize {
@@ -7093,8 +7115,8 @@ pub fn hostedChoiceIndex(prompt: state.PromptState, choice_text: []const u8) ?us
 }
 
 pub fn restorePriorityAfterPrompt(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
-    if (generated.run != null and std.mem.eql(u8, generated.run.?.phase, "success")) {
+    const allocator = generated.ephemeralAllocator();
+    if (generated.run != null and generated.run.?.phase == .success) {
         try enterSuccessAccessPhase(generated);
         return;
     }
@@ -7112,9 +7134,9 @@ pub fn beginYesNoPrompt(
     source_instance_id: u32,
     on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
 ) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const prompt_state: state.PromptState = .{
-        .prompt_type = try allocator.dupe(u8, prompt_type),
+        .prompt_type = prompt_type,
         .choices = try allocator.dupe(state.PromptChoice, &.{ stringChoice("Yes"), stringChoice("No") }),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -7169,7 +7191,7 @@ pub fn findCardPtrByInstanceId(generated: *Game, instance_id: u32) ?*state.CardI
     for (generated.corp_servers.items) |*server| {
         for (server.ices.items) |*card| {
             if (card.instance_id == instance_id) return card;
-            for (card.hosted) |*hosted| {
+            for (card.hosted.items) |*hosted| {
                 if (hosted.instance_id == instance_id) return hosted;
             }
         }
@@ -7232,7 +7254,7 @@ fn findCorpServerCardByInstanceId(generated: *Game, instance_id: u32) ?CorpServe
 fn findHostedCardOnIce(generated: *Game, instance_id: u32) ?*state.CardInstance {
     for (generated.corp_servers.items) |*server| {
         for (server.ices.items) |*ice| {
-            for (ice.hosted) |*hosted| {
+            for (ice.hosted.items) |*hosted| {
                 if (hosted.instance_id == instance_id) return hosted;
             }
         }
@@ -7274,7 +7296,7 @@ pub fn removeCorpInstalledFromGame(generated: *Game, instance_id: u32) !void {
 
 fn applyAbilityRef(generated: *Game, action: state.LegalAction) !void {
     const ref = action.ability_ref orelse return error.MissingAbilityRef;
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
 
     // --- Generic AbilitySpec dispatch: resolve through abilities array ---
     {
@@ -7356,7 +7378,7 @@ pub fn countPlayableHostedRunnerCards(generated: *const Game, host: state.CardIn
     var count: usize = 0;
     const has_console = runnerHasConsoleInstalled(generated);
     const has_ice = corpHasInstalledIce(generated);
-    for (host.hosted) |card| {
+    for (host.hosted.items) |card| {
         const first_program_discount = if (card.runner_install.kind == .program) runnerInstalledFirstProgramDiscount(generated, &card) else 0;
         if (isRunnerCardPlayableFromHand(
             generated.runner_click,
@@ -7372,14 +7394,14 @@ pub fn countPlayableHostedRunnerCards(generated: *const Game, host: state.CardIn
 }
 
 pub fn beginRunnerHostedCardPrompt(generated: *Game, source_instance_id: u32, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     const source_card_ptr = findCardPtrByInstanceId(generated, source_instance_id) orelse return error.CardNotFound;
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
 
     const has_console = runnerHasConsoleInstalled(generated);
     const has_ice = corpHasInstalledIce(generated);
-    for (source_card_ptr.hosted, 0..) |card, idx| {
+    for (source_card_ptr.hosted.items, 0..) |card, idx| {
         const first_program_discount = if (card.runner_install.kind == .program) runnerInstalledFirstProgramDiscount(generated, &card) else 0;
         if (!isRunnerCardPlayableFromHand(
             generated.runner_click,
@@ -7399,7 +7421,7 @@ pub fn beginRunnerHostedCardPrompt(generated: *Game, source_instance_id: u32, on
     if (choices.items.len == 0) return;
     try choices.append(allocator, stringChoice("No action"));
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "runner-hosted-card"),
+        .prompt_type = "runner-hosted-card",
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -7415,7 +7437,7 @@ pub fn hostTopRunnerDeckCard(generated: *Game, host: *state.CardInstance) !void 
 }
 
 pub fn trashHostedRunnerCards(generated: *Game, host: *state.CardInstance) !void {
-    while (host.hosted.len > 0) {
+    while (host.hosted.items.len > 0) {
         const trashed = try removeHostedCard(generated.arena.allocator(), host, 0);
         try appendDiscardCard(generated, .runner, trashed);
     }
@@ -7423,7 +7445,7 @@ pub fn trashHostedRunnerCards(generated: *Game, host: *state.CardInstance) !void
 
 pub fn returnHostedCardsToHq(generated: *Game, host: *state.CardInstance, count: usize) !void {
     var remaining = count;
-    while (remaining > 0 and host.hosted.len > 0) : (remaining -= 1) {
+    while (remaining > 0 and host.hosted.items.len > 0) : (remaining -= 1) {
         const returned = try removeHostedCard(generated.arena.allocator(), host, 0);
         try generated.corp_hand.append(generated.backing_allocator, returned);
     }
@@ -7466,12 +7488,12 @@ pub fn beginRandomHqAccess(generated: *Game) !void {
     generated.pending_access = .{ .zone = .corp_hand, .card_index = chosen };
     if (try beginAccessFlow(generated, accessed)) {
         generated.decision_side = .runner;
-        generated.legal_actions = try promptChoiceActions(generated.arena.allocator(), .runner, generated.runner_prompt_state.?);
+        generated.legal_actions = try promptChoiceActions(generated.ephemeralAllocator(), .runner, generated.runner_prompt_state.?);
         return;
     }
     if (try beginNoActionAccessPrompt(generated, accessed)) {
         generated.decision_side = .runner;
-        generated.legal_actions = try promptChoiceActions(generated.arena.allocator(), .runner, generated.runner_prompt_state.?);
+        generated.legal_actions = try promptChoiceActions(generated.ephemeralAllocator(), .runner, generated.runner_prompt_state.?);
         return;
     }
     try finishAccessCard(generated);
@@ -7605,7 +7627,7 @@ fn resetInstalledAbilityUsage(game: *Game) void {
 // (Nico Campaign, Otto Campaign, Anthill Excavation Contract) with proper priority sorting.
 
 fn endCorpPhase12(generated: *Game) !void {
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.corp_phase_12 = false;
     expireFloatingEffects(generated, .end_of_turn);
 
@@ -7833,7 +7855,7 @@ fn beginRunnerDiscardProgramToDeckPromptWithChoice(
     source_card: state.CardInstance,
     on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
 ) !bool {
-    const allocator = game.arena.allocator();
+    const allocator = game.ephemeralAllocator();
     var choices: std.ArrayList(state.PromptChoice) = .empty;
     defer choices.deinit(allocator);
     for (game.runner_discard.items, 0..) |card, idx| {
@@ -7848,7 +7870,7 @@ fn beginRunnerDiscardProgramToDeckPromptWithChoice(
     if (choices.items.len == 0) return false;
     try choices.append(allocator, stringChoice("No action"));
     game.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "runner-discard-to-deck"),
+        .prompt_type = "runner-discard-to-deck",
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = source_card,
         .on_choice = on_choice,
@@ -8167,7 +8189,7 @@ pub fn promptChoiceActions(
         actions[idx] = .{
             .kind = .prompt_choice,
             .side = side,
-            .prompt_type = try allocator.dupe(u8, prompt.prompt_type),
+            .prompt_type = prompt.prompt_type,
             .choice = choice,
         };
     }
@@ -8194,14 +8216,12 @@ pub fn runTargetChoicesFor(
     return choices;
 }
 
-pub fn trackMadeRun(generated: *Game, run_server: []const []const u8) void {
-    if (run_server.len == 0) return;
-    if (std.mem.eql(u8, run_server[0], "hq")) {
-        generated.turn_events.made_run_on_hq = true;
-    } else if (std.mem.eql(u8, run_server[0], "rnd")) {
-        generated.turn_events.made_run_on_rnd = true;
-    } else if (std.mem.eql(u8, run_server[0], "archives")) {
-        generated.turn_events.made_run_on_archives = true;
+pub fn trackMadeRun(generated: *Game, run_server: state.ServerPath) void {
+    switch (run_server) {
+        .hq => generated.turn_events.made_run_on_hq = true,
+        .rnd => generated.turn_events.made_run_on_rnd = true,
+        .archives => generated.turn_events.made_run_on_archives = true,
+        .remote => {},
     }
 }
 
@@ -8364,22 +8384,19 @@ const ServerLookup = struct {
 
 pub fn findServerByRunPath(
     servers: []const MutableServer,
-    run_server: []const []const u8,
+    run_server: state.ServerPath,
 ) !ServerLookup {
-    if (run_server.len == 0) return error.UnsupportedServer;
-    if (std.mem.eql(u8, run_server[0], "hq") and servers.len > 0) {
-        return .{ .index = 0, .slot = servers[0] };
-    }
-    if (std.mem.eql(u8, run_server[0], "rnd") and servers.len > 1) {
-        return .{ .index = 1, .slot = servers[1] };
-    }
-    if (std.mem.eql(u8, run_server[0], "archives") and servers.len > 2) {
-        return .{ .index = 2, .slot = servers[2] };
-    }
-    for (servers, 0..) |server, idx| {
-        if (std.mem.eql(u8, server.name, run_server[0])) {
-            return .{ .index = idx, .slot = server };
-        }
+    switch (run_server) {
+        .hq => if (servers.len > 0) return .{ .index = 0, .slot = servers[0] },
+        .rnd => if (servers.len > 1) return .{ .index = 1, .slot = servers[1] },
+        .archives => if (servers.len > 2) return .{ .index = 2, .slot = servers[2] },
+        .remote => {
+            for (servers, 0..) |server, idx| {
+                if (run_server.matchesName(server.name)) {
+                    return .{ .index = idx, .slot = server };
+                }
+            }
+        },
     }
     return error.UnknownServer;
 }
@@ -8394,23 +8411,8 @@ fn findServerIndexByName(
     return error.UnknownServer;
 }
 
-pub fn canonicalRunServer(
-    allocator: std.mem.Allocator,
-    server: []const u8,
-) ![]const []const u8 {
-    const result = try allocator.alloc([]const u8, 1);
-    if (std.mem.eql(u8, server, "Archives")) {
-        result[0] = try allocator.dupe(u8, "archives");
-    } else if (std.mem.eql(u8, server, "HQ")) {
-        result[0] = try allocator.dupe(u8, "hq");
-    } else if (std.mem.eql(u8, server, "R&D")) {
-        result[0] = try allocator.dupe(u8, "rnd");
-    } else if (std.mem.startsWith(u8, server, "Server ")) {
-        result[0] = try std.fmt.allocPrint(allocator, "remote{s}", .{server["Server ".len..]});
-    } else {
-        return error.UnsupportedServer;
-    }
-    return result;
+pub fn canonicalRunServer(server: []const u8) !state.ServerPath {
+    return state.ServerPath.fromDisplayName(server);
 }
 
 fn findServerIndexByDisplayName(
@@ -8431,11 +8433,8 @@ fn findServerIndexByDisplayName(
     return error.UnsupportedServer;
 }
 
-pub fn isCentralRunServer(run_server: []const []const u8) bool {
-    if (run_server.len == 0) return false;
-    return std.mem.eql(u8, run_server[0], "hq") or
-        std.mem.eql(u8, run_server[0], "rnd") or
-        std.mem.eql(u8, run_server[0], "archives");
+pub fn isCentralRunServer(run_server: state.ServerPath) bool {
+    return run_server.isCentral();
 }
 
 fn otherSide(side: state.Side) state.Side {
@@ -8466,7 +8465,7 @@ pub fn currentPendingAccessedServerCard(g: *Game) ?*state.CardInstance {
 }
 
 pub fn showTopDownInstallChoices(g: *Game, source_instance_id: u32, installs_done: u8, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
     defer choices_list.deinit(allocator);
     for (g.corp_hand.items, 0..) |c, idx| {
@@ -8480,7 +8479,7 @@ pub fn showTopDownInstallChoices(g: *Game, source_instance_id: u32, installs_don
     }
     try choices_list.append(allocator, stringChoice("Done"));
     g.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "top-down-card"),
+        .prompt_type = "top-down-card",
         .choices = try choices_list.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .min_choices = installs_done,
@@ -8491,7 +8490,7 @@ pub fn showTopDownInstallChoices(g: *Game, source_instance_id: u32, installs_don
 }
 
 pub fn beginPeerReviewInstallPrompt(g: *Game, source_instance_id: u32, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     g.corp_credit += 7;
     g.systemMsg(.corp, 35055, "Corp uses Peer Review to gain 7 [credits].", .{});
     var installable: std.ArrayList(state.PromptChoice) = .empty;
@@ -8512,7 +8511,7 @@ pub fn beginPeerReviewInstallPrompt(g: *Game, source_instance_id: u32, on_choice
         return;
     }
     g.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "peer-review-install"),
+        .prompt_type = "peer-review-install",
         .choices = try installable.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -8522,7 +8521,7 @@ pub fn beginPeerReviewInstallPrompt(g: *Game, source_instance_id: u32, on_choice
 }
 
 pub fn showKpiChoices(g: *Game, source_instance_id: u32, choices_made: u8, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
-    const allocator = g.arena.allocator();
+    const allocator = g.ephemeralAllocator();
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
     defer choices_list.deinit(allocator);
     try choices_list.append(allocator, stringChoice("Gain 2 [Credits]"));
@@ -8543,7 +8542,7 @@ pub fn showKpiChoices(g: *Game, source_instance_id: u32, choices_made: u8, on_ch
         try choices_list.append(allocator, stringChoice("Done"));
     }
     g.corp_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, "kpi-choose"),
+        .prompt_type = "kpi-choose",
         .choices = try choices_list.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .min_choices = choices_made,
@@ -8776,7 +8775,7 @@ test "corp installed credit ability on regolith pays out and trashes when empty"
 
     generated.corp_click = 6;
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     const credit_before = generated.corp_credit;
 
     var use_count: usize = 0;
@@ -8815,7 +8814,7 @@ test "offworld office on-score grants credits" {
     try installCard(&generated, offworld, "New remote");
 
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     const credit_before = generated.corp_credit;
     const score_action = findBasicAbilityAction(generated.legal_actions, .corp, .score_agenda) orelse return error.MissingAction;
@@ -8953,7 +8952,7 @@ fn beginMuOverflowPromptWithExtra(generated: *Game, extra_mu: u8) !bool {
     const mem = generated.runner_memory orelse return false;
     if (mem.used + extra_mu <= mem.base) return false;
 
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     // List installed programs as trash choices (trojans are on ICE, not in rig)
     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
     defer choices_list.deinit(allocator);
@@ -8964,7 +8963,7 @@ fn beginMuOverflowPromptWithExtra(generated: *Game, extra_mu: u8) !bool {
     if (choices_list.items.len == 0) return false;
 
     generated.runner_prompt_state = .{
-        .prompt_type = try allocator.dupe(u8, prompt_mu_overflow),
+        .prompt_type = prompt_mu_overflow,
         .choices = try choices_list.toOwnedSlice(allocator),
         .source_card = null,
     };
@@ -9007,7 +9006,7 @@ fn applyMuOverflowChoice(generated: *Game, choice_text: []const u8) !void {
     }
 
     generated.runner_prompt_state = null;
-    const allocator = generated.arena.allocator();
+    const allocator = generated.ephemeralAllocator();
     generated.decision_side = .runner;
     generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
 }
@@ -9611,7 +9610,7 @@ test "Bling free install hosts and can play hosted card" {
     generated.runner_credit = 5;
     generated.runner_click = 4;
     generated.decision_side = .runner;
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     const bling = generated.runner_hand.items[0];
     try completeRunnerInstall(&generated, 0, bling, 0, false);
@@ -9623,10 +9622,10 @@ test "Bling free install hosts and can play hosted card" {
             try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "bling-host", .choice = stringChoice("Host the top card of your stack on Bling") });
         }
     }
-    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items[0].hosted.len);
-    try std.testing.expectEqualStrings("Sure Gamble", generated.runner_rig_hardware.items[0].hosted[0].title);
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items[0].hosted.items.len);
+    try std.testing.expectEqualStrings("Sure Gamble", generated.runner_rig_hardware.items[0].hosted.items[0].title);
 
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Bling") orelse return error.MissingAction);
     try std.testing.expectEqualStrings("runner-hosted-card", generated.runner_prompt_state.?.prompt_type);
     const hosted_choice = for (generated.legal_actions) |action| {
@@ -9636,7 +9635,7 @@ test "Bling free install hosts and can play hosted card" {
     } else return error.MissingAction;
     try applyAction(&generated, hosted_choice);
 
-    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.len);
+    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.items.len);
     try std.testing.expectEqual(@as(u16, 9), generated.runner_credit);
 }
 
@@ -9653,7 +9652,7 @@ test "Bling trashes hosted cards at runner end turn" {
     generated.end_turn = false;
     try finishEndTurn(&generated, .runner);
 
-    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.len);
+    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.items.len);
     try std.testing.expectEqual(@as(usize, 1), generated.runner_discard.items.len);
     try std.testing.expectEqualStrings("Clean Getaway", generated.runner_discard.items[0].title);
 }
@@ -9672,12 +9671,12 @@ test "Detente returns hosted cards to HQ and opens a random access" {
     generated.end_turn = false;
     generated.runner_click = 4;
     generated.corp_hand.clearRetainingCapacity();
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Detente") orelse return error.MissingAction);
 
     try std.testing.expectEqual(@as(u8, 3), generated.runner_click);
-    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.len);
+    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.items.len);
     try std.testing.expectEqual(@as(usize, 2), generated.corp_hand.items.len);
     try std.testing.expect(generated.runner_prompt_state != null);
     try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
@@ -9698,7 +9697,7 @@ test "Detente ability is available to the corp" {
     generated.end_turn = false;
     generated.corp_click = 3;
     generated.corp_hand.clearRetainingCapacity();
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Detente") orelse return error.MissingAction);
 
@@ -9719,11 +9718,11 @@ test "Measured Response requires successful runner run last turn" {
     generated.runner_agenda_point = 2;
     generated.corp_credit = 10;
     generated.runner_successful_run_last_turn = false;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try std.testing.expect(findActionByTitle(generated.legal_actions, .play_from_hand, "Measured Response") == null);
 
     generated.runner_successful_run_last_turn = true;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try std.testing.expect(findActionByTitle(generated.legal_actions, .play_from_hand, "Measured Response") != null);
 }
 
@@ -9743,7 +9742,7 @@ test "Key Performance Indicators draw branch shuffles a card from HQ into R&D" {
         if (std.mem.eql(u8, card.title, "Mitra Aman")) mitra_before += 1;
     }
 
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Key Performance Indicators") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .corp, "Draw 1 card and shuffle 1 card from HQ into R&D") orelse return error.MissingAction);
     try std.testing.expectEqualStrings("kpi-shuffle", generated.corp_prompt_state.?.prompt_type);
@@ -9770,7 +9769,7 @@ test "Scrounge installs from heap and can bottom a program" {
     try generated.runner_discard.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35008)));
     try generated.runner_discard.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35009)));
     generated.runner_credit = 10;
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Scrounge") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Hantu") orelse return error.MissingAction);
@@ -9796,7 +9795,7 @@ test "Scrounge cancel still allows bottoming a program" {
     try generated.runner_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35004)));
     try generated.runner_discard.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35008)));
     generated.runner_credit = 10;
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Scrounge") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "No action") orelse return error.MissingAction);
@@ -9823,7 +9822,7 @@ test "Synapse Global prompts on tag removal and installs for free" {
     try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35073)));
     generated.corp_credit = 5;
     generated.runner_credit = 5;
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findBasicAbilityAction(generated.legal_actions, .runner, .remove_tag) orelse return error.MissingAction);
     try std.testing.expectEqualStrings("corp-free-install-card", generated.corp_prompt_state.?.prompt_type);
@@ -9868,26 +9867,26 @@ test "Madani can host from grip and then install a hosted program" {
     try generated.runner_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35008)));
     try generated.runner_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35009)));
     generated.runner_credit = 10;
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Madani") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Host programs from grip") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Hantu") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Done") orelse return error.MissingAction);
 
-    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items[0].hosted.len);
-    try std.testing.expectEqualStrings("Hantu", generated.runner_rig_hardware.items[0].hosted[0].title);
+    try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items[0].hosted.items.len);
+    try std.testing.expectEqualStrings("Hantu", generated.runner_rig_hardware.items[0].hosted.items[0].title);
 
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Madani") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Install a hosted program") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Hantu") orelse return error.MissingAction);
 
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_program.items.len);
     try std.testing.expectEqualStrings("Hantu", generated.runner_rig_program.items[0].title);
-    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.len);
+    try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.items.len);
 
-    generated.legal_actions = try runnerOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Madani") orelse return error.MissingAction);
     try std.testing.expect(findPromptChoiceAction(generated.legal_actions, .runner, "Install a hosted program") == null);
     try std.testing.expect(findPromptChoiceAction(generated.legal_actions, .runner, "Host programs from grip") != null);
@@ -9928,7 +9927,7 @@ test "Plutus rez cost: corp has scored agenda, chooses forfeit" {
     generated.corp_agenda_point = 2;
     // Set up actions and rez
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     const rez = findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction;
     try applyAction(&generated, rez);
     try std.testing.expect(generated.corp_prompt_state != null);
@@ -9951,7 +9950,7 @@ test "Plutus rez cost: no agenda, 1 card in HQ, cannot rez" {
     defer generated.deinit();
     try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(30075)));
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     const credit_before = generated.corp_credit;
     try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
     // Can't pay: no agenda and <3 HQ cards → auto-derez + refund
@@ -9974,7 +9973,7 @@ test "Plutus rez cost: no agenda, 4 cards in HQ, trashes 3" {
         try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(30075)));
     }
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
     try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash 3 cards from HQ") });
     var t: u8 = 0;
@@ -9989,7 +9988,7 @@ test "Plutus rez cost: no agenda, no HQ cards, auto-derezzes" {
     var generated = try setupPlutusInstalled(std.testing.allocator);
     defer generated.deinit();
     generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.arena.allocator(), &generated);
+    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     const credit_before = generated.corp_credit;
     try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
     var found_rezzed = false;

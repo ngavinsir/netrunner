@@ -1479,20 +1479,19 @@ fn parseRigResources(
 }
 
 fn parseOptionalRunState(
-    allocator: std.mem.Allocator,
+    _: std.mem.Allocator,
     object: std.json.ObjectMap,
     key: []const u8,
 ) !?state.RunState {
     const run_object = try getOptional(.object, object, key) orelse return null;
     const server_items = try getRequired(.array, run_object, "server");
-    const server = try allocator.alloc([]const u8, server_items.items.len);
-    for (server_items.items, 0..) |item, idx| {
-        server[idx] = try normalizeInternalServerName(allocator, try extractField(.string, item));
-    }
+    if (server_items.items.len == 0) return error.UnsupportedServer;
+    const raw_server_name = try extractField(.string, server_items.items[0]);
+    const server_name = if (std.mem.eql(u8, raw_server_name, "rd")) "rnd" else raw_server_name;
     return .{
-        .server = server,
+        .server = try state.ServerPath.fromInternalName(server_name),
         .position = try getIntegerAs(u8, run_object, "position"),
-        .phase = try dupeString(allocator, try getRequired(.string, run_object, "phase")),
+        .phase = state.RunPhase.fromStr(try getRequired(.string, run_object, "phase")) orelse return error.InvalidRunPhase,
         .corp_auto_no_action = if (try getOptional(.boolean, run_object, "corp-auto-no-action")) |value| value else false,
         .no_action = try parseOptionalRunSide(run_object, "no-action"),
         .accesses_remaining = 0,
@@ -2130,10 +2129,8 @@ fn freePromptChoiceExpectations(allocator: std.mem.Allocator, expectations: []co
 }
 
 fn freeTransitionExpectation(allocator: std.mem.Allocator, transition: *TransitionExpectation) void {
-    if (transition.run) |run| {
-        for (run.server) |segment| allocator.free(segment);
-        allocator.free(run.server);
-        allocator.free(run.phase);
+    if (transition.run) |_| {
+        // ServerPath is a value type, no allocation to free
     }
     if (transition.corp_prompt_type) |text| allocator.free(text);
     if (transition.runner_prompt_type) |text| allocator.free(text);

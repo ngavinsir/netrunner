@@ -104,9 +104,8 @@ pub export fn netrunner_action_description(handle: ?*anyopaque, index: c_int, bu
 }
 
 fn findRunServerIce(game: *Game, run: state.RunState, ice_idx: u8) ?[]const u8 {
-    if (run.server.len == 0) return null;
     for (game.corp_servers.items) |server| {
-        if (std.mem.eql(u8, server.name, run.server[0])) {
+        if (run.server.matchesName(server.name)) {
             if (ice_idx < server.ices.items.len) return server.ices.items[ice_idx].title;
         }
     }
@@ -289,14 +288,8 @@ pub export fn netrunner_context_card_code(handle: ?*anyopaque, action_index: c_i
 }
 
 fn find_run_server_ice_code(game: *Game, run: state.RunState, ice_idx: u8) ?u32 {
-    if (run.server.len == 0) return null;
-    const server_name = run.server[0];
     for (game.corp_servers.items) |server| {
-        if (std.mem.eql(u8, server.name, server_name) or
-            (std.mem.eql(u8, server_name, "hq") and std.mem.eql(u8, server.name, "hq")) or
-            (std.mem.eql(u8, server_name, "rnd") and std.mem.eql(u8, server.name, "rnd")) or
-            (std.mem.eql(u8, server_name, "archives") and std.mem.eql(u8, server.name, "archives")))
-        {
+        if (run.server.matchesName(server.name)) {
             if (ice_idx < server.ices.items.len) {
                 return server.ices.items[ice_idx].code;
             }
@@ -903,14 +896,22 @@ pub export fn netrunner_is_run_active(handle: ?*anyopaque) callconv(.c) bool {
 pub export fn netrunner_run_server(handle: ?*anyopaque, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {
     const game = get_game(handle) orelse return 0;
     const run = game.run orelse return 0;
-    if (run.server.len == 0) return 0;
-    return write_str(buf, buf_size, run.server[0]);
+    switch (run.server) {
+        .hq => return write_str(buf, buf_size, "hq"),
+        .rnd => return write_str(buf, buf_size, "rnd"),
+        .archives => return write_str(buf, buf_size, "archives"),
+        .remote => |n| {
+            var tmp: [16]u8 = undefined;
+            const s = std.fmt.bufPrint(&tmp, "remote{d}", .{n}) catch return 0;
+            return write_str(buf, buf_size, s);
+        },
+    }
 }
 
 pub export fn netrunner_run_phase(handle: ?*anyopaque, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {
     const game = get_game(handle) orelse return 0;
     const run = game.run orelse return 0;
-    return write_str(buf, buf_size, run.phase);
+    return write_str(buf, buf_size, run.phase.toStr());
 }
 
 pub export fn netrunner_run_position(handle: ?*anyopaque) callconv(.c) c_int {
@@ -944,25 +945,25 @@ pub export fn netrunner_prompt_source(handle: ?*anyopaque, player: c_int, buf: [
 
 pub export fn netrunner_log_count(handle: ?*anyopaque) callconv(.c) c_int {
     const game = get_game(handle) orelse return 0;
-    return @intCast(game.log_entries.items.len);
+    return @intCast(game.log_entries.len);
 }
 
 pub export fn netrunner_log_side(handle: ?*anyopaque, index: c_int) callconv(.c) c_int {
     const game = get_game(handle) orelse return -1;
-    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.items.len) return -1;
-    return if (game.log_entries.items[@intCast(index)].side == .corp) 0 else 1;
+    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.len) return -1;
+    return if (game.log_entries.get(@intCast(index)).side == .corp) 0 else 1;
 }
 
 pub export fn netrunner_log_text(handle: ?*anyopaque, index: c_int, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {
     const game = get_game(handle) orelse return 0;
-    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.items.len) return 0;
-    return write_str(buf, buf_size, game.log_entries.items[@intCast(index)].text);
+    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.len) return 0;
+    return write_str(buf, buf_size, game.log_entries.get(@intCast(index)).text);
 }
 
 pub export fn netrunner_log_card_code(handle: ?*anyopaque, index: c_int) callconv(.c) c_int {
     const game = get_game(handle) orelse return 0;
-    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.items.len) return 0;
-    return @intCast(game.log_entries.items[@intCast(index)].card_code);
+    if (index < 0 or @as(usize, @intCast(index)) >= game.log_entries.len) return 0;
+    return @intCast(game.log_entries.get(@intCast(index)).card_code);
 }
 
 // ============================================================

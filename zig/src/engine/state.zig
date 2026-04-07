@@ -310,7 +310,7 @@ pub const CardInstance = struct {
     abilities_used_this_turn: u16 = 0,
     installed_this_turn: bool = false,
     broken_subroutines: u16 = 0, // bitmask of broken subroutines
-    hosted: []CardInstance = &.{}, // Cards hosted on this card (e.g., trojans on ICE)
+    hosted: std.ArrayListUnmanaged(CardInstance) = .empty, // Cards hosted on this card (e.g., trojans on ICE)
     flipped: bool = false,
     seen: bool = false,
 };
@@ -374,10 +374,98 @@ pub const PendingSubroutine = struct {
     subroutine_index: u8,
 };
 
+pub const RunPhase = enum {
+    initiation,
+    approach_ice,
+    encounter_ice,
+    movement,
+    success,
+
+    pub fn toStr(self: RunPhase) []const u8 {
+        return switch (self) {
+            .initiation => "initiation",
+            .approach_ice => "approach-ice",
+            .encounter_ice => "encounter-ice",
+            .movement => "movement",
+            .success => "success",
+        };
+    }
+
+    pub fn fromStr(s: []const u8) ?RunPhase {
+        if (std.mem.eql(u8, s, "initiation")) return .initiation;
+        if (std.mem.eql(u8, s, "approach-ice")) return .approach_ice;
+        if (std.mem.eql(u8, s, "encounter-ice")) return .encounter_ice;
+        if (std.mem.eql(u8, s, "movement")) return .movement;
+        if (std.mem.eql(u8, s, "success")) return .success;
+        return null;
+    }
+};
+
+pub const ServerPath = union(enum) {
+    hq,
+    rnd,
+    archives,
+    remote: u8,
+
+    pub fn matchesName(self: ServerPath, name: []const u8) bool {
+        return switch (self) {
+            .hq => std.mem.eql(u8, name, "hq"),
+            .rnd => std.mem.eql(u8, name, "rnd"),
+            .archives => std.mem.eql(u8, name, "archives"),
+            .remote => |n| blk: {
+                if (!std.mem.startsWith(u8, name, "remote")) break :blk false;
+                const num = std.fmt.parseInt(u8, name["remote".len..], 10) catch break :blk false;
+                break :blk num == n;
+            },
+        };
+    }
+
+    pub fn fromDisplayName(name: []const u8) !ServerPath {
+        if (std.mem.eql(u8, name, "Archives")) return .archives;
+        if (std.mem.eql(u8, name, "HQ")) return .hq;
+        if (std.mem.eql(u8, name, "R&D")) return .rnd;
+        if (std.mem.startsWith(u8, name, "Server ")) {
+            const num = std.fmt.parseInt(u8, name["Server ".len..], 10) catch return error.UnsupportedServer;
+            return .{ .remote = num };
+        }
+        return error.UnsupportedServer;
+    }
+
+    pub fn fromInternalName(name: []const u8) !ServerPath {
+        if (std.mem.eql(u8, name, "hq")) return .hq;
+        if (std.mem.eql(u8, name, "rnd")) return .rnd;
+        if (std.mem.eql(u8, name, "archives")) return .archives;
+        if (std.mem.startsWith(u8, name, "remote")) {
+            const num = std.fmt.parseInt(u8, name["remote".len..], 10) catch return error.UnsupportedServer;
+            return .{ .remote = num };
+        }
+        return error.UnsupportedServer;
+    }
+
+    pub fn isCentral(self: ServerPath) bool {
+        return switch (self) {
+            .hq, .rnd, .archives => true,
+            .remote => false,
+        };
+    }
+
+    pub fn eql(self: ServerPath, other: ServerPath) bool {
+        return switch (self) {
+            .hq => other == .hq,
+            .rnd => other == .rnd,
+            .archives => other == .archives,
+            .remote => |n| switch (other) {
+                .remote => |m| n == m,
+                else => false,
+            },
+        };
+    }
+};
+
 pub const RunState = struct {
-    server: []const []const u8,
+    server: ServerPath,
     position: u8,
-    phase: []const u8,
+    phase: RunPhase,
     encounter_phase: EncounterPhase = .none,
     current_ice_index: ?u8 = null,
     corp_auto_no_action: bool = false,
