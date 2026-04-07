@@ -7124,6 +7124,64 @@ pub fn restorePriorityAfterPrompt(generated: *Game) !void {
     };
 }
 
+/// Set up a 2-choice prompt [yes_text, "No action"]. When yes is chosen,
+/// on_yes(game, source_instance_id) is called. The engine auto-restores
+/// opening actions after the choice resolves.
+pub fn beginYesNoAbilityPrompt(
+    g: *Game,
+    comptime side: state.Side,
+    prompt_type: state.PromptType,
+    yes_text: []const u8,
+    instance_id: u32,
+    comptime on_yes: *const fn (*Game, u32) anyerror!void,
+) !void {
+    const Callback = struct {
+        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+            const cg = gameFromEffectContext(cctx);
+            const ref = (if (comptime side == .corp) cg.corp_prompt_state else cg.runner_prompt_state) orelse return;
+            const iid = if (ref.ability_ref) |r| r.source_instance_id else return;
+            if (comptime side == .corp) cg.corp_prompt_state = null else cg.runner_prompt_state = null;
+            if (!std.mem.eql(u8, choice_text, "No action")) try on_yes(cg, iid);
+        }
+    };
+    const allocator = g.ephemeralAllocator();
+    const prompt: state.PromptState = .{
+        .prompt_type = prompt_type,
+        .choices = try allocator.dupe(state.PromptChoice, &.{ stringChoice(yes_text), stringChoice("No action") }),
+        .ability_ref = .{ .source_instance_id = instance_id },
+        .on_choice = &Callback.choice,
+    };
+    if (comptime side == .corp) g.corp_prompt_state = prompt else g.runner_prompt_state = prompt;
+    g.decision_side = side;
+    g.legal_actions = try promptChoiceActions(allocator, side, if (comptime side == .corp) g.corp_prompt_state.? else g.runner_prompt_state.?);
+}
+
+/// Finalize a card-selection prompt built from an ArrayList.
+/// Appends done_text as the last choice, sets up prompt_state, decision_side, legal_actions.
+/// Returns false (no prompt opened) if choices is empty.
+/// Caller builds the choices ArrayList using g.ephemeralAllocator(); this helper calls toOwnedSlice on it.
+pub fn finalizeCardChoicePrompt(
+    g: *Game,
+    comptime side: state.Side,
+    prompt_type: state.PromptType,
+    choices: *std.ArrayList(state.PromptChoice),
+    done_text: []const u8,
+    on_choice: *const fn (*state.EffectContext, []const u8) anyerror!void,
+) !bool {
+    if (choices.items.len == 0) return false;
+    const allocator = g.ephemeralAllocator();
+    try choices.append(allocator, stringChoice(done_text));
+    const prompt: state.PromptState = .{
+        .prompt_type = prompt_type,
+        .choices = try choices.toOwnedSlice(allocator),
+        .on_choice = on_choice,
+    };
+    if (comptime side == .corp) g.corp_prompt_state = prompt else g.runner_prompt_state = prompt;
+    g.decision_side = side;
+    g.legal_actions = try promptChoiceActions(allocator, side, if (comptime side == .corp) g.corp_prompt_state.? else g.runner_prompt_state.?);
+    return true;
+}
+
 pub fn beginYesNoPrompt(
     generated: *Game,
     side: state.Side,
