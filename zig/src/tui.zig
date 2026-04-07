@@ -225,6 +225,7 @@ fn render_menu(win: Window) void {
         "System Gateway - Intermediate",
         "System Gateway - Full Pack",
         "GNK: NBN Bounce Rate vs Loup",
+        "SG: HB Precision Design vs Catalyst",
     };
 
     for (matchups, 0..) |name, i| {
