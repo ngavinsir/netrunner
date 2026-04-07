@@ -3338,6 +3338,18 @@ fn findPromptText(actions: []const state.LegalAction, text: []const u8) ?state.L
     return null;
 }
 
+fn findPromptTextStartsWith(actions: []const state.LegalAction, prefix: []const u8) ?state.LegalAction {
+    for (actions) |a| {
+        if (a.kind != .prompt_choice) continue;
+        if (a.choice) |c| {
+            if (c.text) |t| {
+                if (std.mem.startsWith(u8, t, prefix)) return a;
+            }
+        }
+    }
+    return null;
+}
+
 fn hasAdvanceableCards(gen: *const generator.Game) bool {
     for (gen.corp_servers.items) |server| {
         for (server.content.items) |card| {
@@ -9339,8 +9351,44 @@ test "byte ambush on access parity test" {
     // Runner turn: run the remote — Byte! ambush fires on access
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try applyRunAction(allocator, &actions, &generated, "Server 1");
-    // Resolve run — Byte! ambush prompt appears for corp (pay/no action)
-    try resolveRunToEnd(allocator, &actions, &generated);
+    // No ICE on remote — resolve approach/continue phases
+    {
+        var iters: u32 = 0;
+        while (iters < 30) : (iters += 1) {
+            // Byte! ambush prompt: prefer "Pay 4" over "No action"
+            if (findPromptTextStartsWith(generated.legal_actions, "Pay 4")) |pay| {
+                try takeAction(allocator, &actions, &generated, pay);
+                continue;
+            }
+            if (generated.run == null) break;
+            if (findPromptText(generated.legal_actions, "Steal")) |a| {
+                try takeAction(allocator, &actions, &generated, a);
+                continue;
+            }
+            if (findPromptText(generated.legal_actions, "No action")) |a| {
+                try takeAction(allocator, &actions, &generated, a);
+                continue;
+            }
+            var found_prompt = false;
+            for (generated.legal_actions) |a| {
+                if (a.kind == .prompt_choice) {
+                    try takeAction(allocator, &actions, &generated, a);
+                    found_prompt = true;
+                    break;
+                }
+            }
+            if (found_prompt) continue;
+            if (findFirstKindAction(generated.legal_actions, .@"continue", .corp)) |cont| {
+                try takeAction(allocator, &actions, &generated, cont);
+                continue;
+            }
+            if (findFirstKindAction(generated.legal_actions, .@"continue", .runner)) |cont| {
+                try takeAction(allocator, &actions, &generated, cont);
+                continue;
+            }
+            break;
+        }
+    }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);

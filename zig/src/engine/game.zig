@@ -7726,13 +7726,17 @@ pub fn trashRandomRunnerHandCards(
     game: *Game,
     amount: u8,
 ) !void {
-    // Trash from front of hand (index 0). Clojure uses Java's rand-nth which is
-    // separate from the game RNG, so we must NOT consume the game RNG here.
-    // Both engines agree on the number of cards trashed; specific cards may differ
-    // but parity comparison checks hand titles as a set, not order.
+    // Clojure uses seeded Fisher-Yates shuffle (shuffle-coll!) on the hand,
+    // then takes the first N cards as damage. We must consume the game RNG
+    // the same way to maintain seed parity.
+    if (game.runner_hand.items.len == 0) return;
+    var rng_state = fromOracleSeed(game.rng_seed orelse return);
+    shuffleInPlace(state.CardInstance, &rng_state, game.runner_hand.items);
+    game.rng_seed = oracleSeed(rng_state);
+
+    const to_trash = @min(amount, @as(u8, @intCast(game.runner_hand.items.len)));
     var actual_trashed: u8 = 0;
-    var remaining = amount;
-    while (remaining > 0 and game.runner_hand.items.len > 0) : (remaining -= 1) {
+    for (0..to_trash) |_| {
         const trashed = game.runner_hand.orderedRemove(0);
         try game.runner_discard.append(game.backing_allocator, trashed);
         actual_trashed += 1;
