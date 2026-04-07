@@ -1796,16 +1796,6 @@ fn applyPromptChoice(
         return;
     }
 
-    if (side == .corp and prompt.prompt_type == .net_damage_on_access) {
-        try applyNetDamageOnAccessChoice(generated, choice_text);
-        return;
-    }
-
-    if (side == .corp and prompt.prompt_type == .byte_ambush) {
-        try applyByteAmbushChoice(generated, choice_text);
-        return;
-    }
-
     if (side == .runner and prompt.prompt_type == prompt_access_choice and prompt.source_card != null) {
         try applyAccessPromptChoice(generated, side, choice_text);
         return;
@@ -1852,19 +1842,7 @@ fn applyPromptChoice(
         return;
     }
 
-    // Tao Salonga: swap 2 pieces of ICE
-    if (side == .runner and prompt.prompt_type == .tao_swap_ice) {
-        try applyTaoSwapIceChoice(generated, choice_text);
-        return;
-    }
-
-    // Trojan: runner selects ICE to host on
-    if (side == .runner and prompt.prompt_type == .trojan_host) {
-        try applyTrojanHostChoice(generated, choice_text);
-        return;
-    }
-
-    // Prompt-level on_choice handler: set directly when opening the prompt
+    // Generic on_choice handler: all card-owned prompts route here
     if (prompt.on_choice) |handler| {
         const decision_before = generated.decision_side;
         try handler(effectContext(generated), choice_text);
@@ -1883,52 +1861,6 @@ fn applyPromptChoice(
             }
         }
         return;
-    }
-
-    // HB: Precision Design: select card from Archives to add to HQ
-    if (side == .corp and prompt.prompt_type == .precision_design_archive) {
-        if (std.mem.eql(u8, choice_text, "Done")) {
-            generated.corp_prompt_state = null;
-            if (try resumePendingEffects(generated)) return;
-            generated.decision_side = .corp;
-            generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
-            return;
-        }
-        // Find the card in Archives by title and move to HQ
-        for (generated.corp_discard.items, 0..) |card, idx| {
-            if (std.mem.eql(u8, card.title, choice_text)) {
-                const removed = generated.corp_discard.orderedRemove(idx);
-                try generated.corp_hand.append(generated.backing_allocator, removed);
-                break;
-            }
-        }
-        generated.corp_prompt_state = null;
-        if (try resumePendingEffects(generated)) return;
-        generated.decision_side = .corp;
-        generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
-        return;
-    }
-
-    // Ansel 1.0: corp chooses a card from HQ/Archives to install
-    if (side == .corp and prompt.prompt_type == .ansel_install) {
-        try applyAnselInstallChoice(generated, choice_text);
-        return;
-    }
-
-    // Ballista: corp chooses a program to trash during subroutine
-    if (side == .corp and prompt.prompt_type == .ballista_trash) {
-        try applyBallistaTrashChoice(generated, choice_text);
-        return;
-    }
-
-    // Install-ICE subroutine prompt (Brân, Scatter Field): "other" type with pending_subroutine
-    if (side == .corp and prompt.prompt_type == .other) {
-        if (generated.run) |run| {
-            if (run.pending_subroutine) |_| {
-                try applyBranInstallIceChoice(generated, choice_text);
-                return;
-            }
-        }
     }
 
     return error.UnsupportedPrompt;
@@ -2772,63 +2704,6 @@ pub fn fireEventWith(generated: *Game, payload: state.EffectContext.EventPayload
     return try drainPendingEffects(generated);
 }
 
-fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
-    if (std.mem.eql(u8, choice_text, "Done")) {
-        // Declined to swap
-        generated.tao_first_ice = null;
-        generated.runner_prompt_state = null;
-        if (try resumePendingEffects(generated)) return;
-        generated.decision_side = .corp;
-        generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
-        return;
-    }
-
-    if (generated.tao_first_ice == null) {
-        // First ICE selected — store it and present second pick (excluding the first)
-        generated.tao_first_ice = choice_text;
-        const allocator = generated.ephemeralAllocator();
-        var choices: std.ArrayList(state.PromptChoice) = .empty;
-        defer choices.deinit(allocator);
-        for (generated.corp_servers.items, 0..) |server, si| {
-            for (server.ices.items, 0..) |ice, ii| {
-                const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
-                if (std.mem.eql(u8, text, choice_text)) continue; // skip the first pick
-                try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
-            }
-        }
-        try choices.append(allocator, stringChoice("Done"));
-        generated.runner_prompt_state = .{
-            .prompt_type = .tao_swap_ice,
-            .choices = try choices.toOwnedSlice(allocator),
-            .source_card = null,
-            .min_choices = 1,
-        };
-        generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
-        return;
-    }
-
-    // Second ICE selected — perform the swap
-    const first_text = generated.tao_first_ice.?;
-    var pieces_a = std.mem.splitScalar(u8, first_text, '|');
-    const srv_a = try std.fmt.parseInt(usize, pieces_a.next() orelse return error.UnsupportedChoice, 10);
-    const idx_a = try std.fmt.parseInt(usize, pieces_a.next() orelse return error.UnsupportedChoice, 10);
-
-    var pieces_b = std.mem.splitScalar(u8, choice_text, '|');
-    const srv_b = try std.fmt.parseInt(usize, pieces_b.next() orelse return error.UnsupportedChoice, 10);
-    const idx_b = try std.fmt.parseInt(usize, pieces_b.next() orelse return error.UnsupportedChoice, 10);
-
-    // Swap the two ICE cards
-    const ice_a = generated.corp_servers.items[srv_a].ices.items[idx_a];
-    const ice_b = generated.corp_servers.items[srv_b].ices.items[idx_b];
-    generated.corp_servers.items[srv_a].ices.items[idx_a] = ice_b;
-    generated.corp_servers.items[srv_b].ices.items[idx_b] = ice_a;
-
-    generated.tao_first_ice = null;
-    generated.runner_prompt_state = null;
-    if (try resumePendingEffects(generated)) return;
-    generated.decision_side = .corp;
-    generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), generated);
-}
 
 fn applyTrojanHostChoice(generated: *Game, choice_text: []const u8) !void {
     const pending = generated.pending_install orelse return error.MissingPendingInstall;
@@ -3848,6 +3723,11 @@ pub fn beginRunnerInstallFromHand(generated: *Game, card_index: u8, spend_click:
             .prompt_type = .trojan_host,
             .choices = try choices.toOwnedSlice(allocator),
             .source_card = card,
+            .on_choice = &struct {
+                fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                    try applyTrojanHostChoice(gameFromEffectContext(cctx), choice_text);
+                }
+            }.choice,
         };
         generated.decision_side = .runner;
         generated.legal_actions = try promptChoiceActions(allocator, .runner, generated.runner_prompt_state.?);
@@ -4730,6 +4610,11 @@ pub fn resolveTrashProgramOrEtr(generated: *Game, ctx: state.SubroutineContext) 
         .prompt_type = .ballista_trash,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                try applyBallistaTrashChoice(gameFromEffectContext(cctx), choice_text);
+            }
+        }.choice,
     };
     generated.decision_side = .corp;
     generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
@@ -4831,6 +4716,11 @@ pub fn resolveTrashProgramOrResourceOrEtr(generated: *Game, ctx: state.Subroutin
         .prompt_type = .ballista_trash,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                try applyBallistaTrashChoice(gameFromEffectContext(cctx), choice_text);
+            }
+        }.choice,
     };
     generated.decision_side = .corp;
     generated.legal_actions = try promptChoiceActions(allocator, .corp, generated.corp_prompt_state.?);
@@ -5065,6 +4955,11 @@ fn beginAnselInstallPrompt(
     generated.corp_prompt_state = .{
         .prompt_type = .ansel_install,
         .choices = try choices.toOwnedSlice(allocator),
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                try applyAnselInstallChoice(gameFromEffectContext(cctx), choice_text);
+            }
+        }.choice,
     };
 
     generated.decision_side = .corp;
@@ -5694,6 +5589,11 @@ pub fn beginNetDamageOnAccessPrompt(
         .prompt_type = .net_damage_on_access,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = accessed,
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                try applyNetDamageOnAccessChoice(gameFromEffectContext(cctx), choice_text);
+            }
+        }.choice,
     };
     return true;
 }
@@ -5795,6 +5695,11 @@ pub fn beginByteAmbushPrompt(generated: *Game, accessed: state.CardInstance) !bo
         .prompt_type = .byte_ambush,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = accessed,
+        .on_choice = &struct {
+            fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                try applyByteAmbushChoice(gameFromEffectContext(cctx), choice_text);
+            }
+        }.choice,
     };
     return true;
 }

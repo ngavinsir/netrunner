@@ -497,14 +497,20 @@ pub const all_cards = [_]CardSpec{
                     for (g.corp_discard.items, 0..) |card, idx| {
                         try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
                     }
-                    try choices.append(allocator, stringChoice("Done"));
-                    g.corp_prompt_state = .{
-                        .prompt_type = .precision_design_archive,
-                        .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = null,
-                    };
-                    g.decision_side = .corp;
-                    g.legal_actions = try promptChoiceActions(allocator, .corp, g.corp_prompt_state.?);
+                    _ = try finalizeCardChoicePrompt(g, .corp, .precision_design_archive, &choices, "Done", &struct {
+                        fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                            const cg = gameFromEffectContext(cctx);
+                            cg.corp_prompt_state = null;
+                            if (std.mem.eql(u8, choice_text, "Done")) return;
+                            for (cg.corp_discard.items, 0..) |card, idx| {
+                                if (std.mem.eql(u8, card.title, choice_text)) {
+                                    const removed = cg.corp_discard.orderedRemove(idx);
+                                    try cg.corp_hand.append(cg.ephemeralAllocator(), removed);
+                                    break;
+                                }
+                            }
+                        }
+                    }.choice);
                 }
             }.handle,
         }},
@@ -622,19 +628,13 @@ pub const all_cards = [_]CardSpec{
         .card_type = "Identity",
         .event_abilities = blk: {
             const H = struct {
-                fn trigger(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
-                    const g = gameFromEffectContext(ctx);
-                    var ice_count: usize = 0;
-                    for (g.corp_servers.items) |server| {
-                        ice_count += server.ices.items.len;
-                    }
-                    if (ice_count < 2) return;
-                    const allocator = g.ephemeralAllocator();
+                fn openPrompt(g: *Game, allocator: std.mem.Allocator, skip_text: ?[]const u8, min: u8) !void {
                     var choices: std.ArrayList(state.PromptChoice) = .empty;
                     defer choices.deinit(allocator);
                     for (g.corp_servers.items, 0..) |server, si| {
                         for (server.ices.items, 0..) |ice, ii| {
                             const text = try std.fmt.allocPrint(allocator, "{d}|{d}|{s}", .{ si, ii, ice.title });
+                            if (skip_text != null and std.mem.eql(u8, text, skip_text.?)) continue;
                             try choices.append(allocator, .{ .kind = .card, .text = text, .card = .{ .title = ice.title, .side = .corp, .index = @intCast(ii) } });
                         }
                     }
@@ -643,10 +643,60 @@ pub const all_cards = [_]CardSpec{
                         .prompt_type = .tao_swap_ice,
                         .choices = try choices.toOwnedSlice(allocator),
                         .source_card = null,
-                        .min_choices = 0,
+                        .min_choices = min,
+                        .on_choice = &swapChoice,
                     };
                     g.decision_side = .runner;
                     g.legal_actions = try promptChoiceActions(allocator, .runner, g.runner_prompt_state.?);
+                }
+
+                fn swapChoice(ctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const allocator = g.ephemeralAllocator();
+
+                    if (std.mem.eql(u8, choice_text, "Done")) {
+                        g.tao_first_ice = null;
+                        g.runner_prompt_state = null;
+                        g.decision_side = .corp;
+                        g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                        return;
+                    }
+
+                    if (g.tao_first_ice == null) {
+                        // First ICE selected — store and re-prompt excluding it
+                        g.tao_first_ice = choice_text;
+                        try openPrompt(g, allocator, choice_text, 1);
+                        return;
+                    }
+
+                    // Second ICE selected — perform the swap
+                    const first_text = g.tao_first_ice.?;
+                    var pa = std.mem.splitScalar(u8, first_text, '|');
+                    const srv_a = try std.fmt.parseInt(usize, pa.next() orelse return error.UnsupportedChoice, 10);
+                    const idx_a = try std.fmt.parseInt(usize, pa.next() orelse return error.UnsupportedChoice, 10);
+                    var pb = std.mem.splitScalar(u8, choice_text, '|');
+                    const srv_b = try std.fmt.parseInt(usize, pb.next() orelse return error.UnsupportedChoice, 10);
+                    const idx_b = try std.fmt.parseInt(usize, pb.next() orelse return error.UnsupportedChoice, 10);
+
+                    const ice_a = g.corp_servers.items[srv_a].ices.items[idx_a];
+                    const ice_b = g.corp_servers.items[srv_b].ices.items[idx_b];
+                    g.corp_servers.items[srv_a].ices.items[idx_a] = ice_b;
+                    g.corp_servers.items[srv_b].ices.items[idx_b] = ice_a;
+
+                    g.tao_first_ice = null;
+                    g.runner_prompt_state = null;
+                    g.decision_side = .corp;
+                    g.legal_actions = try corpOpeningActionsForState(allocator, g);
+                }
+
+                fn trigger(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    var ice_count: usize = 0;
+                    for (g.corp_servers.items) |server| {
+                        ice_count += server.ices.items.len;
+                    }
+                    if (ice_count < 2) return;
+                    try openPrompt(g, g.ephemeralAllocator(), null, 0);
                 }
             };
             break :blk &.{
