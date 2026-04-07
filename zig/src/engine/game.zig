@@ -1064,19 +1064,19 @@ fn clearAbilityUsage(card: *state.CardInstance) void {
     card.abilities_used_this_turn = 0;
 }
 
-const prompt_install_destination = "install-destination";
-const prompt_advance_installed = "advance-installed";
-const prompt_score_agenda = "score-agenda";
-const prompt_access_choice = "access-choice";
-const prompt_access_cleanup = "access-cleanup";
-const prompt_rez_ice_free = "send-message-rez";
-const prompt_rez_ice_free_score = "send-message-rez-score";
-const prompt_run_target = "run-target";
+const prompt_install_destination: state.PromptType = .install_destination;
+const prompt_advance_installed: state.PromptType = .advance_installed;
+const prompt_score_agenda: state.PromptType = .score_agenda;
+const prompt_access_choice: state.PromptType = .access_choice;
+const prompt_access_cleanup: state.PromptType = .access_cleanup;
+const prompt_rez_ice_free: state.PromptType = .send_message_rez;
+const prompt_rez_ice_free_score: state.PromptType = .send_message_rez_score;
+const prompt_run_target: state.PromptType = .run_target;
 
-pub const prompt_run_central = "run-central";
-const prompt_hq_access = "hq-access";
-const prompt_discard = "discard";
-const prompt_manegarm_tax = "manegarm-tax";
+pub const prompt_run_central: state.PromptType = .run_central;
+const prompt_hq_access: state.PromptType = .hq_access;
+const prompt_discard: state.PromptType = .discard;
+const prompt_manegarm_tax: state.PromptType = .manegarm_tax;
 
 fn effectContext(game: *Game) *state.EffectContext {
     game.effect_ctx = .{ .game_ptr = game };
@@ -1272,26 +1272,26 @@ fn lookupCardSpec(card: state.CardInstance) ?CardSpec {
 }
 
 const corp_mulligan_actions = [_]state.LegalAction{
-    .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") },
-    .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Mulligan") },
+    .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") },
+    .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Mulligan") },
 };
 const runner_mulligan_actions = [_]state.LegalAction{
-    .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") },
-    .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Mulligan") },
+    .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") },
+    .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Mulligan") },
 };
 const corp_continue_actions = [_]state.LegalAction{
-    .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" },
+    .{ .kind = .@"continue", .side = .corp, .prompt_type = .run },
 };
 
 fn runnerContinueActions(allocator: std.mem.Allocator, jack_out_available: bool) ![]const state.LegalAction {
     if (jack_out_available) {
         const actions = try allocator.alloc(state.LegalAction, 2);
-        actions[0] = .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" };
-        actions[1] = .{ .kind = .jack_out, .side = .runner, .prompt_type = "run", .label = "Jack out" };
+        actions[0] = .{ .kind = .@"continue", .side = .runner, .prompt_type = .run };
+        actions[1] = .{ .kind = .jack_out, .side = .runner, .prompt_type = .run, .label = "Jack out" };
         return actions;
     }
     const actions = try allocator.alloc(state.LegalAction, 1);
-    actions[0] = .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" };
+    actions[0] = .{ .kind = .@"continue", .side = .runner, .prompt_type = .run };
     return actions;
 }
 const corp_start_turn_actions = [_]state.LegalAction{
@@ -1358,7 +1358,7 @@ pub fn createInitialSnapshot(
     game.corp_agenda_point_req = matchup.agenda_point_req;
     game.corp_keep = .undecided;
     game.corp_prompt_state = .{
-        .prompt_type = "mulligan",
+        .prompt_type = .mulligan,
         .choices = mulligan_prompt,
         .source_card = null,
     };
@@ -1369,7 +1369,7 @@ pub fn createInitialSnapshot(
     game.runner_agenda_point_req = matchup.agenda_point_req;
     game.runner_keep = .undecided;
     game.runner_prompt_state = .{
-        .prompt_type = "waiting",
+        .prompt_type = .waiting,
         .choices = &.{},
         .source_card = null,
     };
@@ -1521,13 +1521,13 @@ pub fn applyMulliganChoice(
     switch (side) {
         .corp => {
             generated.corp_prompt_state = .{
-                .prompt_type = "waiting",
+                .prompt_type = .waiting,
                 .choices = &.{},
                 .source_card = null,
             };
 
             generated.runner_prompt_state = .{
-                .prompt_type = "mulligan",
+                .prompt_type = .mulligan,
                 .choices = try dupPromptChoices(allocator),
                 .source_card = null,
             };
@@ -1760,106 +1760,106 @@ fn applyPromptChoice(
         .runner => generated.runner_prompt_state,
     }) orelse return error.MissingPrompt;
 
-    if (std.mem.eql(u8, prompt.prompt_type, "mulligan")) {
+    if (prompt.prompt_type == .mulligan) {
         const keep_state = parseKeepState(choice_text);
         try applyMulliganChoice(generated, side, keep_state);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_install_destination) and generated.pending_install != null and prompt.source_card != null) {
+    if (side == .corp and prompt.prompt_type == prompt_install_destination and generated.pending_install != null and prompt.source_card != null) {
         try applyPendingInstallChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_advance_installed)) {
+    if (side == .corp and prompt.prompt_type == prompt_advance_installed) {
         try applyAdvanceInstalledChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_score_agenda)) {
+    if (side == .corp and prompt.prompt_type == prompt_score_agenda) {
         try applyScoreAgendaChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_access_cleanup) and prompt.source_card != null) {
+    if (side == .corp and prompt.prompt_type == prompt_access_cleanup and prompt.source_card != null) {
         try applyAccessCleanupChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_rez_ice_free) and prompt.source_card != null) {
+    if (side == .corp and prompt.prompt_type == prompt_rez_ice_free and prompt.source_card != null) {
         try applyRezIceFreeChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, prompt_rez_ice_free_score) and prompt.source_card != null) {
+    if (side == .corp and prompt.prompt_type == prompt_rez_ice_free_score and prompt.source_card != null) {
         try applyRezIceFreeScoreChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "net-damage-on-access")) {
+    if (side == .corp and prompt.prompt_type == .net_damage_on_access) {
         try applyNetDamageOnAccessChoice(generated, choice_text);
         return;
     }
 
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "byte-ambush")) {
+    if (side == .corp and prompt.prompt_type == .byte_ambush) {
         try applyByteAmbushChoice(generated, choice_text);
         return;
     }
 
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_access_choice) and prompt.source_card != null) {
+    if (side == .runner and prompt.prompt_type == prompt_access_choice and prompt.source_card != null) {
         try applyAccessPromptChoice(generated, side, choice_text);
         return;
     }
 
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_hq_access)) {
+    if (side == .runner and prompt.prompt_type == prompt_hq_access) {
         try applyHqAccessChoice(generated, choice_text);
         return;
     }
 
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_run_target) and prompt.source_card != null and prompt.on_choice == null) {
+    if (side == .runner and prompt.prompt_type == prompt_run_target and prompt.source_card != null and prompt.on_choice == null) {
         try applyRunnerRunTargetChoice(generated, choice_text);
         return;
     }
 
-    if (std.mem.eql(u8, prompt.prompt_type, prompt_discard)) {
+    if (prompt.prompt_type == prompt_discard) {
         try applyDiscardChoice(generated, side, choice_text);
         return;
     }
 
-    if (std.mem.eql(u8, prompt.prompt_type, prompt_run_central)) {
+    if (prompt.prompt_type == prompt_run_central) {
         // Red Team: click already spent in run_central handler, just start the run
         try applyRunFromAbility(generated, choice_text, if (prompt.source_card) |sc| sc.instance_id else null);
         return;
     }
 
-    if (std.mem.eql(u8, prompt.prompt_type, "trace")) {
+    if (prompt.prompt_type == .trace) {
         try applyTraceChoice(generated, side, choice_text);
         return;
     }
 
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_break_sub)) {
+    if (side == .runner and prompt.prompt_type == prompt_break_sub) {
         try applyBreakSubChoice(generated, choice_text);
         return;
     }
 
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, prompt_mu_overflow)) {
+    if (side == .runner and prompt.prompt_type == prompt_mu_overflow) {
         try applyMuOverflowChoice(generated, choice_text);
         return;
     }
 
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "jack-out")) {
+    if (side == .runner and prompt.prompt_type == .jack_out) {
         try applyJackOutPromptChoice(generated, choice_text);
         return;
     }
 
     // Tao Salonga: swap 2 pieces of ICE
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "tao-swap-ice")) {
+    if (side == .runner and prompt.prompt_type == .tao_swap_ice) {
         try applyTaoSwapIceChoice(generated, choice_text);
         return;
     }
 
     // Trojan: runner selects ICE to host on
-    if (side == .runner and std.mem.eql(u8, prompt.prompt_type, "trojan-host")) {
+    if (side == .runner and prompt.prompt_type == .trojan_host) {
         try applyTrojanHostChoice(generated, choice_text);
         return;
     }
@@ -1885,9 +1885,8 @@ fn applyPromptChoice(
         return;
     }
 
-
     // HB: Precision Design: select card from Archives to add to HQ
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "precision-design-archive")) {
+    if (side == .corp and prompt.prompt_type == .precision_design_archive) {
         if (std.mem.eql(u8, choice_text, "Done")) {
             generated.corp_prompt_state = null;
             if (try resumePendingEffects(generated)) return;
@@ -1910,21 +1909,20 @@ fn applyPromptChoice(
         return;
     }
 
-
     // Ansel 1.0: corp chooses a card from HQ/Archives to install
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "ansel-install")) {
+    if (side == .corp and prompt.prompt_type == .ansel_install) {
         try applyAnselInstallChoice(generated, choice_text);
         return;
     }
 
     // Ballista: corp chooses a program to trash during subroutine
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "ballista-trash")) {
+    if (side == .corp and prompt.prompt_type == .ballista_trash) {
         try applyBallistaTrashChoice(generated, choice_text);
         return;
     }
 
     // Install-ICE subroutine prompt (Brân, Scatter Field): "other" type with pending_subroutine
-    if (side == .corp and std.mem.eql(u8, prompt.prompt_type, "other")) {
+    if (side == .corp and prompt.prompt_type == .other) {
         if (generated.run) |run| {
             if (run.pending_subroutine) |_| {
                 try applyBranInstallIceChoice(generated, choice_text);
@@ -1932,7 +1930,6 @@ fn applyPromptChoice(
             }
         }
     }
-
 
     return error.UnsupportedPrompt;
 }
@@ -2601,10 +2598,10 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
                         if (generated.game_over) return true;
                         // Check if a new prompt was opened
                         if (generated.corp_prompt_state != null and
-                            (old_corp_prompt == null or @intFromPtr(generated.corp_prompt_state.?.prompt_type.ptr) != @intFromPtr(old_corp_prompt.?.prompt_type.ptr)))
+                            (old_corp_prompt == null or generated.corp_prompt_state.?.prompt_type != old_corp_prompt.?.prompt_type))
                             return true;
                         if (generated.runner_prompt_state != null and
-                            (old_runner_prompt == null or @intFromPtr(generated.runner_prompt_state.?.prompt_type.ptr) != @intFromPtr(old_runner_prompt.?.prompt_type.ptr)))
+                            (old_runner_prompt == null or generated.runner_prompt_state.?.prompt_type != old_runner_prompt.?.prompt_type))
                             return true;
                     }
                 }
@@ -2628,7 +2625,7 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
 
                 const allocator = generated.ephemeralAllocator();
                 generated.runner_prompt_state = .{
-                    .prompt_type = "waiting",
+                    .prompt_type = .waiting,
                     .choices = &.{},
                     .source_card = null,
                 };
@@ -2674,10 +2671,10 @@ pub fn resumePendingEffects(generated: *Game) anyerror!bool {
 
 pub fn hasActivePrompt(generated: *const Game) bool {
     if (generated.corp_prompt_state) |ps| {
-        if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
+        if (ps.prompt_type != .run and ps.prompt_type != .waiting) return true;
     }
     if (generated.runner_prompt_state) |ps| {
-        if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) return true;
+        if (ps.prompt_type != .run and ps.prompt_type != .waiting) return true;
     }
     return false;
 }
@@ -2801,7 +2798,7 @@ fn applyTaoSwapIceChoice(generated: *Game, choice_text: []const u8) !void {
         }
         try choices.append(allocator, stringChoice("Done"));
         generated.runner_prompt_state = .{
-            .prompt_type = "tao-swap-ice",
+            .prompt_type = .tao_swap_ice,
             .choices = try choices.toOwnedSlice(allocator),
             .source_card = null,
             .min_choices = 1,
@@ -3292,7 +3289,7 @@ pub fn beginRezIceFreePrompt(
     if (choices.len == 0) return false;
 
     generated.runner_prompt_state = .{
-        .prompt_type = "waiting",
+        .prompt_type = .waiting,
         .choices = &.{},
         .source_card = null,
     };
@@ -3324,7 +3321,7 @@ pub fn beginRezIceFreePromptForScore(
         .source_card = scored_agenda,
     };
     generated.runner_prompt_state = .{
-        .prompt_type = "waiting",
+        .prompt_type = .waiting,
         .choices = &.{},
         .source_card = null,
     };
@@ -3786,7 +3783,7 @@ pub fn runnerHandInstallableByEffect(generated: *const Game, card: state.CardIns
 pub fn beginRunnerOptionalInstallConfirmPrompt(generated: *Game, source_instance_id: u32, on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void) !void {
     const allocator = generated.ephemeralAllocator();
     generated.runner_prompt_state = .{
-        .prompt_type = "runner-bonus-install-confirm",
+        .prompt_type = .runner_bonus_install_confirm,
         .choices = try allocator.dupe(state.PromptChoice, &.{ stringChoice("Yes"), stringChoice("No") }),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -3813,7 +3810,7 @@ pub fn beginRunnerOptionalInstallPrompt(generated: *Game, source_instance_id: u3
 
     try choices.append(allocator, stringChoice("No action"));
     generated.runner_prompt_state = .{
-        .prompt_type = "runner-bonus-install",
+        .prompt_type = .runner_bonus_install,
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -3848,7 +3845,7 @@ pub fn beginRunnerInstallFromHand(generated: *Game, card_index: u8, spend_click:
             .runner_spend_click = spend_click,
         };
         generated.runner_prompt_state = .{
-            .prompt_type = "trojan-host",
+            .prompt_type = .trojan_host,
             .choices = try choices.toOwnedSlice(allocator),
             .source_card = card,
         };
@@ -3968,12 +3965,12 @@ fn applyRun(
     const target_server = try findServerByRunPath(generated.corp_servers.items, run_server);
     const initial_position: u8 = @intCast(target_server.slot.ices.items.len);
     generated.runner_prompt_state = .{
-        .prompt_type = "run",
+        .prompt_type = .run,
         .choices = &.{},
         .source_card = null,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = "run",
+        .prompt_type = .run,
         .choices = &.{},
         .source_card = null,
     };
@@ -4011,12 +4008,12 @@ pub fn applyRunFromAbility(
     trackMadeRun(generated, run_server);
 
     generated.runner_prompt_state = .{
-        .prompt_type = "run",
+        .prompt_type = .run,
         .choices = &.{},
         .source_card = null,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = "run",
+        .prompt_type = .run,
         .choices = &.{},
         .source_card = null,
     };
@@ -4157,7 +4154,7 @@ fn applyRezNonIce(generated: *Game, server_name: []const u8, card_index: u8) !vo
 
     // If the on-rez handler opened a prompt (e.g., Plutus additional cost), present it
     if (generated.corp_prompt_state) |ps| {
-        if (!std.mem.eql(u8, ps.prompt_type, "run") and !std.mem.eql(u8, ps.prompt_type, "waiting")) {
+        if (ps.prompt_type != .run and ps.prompt_type != .waiting) {
             generated.decision_side = .corp;
             generated.legal_actions = try promptChoiceActions(allocator, .corp, ps);
             return;
@@ -4233,7 +4230,7 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
     const allocator = generated.ephemeralAllocator();
     const run = &generated.run.?;
     if (generated.corp_prompt_state) |corp_prompt| {
-        if (!std.mem.eql(u8, corp_prompt.prompt_type, "run")) {
+        if (corp_prompt.prompt_type != .run) {
             if (side != .corp) return error.InvalidAction;
             generated.decision_side = .corp;
             generated.legal_actions = try promptChoiceActions(allocator, .corp, corp_prompt);
@@ -4246,7 +4243,7 @@ fn advanceSuccessPhase(generated: *Game, side: state.Side) !void {
     if (side == .corp) {
         // If runner has a pending access prompt, deliver it now
         if (generated.runner_prompt_state) |runner_prompt| {
-            if (!std.mem.eql(u8, runner_prompt.prompt_type, "waiting") and !std.mem.eql(u8, runner_prompt.prompt_type, "run")) {
+            if (runner_prompt.prompt_type != .waiting and runner_prompt.prompt_type != .run) {
                 generated.decision_side = .runner;
                 generated.legal_actions = try promptChoiceActions(allocator, .runner, runner_prompt);
                 return;
@@ -4276,7 +4273,7 @@ fn enterSuccessAccessPhase(generated: *Game) !void {
         // Clojure resolves the successful-run window directly into breach/access
         // unless a prompt interrupts that sequence.
         if (generated.corp_prompt_state) |cp| {
-            if (!std.mem.eql(u8, cp.prompt_type, "run")) {
+            if (cp.prompt_type != .run) {
                 generated.decision_side = .corp;
                 generated.legal_actions = try promptChoiceActions(allocator, .corp, cp);
                 return;
@@ -4359,7 +4356,7 @@ fn advanceApproachIcePhase(generated: *Game) !void {
     generated.legal_actions = try continueActionsForRunWithRez(allocator, .corp, run.*, generated);
 }
 
-const prompt_break_sub = "break-sub";
+const prompt_break_sub: state.PromptType = .break_sub;
 
 fn subroutineLabel(allocator: std.mem.Allocator, sub: state.SubroutineSpec, idx: usize) ![]const u8 {
     if (sub.label) |label| {
@@ -4482,7 +4479,7 @@ fn advanceEncounterPhase(generated: *Game) !void {
     try resolveEncounteredIceSubroutines(generated, ice, server_index, actual_ice_idx, 0);
     if (generated.run == null) return; // ETR fired
     if (generated.corp_prompt_state) |ps| {
-        if (!std.mem.eql(u8, ps.prompt_type, "run")) return; // Sub opened prompt (e.g., Brân)
+        if (ps.prompt_type != .run) return; // Sub opened prompt (e.g., Brân)
     }
 
     // Clear temporary strength boosts (GAMEDRAGON-hosted icebreakers keep pumps until end-of-run)
@@ -4577,7 +4574,7 @@ pub fn resolveTraceTag(generated: *Game, ctx: state.SubroutineContext) anyerror!
         try choices.append(allocator, stringChoice(text));
     }
     generated.runner_prompt_state = .{
-        .prompt_type = "trace",
+        .prompt_type = .trace,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4665,12 +4662,12 @@ pub fn resolveNetDamageThenJackOut(generated: *Game, ctx: state.SubroutineContex
     try choices.append(allocator, stringChoice("Jack out"));
     try choices.append(allocator, stringChoice("Continue"));
     generated.runner_prompt_state = .{
-        .prompt_type = "jack-out",
+        .prompt_type = .jack_out,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
     generated.corp_prompt_state = .{
-        .prompt_type = "waiting",
+        .prompt_type = .waiting,
         .choices = &.{},
         .source_card = null,
     };
@@ -4697,7 +4694,7 @@ pub fn resolveGiveTagOrPayCredits(generated: *Game, ctx: state.SubroutineContext
         try choices.append(allocator, stringChoice(text));
     }
     generated.runner_prompt_state = .{
-        .prompt_type = "trace",
+        .prompt_type = .trace,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4730,7 +4727,7 @@ pub fn resolveTrashProgramOrEtr(generated: *Game, ctx: state.SubroutineContext) 
         try choices.append(allocator, .{ .kind = .string, .text = label, .card = .{ .title = prog.title, .side = .runner, .index = @intCast(pidx) } });
     }
     generated.corp_prompt_state = .{
-        .prompt_type = "ballista-trash",
+        .prompt_type = .ballista_trash,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4791,7 +4788,7 @@ pub fn resolveNetDamageUnlessEtr(generated: *Game, ctx: state.SubroutineContext)
     const text = try std.fmt.allocPrint(allocator, "Suffer {d} net damage", .{ctx.amount});
     try choices.append(allocator, stringChoice(text));
     generated.runner_prompt_state = .{
-        .prompt_type = "net-damage-or-etr",
+        .prompt_type = .net_damage_or_etr,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4831,7 +4828,7 @@ pub fn resolveTrashProgramOrResourceOrEtr(generated: *Game, ctx: state.Subroutin
         }
     }
     generated.corp_prompt_state = .{
-        .prompt_type = "ballista-trash",
+        .prompt_type = .ballista_trash,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -4865,7 +4862,7 @@ pub fn resolveTagOrPayCreditsEtr(generated: *Game, ctx: state.SubroutineContext)
         try choices.append(allocator, stringChoice(text));
     }
     generated.runner_prompt_state = .{
-        .prompt_type = "trace",
+        .prompt_type = .trace,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = ice,
     };
@@ -5007,7 +5004,7 @@ fn beginBranInstallIcePrompt(
 
     // Set corp prompt
     generated.corp_prompt_state = .{
-        .prompt_type = "other",
+        .prompt_type = .other,
         .choices = try choices.toOwnedSlice(allocator),
         .on_choice = &struct {
             fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
@@ -5066,7 +5063,7 @@ fn beginAnselInstallPrompt(
     };
 
     generated.corp_prompt_state = .{
-        .prompt_type = "ansel-install",
+        .prompt_type = .ansel_install,
         .choices = try choices.toOwnedSlice(allocator),
     };
 
@@ -5694,7 +5691,7 @@ pub fn beginNetDamageOnAccessPrompt(
     try choices.append(allocator, stringChoice("No action"));
 
     generated.corp_prompt_state = .{
-        .prompt_type = "net-damage-on-access",
+        .prompt_type = .net_damage_on_access,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = accessed,
     };
@@ -5761,7 +5758,7 @@ pub fn beginPhatGioanDamagePrompt(generated: *Game, card: *state.CardInstance) !
     }
     if (choices.items.len == 0) return;
     generated.corp_prompt_state = .{
-        .prompt_type = "phat-net-damage",
+        .prompt_type = .phat_net_damage,
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = card.instance_id, .ability_index = 0 },
         .on_choice = &struct {
@@ -5795,7 +5792,7 @@ pub fn beginByteAmbushPrompt(generated: *Game, accessed: state.CardInstance) !bo
     }
     try choices.append(allocator, stringChoice("No action"));
     generated.corp_prompt_state = .{
-        .prompt_type = "byte-ambush",
+        .prompt_type = .byte_ambush,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = accessed,
     };
@@ -5851,7 +5848,7 @@ pub fn beginPeekRdTopPrompt(g: *Game, count: u8, source_iid: u32) !void {
         ));
     }
     g.corp_prompt_state = .{
-        .prompt_type = "peek-rd-trash-one",
+        .prompt_type = .peek_rd_trash_one,
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_iid, .ability_index = actual },
         .on_choice = &struct {
@@ -5923,7 +5920,7 @@ pub fn beginSabotagePrompt(g: *Game, count: u8) !void {
     }
     // Store remaining count in ability_ref.ability_index
     g.corp_prompt_state = .{
-        .prompt_type = "sabotage",
+        .prompt_type = .sabotage,
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = 0, .ability_index = count },
         .on_choice = &struct {
@@ -6458,7 +6455,7 @@ pub fn encounterActionsForState(
     actions[0] = .{
         .kind = .@"continue",
         .side = .runner,
-        .prompt_type = "run",
+        .prompt_type = .run,
         .label = "Continue",
     };
 
@@ -7130,7 +7127,7 @@ pub fn restorePriorityAfterPrompt(generated: *Game) !void {
 pub fn beginYesNoPrompt(
     generated: *Game,
     side: state.Side,
-    prompt_type: []const u8,
+    prompt_type: state.PromptType,
     source_instance_id: u32,
     on_choice: ?*const fn (*state.EffectContext, []const u8) anyerror!void,
 ) !void {
@@ -7324,8 +7321,7 @@ fn applyAbilityRef(generated: *Game, action: state.LegalAction) !void {
             // - no pending access
             // - run has ended (run == null)
             // - the handler didn't already change decision_side (e.g., completeUnsuccessfulRun)
-            if (!hasActivePrompt(generated) and generated.pending_access == null and generated.run == null
-                and generated.decision_side == decision_before) {
+            if (!hasActivePrompt(generated) and generated.pending_access == null and generated.run == null and generated.decision_side == decision_before) {
                 generated.decision_side = action.side;
                 if (action.side == .runner) {
                     generated.legal_actions = try runnerOpeningActionsForState(allocator, generated);
@@ -7421,7 +7417,7 @@ pub fn beginRunnerHostedCardPrompt(generated: *Game, source_instance_id: u32, on
     if (choices.items.len == 0) return;
     try choices.append(allocator, stringChoice("No action"));
     generated.runner_prompt_state = .{
-        .prompt_type = "runner-hosted-card",
+        .prompt_type = .runner_hosted_card,
         .choices = try choices.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -7870,7 +7866,7 @@ fn beginRunnerDiscardProgramToDeckPromptWithChoice(
     if (choices.items.len == 0) return false;
     try choices.append(allocator, stringChoice("No action"));
     game.runner_prompt_state = .{
-        .prompt_type = "runner-discard-to-deck",
+        .prompt_type = .runner_discard_to_deck,
         .choices = try choices.toOwnedSlice(allocator),
         .source_card = source_card,
         .on_choice = on_choice,
@@ -8479,7 +8475,7 @@ pub fn showTopDownInstallChoices(g: *Game, source_instance_id: u32, installs_don
     }
     try choices_list.append(allocator, stringChoice("Done"));
     g.corp_prompt_state = .{
-        .prompt_type = "top-down-card",
+        .prompt_type = .top_down_card,
         .choices = try choices_list.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .min_choices = installs_done,
@@ -8511,7 +8507,7 @@ pub fn beginPeerReviewInstallPrompt(g: *Game, source_instance_id: u32, on_choice
         return;
     }
     g.corp_prompt_state = .{
-        .prompt_type = "peer-review-install",
+        .prompt_type = .peer_review_install,
         .choices = try installable.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .on_choice = on_choice,
@@ -8542,7 +8538,7 @@ pub fn showKpiChoices(g: *Game, source_instance_id: u32, choices_made: u8, on_ch
         try choices_list.append(allocator, stringChoice("Done"));
     }
     g.corp_prompt_state = .{
-        .prompt_type = "kpi-choose",
+        .prompt_type = .kpi_choose,
         .choices = try choices_list.toOwnedSlice(allocator),
         .ability_ref = .{ .source_instance_id = source_instance_id },
         .min_choices = choices_made,
@@ -8639,8 +8635,8 @@ test "runner telework contract install and hosted-credit ability" {
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -8671,8 +8667,8 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
@@ -8697,10 +8693,10 @@ test "send a message steal triggers corp rez choice when unrezzed ice exists" {
 
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
     try startRun(&generated, "Server 2");
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = "run" });
-    try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = "run" });
+    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = .run });
+    try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = .run });
+    try applyAction(&generated, .{ .kind = .@"continue", .side = .corp, .prompt_type = .run });
+    try applyAction(&generated, .{ .kind = .@"continue", .side = .runner, .prompt_type = .run });
     // After movement completes, runner gets access prompt directly
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Steal") orelse return error.MissingAction);
 
@@ -8717,8 +8713,8 @@ test "run ice windows can prompt corp rez on approached ice when enabled" {
         2,
     );
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     const ice_install = findFirstCorpIceInstallPlay(generated.legal_actions, generated.corp_hand.items) orelse return error.MissingAction;
@@ -8764,8 +8760,8 @@ test "corp installed credit ability on regolith pays out and trashes when empty"
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     var regolith = try makeGameCard(&generated, try lookupRequiredCardSpec(30071));
@@ -8805,8 +8801,8 @@ test "offworld office on-score grants credits" {
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     var offworld = try makeGameCard(&generated, try lookupRequiredCardSpec(30067));
@@ -8832,8 +8828,8 @@ test "urtica cipher access applies net damage when corp can pay" {
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     var urtica = try makeGameCard(&generated, try lookupRequiredCardSpec(30045));
@@ -8853,7 +8849,7 @@ test "urtica cipher access applies net damage when corp can pay" {
         // Handle corp net-damage-on-access prompt (shown after corp continues in success phase)
         if (generated.decision_side == .corp) {
             if (generated.corp_prompt_state) |ps| {
-                if (std.mem.eql(u8, ps.prompt_type, "net-damage-on-access")) {
+                if (ps.prompt_type == .net_damage_on_access) {
                     // Find any pay action starting with "Pay"
                     var found_pay: ?state.LegalAction = null;
                     for (generated.legal_actions) |action| {
@@ -8923,14 +8919,14 @@ fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
         .runner => generated.runner_prompt_state,
     };
     if (player_ps) |ps| {
-        if (std.mem.eql(u8, ps.prompt_type, prompt_discard)) {
+        if (ps.prompt_type == prompt_discard) {
             while (true) {
                 const pp = switch (side) {
                     .corp => generated.corp_prompt_state,
                     .runner => generated.runner_prompt_state,
                 };
                 if (pp == null) break;
-                if (!std.mem.eql(u8, pp.?.prompt_type, prompt_discard)) break;
+                if (pp.?.prompt_type != prompt_discard) break;
                 if (pp.?.choices.len == 0) break;
                 // Discard first available card
                 const choice = pp.?.choices[0];
@@ -8941,7 +8937,7 @@ fn endTurnAndDiscard(generated: *Game, side: state.Side) !void {
     }
 }
 
-const prompt_mu_overflow = "mu-overflow";
+const prompt_mu_overflow: state.PromptType = .mu_overflow;
 
 fn beginMuOverflowPrompt(generated: *Game) !bool {
     return beginMuOverflowPromptWithExtra(generated, 0);
@@ -9111,8 +9107,8 @@ test "flatline terminal condition when brain damage equals hand size" {
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9134,8 +9130,8 @@ test "jack out is available after passing ice" {
         101,
     );
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     // Install unrezzed ICE on a remote
@@ -9192,8 +9188,8 @@ test "ICE subroutine end the run fires" {
         102,
     );
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     // Install Tithe (1 net damage, ETR) on a remote
@@ -9229,8 +9225,8 @@ test "ICE net damage subroutine applies damage" {
         103,
     );
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     // Install Karunā (2 net damage, 2 net damage) on a remote
@@ -9251,11 +9247,11 @@ test "ICE net damage subroutine applies damage" {
     while (guard < 30 and generated.run != null) : (guard += 1) {
         // Handle jack-out prompt from Karunā sub1 - choose to continue
         if (generated.runner_prompt_state) |ps| {
-            if (std.mem.eql(u8, ps.prompt_type, "jack-out")) {
+            if (ps.prompt_type == .jack_out) {
                 try applyAction(&generated, .{
                     .kind = .prompt_choice,
                     .side = .runner,
-                    .prompt_type = "jack-out",
+                    .prompt_type = .jack_out,
                     .choice = stringChoice("Continue"),
                 });
                 continue;
@@ -9276,8 +9272,8 @@ test "runner loses credits subroutine" {
         104,
     );
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     // Install Whitespace (sub1: runner loses 3 credits, sub2: ETR if runner ≤ 6 credits)
@@ -9314,8 +9310,8 @@ test "tread lightly run rez cost bonus is applied during corp rez window" {
         1,
     );
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     // Install unrezzed ICE on a remote
@@ -9371,8 +9367,8 @@ test "sure gamble gains credits without losing extra clicks" {
     );
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9400,8 +9396,8 @@ test "corp gain credit 3 times then turn transitions to runner" {
     defer generated.deinit();
 
     // Mulligan keep/keep
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
 
     // Corp start turn
     try corpStartTurnFull(&generated);
@@ -9463,13 +9459,13 @@ test "access remote card only once then run ends" {
     defer generated.deinit();
 
     // Keep/keep
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
 
     // Corp: start turn, install Regolith in remote
     try corpStartTurnFull(&generated);
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Regolith Mining License") orelse return error.MissingAction);
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "install-destination", .choice = stringChoice("New remote") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .install_destination, .choice = stringChoice("New remote") });
     try endTurnAndDiscard(&generated, .corp);
 
     // Runner: start turn, run the remote
@@ -9485,7 +9481,7 @@ test "access remote card only once then run ends" {
 
     // Should get an access prompt for Regolith
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.access_choice, generated.runner_prompt_state.?.prompt_type);
     try std.testing.expectEqualStrings("Regolith Mining License", generated.runner_prompt_state.?.source_card.?.title);
 
     // Find and apply the trash action
@@ -9511,7 +9507,7 @@ test "access remote card only once then run ends" {
 
     // Access prompt again — this time trash it
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.access_choice, generated.runner_prompt_state.?.prompt_type);
     // Regolith has trash cost 3, runner starts with 5cr - should be able to afford
     const pay_trash = findPromptChoiceAction(generated.legal_actions, .runner, "Pay 3 [Credits] to trash") orelse return error.MissingAction;
     const credit_before = generated.runner_credit;
@@ -9535,8 +9531,8 @@ test "Loup trash on HQ access completes run and does not repeat access" {
     defer generated.deinit();
 
     // Keep/keep
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
 
     // Corp: start turn, spend all clicks on credits
     try corpStartTurnFull(&generated);
@@ -9569,14 +9565,14 @@ test "Loup trash on HQ access completes run and does not repeat access" {
 
     // With 1 card in hand, may go directly to access-choice or show hq-access first
     if (generated.runner_prompt_state) |ps| {
-        if (std.mem.eql(u8, ps.prompt_type, "hq-access")) {
+        if (ps.prompt_type == .hq_access) {
             try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Card from hand") orelse return error.MissingAction);
         }
     }
 
     // Access-choice prompt for Spin Doctor
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.access_choice, generated.runner_prompt_state.?.prompt_type);
     try std.testing.expectEqualStrings("Spin Doctor", generated.runner_prompt_state.?.source_card.?.title);
 
     // Trash it
@@ -9597,8 +9593,8 @@ test "Bling free install hosts and can play hosted card" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_runner, 1);
     defer generated.deinit();
 
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9618,8 +9614,8 @@ test "Bling free install hosts and can play hosted card" {
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items.len);
     // Bling hosting is now optional — resolve the prompt
     if (generated.runner_prompt_state) |ps| {
-        if (std.mem.eql(u8, ps.prompt_type, "bling-host")) {
-            try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "bling-host", .choice = stringChoice("Host the top card of your stack on Bling") });
+        if (ps.prompt_type == .bling_host) {
+            try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .bling_host, .choice = stringChoice("Host the top card of your stack on Bling") });
         }
     }
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_hardware.items[0].hosted.items.len);
@@ -9627,7 +9623,7 @@ test "Bling free install hosts and can play hosted card" {
 
     generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findInstalledAbilityAction(generated.legal_actions, "Bling") orelse return error.MissingAction);
-    try std.testing.expectEqualStrings("runner-hosted-card", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.runner_hosted_card, generated.runner_prompt_state.?.prompt_type);
     const hosted_choice = for (generated.legal_actions) |action| {
         if (action.kind == .prompt_choice and action.choice != null and action.choice.?.text != null and !std.mem.eql(u8, action.choice.?.text.?, "No action")) {
             break action;
@@ -9679,7 +9675,7 @@ test "Detente returns hosted cards to HQ and opens a random access" {
     try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_hardware.items[0].hosted.items.len);
     try std.testing.expectEqual(@as(usize, 2), generated.corp_hand.items.len);
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.access_choice, generated.runner_prompt_state.?.prompt_type);
     try std.testing.expect(generated.runner_prompt_state.?.source_card != null);
 }
 
@@ -9703,14 +9699,14 @@ test "Detente ability is available to the corp" {
 
     try std.testing.expectEqual(@as(u8, 2), generated.corp_click);
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.access_choice, generated.runner_prompt_state.?.prompt_type);
 }
 
 test "Measured Response requires successful runner run last turn" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_weyland, 1);
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35078)));
@@ -9729,8 +9725,8 @@ test "Measured Response requires successful runner run last turn" {
 test "Key Performance Indicators draw branch shuffles a card from HQ into R&D" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_weyland, 2);
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     try generated.corp_hand.append(generated.backing_allocator, try makeGameCard(&generated, try lookupRequiredCardSpec(35077)));
@@ -9745,7 +9741,7 @@ test "Key Performance Indicators draw branch shuffles a card from HQ into R&D" {
     generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Key Performance Indicators") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .corp, "Draw 1 card and shuffle 1 card from HQ into R&D") orelse return error.MissingAction);
-    try std.testing.expectEqualStrings("kpi-shuffle", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.kpi_shuffle, generated.corp_prompt_state.?.prompt_type);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .corp, "Mitra Aman") orelse return error.MissingAction);
 
     try std.testing.expectEqual(deck_before, generated.corp_deck.items.len);
@@ -9759,8 +9755,8 @@ test "Key Performance Indicators draw branch shuffles a card from HQ into R&D" {
 test "Scrounge installs from heap and can bottom a program" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_hb, 3);
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9773,7 +9769,7 @@ test "Scrounge installs from heap and can bottom a program" {
 
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Scrounge") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Hantu") orelse return error.MissingAction);
-    try std.testing.expectEqualStrings("runner-discard-to-deck", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.runner_discard_to_deck, generated.runner_prompt_state.?.prompt_type);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Rising Tide") orelse return error.MissingAction);
 
     try std.testing.expectEqual(@as(usize, 1), generated.runner_rig_program.items.len);
@@ -9786,8 +9782,8 @@ test "Scrounge installs from heap and can bottom a program" {
 test "Scrounge cancel still allows bottoming a program" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_hb, 4);
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9799,7 +9795,7 @@ test "Scrounge cancel still allows bottoming a program" {
 
     try applyAction(&generated, findActionByTitle(generated.legal_actions, .play_from_hand, "Scrounge") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "No action") orelse return error.MissingAction);
-    try std.testing.expectEqualStrings("runner-discard-to-deck", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.runner_discard_to_deck, generated.runner_prompt_state.?.prompt_type);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .runner, "Hantu") orelse return error.MissingAction);
 
     try std.testing.expectEqual(@as(usize, 0), generated.runner_rig_program.items.len);
@@ -9812,8 +9808,8 @@ test "Synapse Global prompts on tag removal and installs for free" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_hb, 5);
     defer generated.deinit();
     generated.corp_identity = try makeGameCard(&generated, try lookupRequiredCardSpec(35058));
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9825,7 +9821,7 @@ test "Synapse Global prompts on tag removal and installs for free" {
     generated.legal_actions = try runnerOpeningActionsForState(generated.ephemeralAllocator(), &generated);
 
     try applyAction(&generated, findBasicAbilityAction(generated.legal_actions, .runner, .remove_tag) orelse return error.MissingAction);
-    try std.testing.expectEqualStrings("corp-free-install-card", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.corp_free_install_card, generated.corp_prompt_state.?.prompt_type);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .corp, "Plutus") orelse return error.MissingAction);
     try applyAction(&generated, findPromptChoiceAction(generated.legal_actions, .corp, "New remote") orelse return error.MissingAction);
 
@@ -9838,8 +9834,8 @@ test "BANGUN installs agendas faceup and punishes access" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_hb, 6);
     defer generated.deinit();
     generated.corp_identity = try makeGameCard(&generated, try lookupRequiredCardSpec(35068));
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
 
     try installCard(&generated, try makeGameCard(&generated, try lookupRequiredCardSpec(30067)), "New remote");
@@ -9851,14 +9847,14 @@ test "BANGUN installs agendas faceup and punishes access" {
 
     try std.testing.expectEqual(hand_before - 2, generated.runner_hand.items.len);
     try std.testing.expect(generated.runner_tag != null and generated.runner_tag.?.total == 1);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.access_choice, generated.runner_prompt_state.?.prompt_type);
 }
 
 test "Madani can host from grip and then install a hosted program" {
     var generated = try createInitialSnapshot(std.testing.allocator, elevation_hb, 7);
     defer generated.deinit();
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     try endTurnAndDiscard(&generated, .corp);
     try applyAction(&generated, .{ .kind = .start_turn, .side = .runner });
@@ -9903,8 +9899,8 @@ fn findRezAction(actions: []const state.LegalAction, title: []const u8) ?state.L
 
 fn setupPlutusInstalled(allocator: std.mem.Allocator) !Game {
     var generated = try createInitialSnapshot(allocator, elevation_weyland, 1);
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = "mulligan", .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .runner, .prompt_type = .mulligan, .choice = stringChoice("Keep") });
     try corpStartTurnFull(&generated);
     // Clear hand and install Plutus manually
     generated.corp_hand.clearRetainingCapacity();
@@ -9931,9 +9927,9 @@ test "Plutus rez cost: corp has scored agenda, chooses forfeit" {
     const rez = findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction;
     try applyAction(&generated, rez);
     try std.testing.expect(generated.corp_prompt_state != null);
-    try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqual(.plutus_rez_cost, generated.corp_prompt_state.?.prompt_type);
     // Choose forfeit
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Forfeit Offworld Office") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .plutus_rez_cost, .choice = stringChoice("Forfeit Offworld Office") });
     try std.testing.expectEqual(@as(usize, 0), generated.corp_scored.items.len);
     try std.testing.expectEqual(@as(u8, 0), generated.corp_agenda_point);
     var found_rezzed = false;
@@ -9975,11 +9971,11 @@ test "Plutus rez cost: no agenda, 4 cards in HQ, trashes 3" {
     generated.decision_side = .corp;
     generated.legal_actions = try corpOpeningActionsForState(generated.ephemeralAllocator(), &generated);
     try applyAction(&generated, findRezAction(generated.legal_actions, "Plutus") orelse return error.MissingAction);
-    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = stringChoice("Trash 3 cards from HQ") });
+    try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .plutus_rez_cost, .choice = stringChoice("Trash 3 cards from HQ") });
     var t: u8 = 0;
     while (t < 3) : (t += 1) {
-        try std.testing.expectEqualStrings("plutus-trash-hq", generated.corp_prompt_state.?.prompt_type);
-        try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-trash-hq", .choice = generated.corp_prompt_state.?.choices[0] });
+        try std.testing.expectEqual(.plutus_trash_hq, generated.corp_prompt_state.?.prompt_type);
+        try applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .plutus_trash_hq, .choice = generated.corp_prompt_state.?.choices[0] });
     }
     try std.testing.expectEqual(@as(usize, 1), generated.corp_hand.items.len);
 }

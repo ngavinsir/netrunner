@@ -7,7 +7,6 @@ const state = @import("state.zig");
 const flow = game;
 const generator = game;
 
-
 test "generated beginner setup matches oracle fixture for seed 5" {
     var oracle = try setup.loadBeginnerInitialSnapshot(
         std.testing.allocator,
@@ -110,8 +109,8 @@ fn expectTransitionMatches(expected: fixture.TransitionExpectation, actual: stat
     try std.testing.expectEqual(expected.runner_keep, actual.state.runner.keep);
     try std.testing.expectEqual(expected.rng_seed, actual.state.rng_seed.?);
 
-    try expectOptionalString(expected.corp_prompt_type, if (actual.state.corp.prompt_state) |prompt| prompt.prompt_type else null);
-    try expectOptionalString(expected.runner_prompt_type, if (actual.state.runner.prompt_state) |prompt| prompt.prompt_type else null);
+    try expectOptionalPromptType(expected.corp_prompt_type, if (actual.state.corp.prompt_state) |prompt| prompt.prompt_type else null);
+    try expectOptionalPromptType(expected.runner_prompt_type, if (actual.state.runner.prompt_state) |prompt| prompt.prompt_type else null);
     try expectActions(expected.legal_actions, actual.legal_actions);
     try expectServers(expected.corp_servers, actual.state.corp.servers);
 
@@ -553,12 +552,41 @@ fn normalizePromptType(prompt_type: ?[]const u8) ?[]const u8 {
     // "waiting" prompts are UI-only in Clojure (shown to the other player while one side has a prompt).
     // The Zig engine doesn't model these — treat them as null for comparison.
     if (std.mem.eql(u8, text, "waiting")) return null;
-    if (std.mem.eql(u8, text, "install-destination")) return "other";
-    if (std.mem.eql(u8, text, "access-choice")) return "other";
-    if (std.mem.eql(u8, text, "hq-access")) return "other";
-    if (std.mem.eql(u8, text, "run-target")) return "other";
-    if (std.mem.eql(u8, text, "access-cleanup")) return "select";
+    if (std.mem.eql(u8, text, "install_destination")) return "other";
+    if (std.mem.eql(u8, text, "access_choice")) return "other";
+    if (std.mem.eql(u8, text, "hq_access")) return "other";
+    if (std.mem.eql(u8, text, "run_target")) return "other";
+    if (std.mem.eql(u8, text, "access_cleanup")) return "select";
     return text;
+}
+
+fn expectOptionalPromptType(expected: ?state.PromptType, actual: ?state.PromptType) !void {
+    const normalized_expected = normalizePromptTypeEnum(expected);
+    const normalized_actual = normalizePromptTypeEnum(actual);
+    if (normalized_expected) |lhs| {
+        if (normalized_actual) |rhs| {
+            try std.testing.expectEqual(lhs, rhs);
+        } else {
+            return error.TestExpectedEqual;
+        }
+    } else {
+        try std.testing.expect(normalized_actual == null);
+    }
+}
+
+fn normalizePromptTypeEnum(prompt_type: ?state.PromptType) ?state.PromptType {
+    const pt = prompt_type orelse return null;
+    return switch (pt) {
+        .waiting => null,
+        // These are the prompt types shared between Zig and Clojure engines
+        .mulligan => pt,
+        .discard => pt,
+        .other => pt,
+        .run => pt,
+        .trace => pt,
+        // All Zig-specific prompt types normalize to .other for comparison
+        else => .other,
+    };
 }
 
 test "corp first-play end-turn scenario matches live replay oracle" {
@@ -594,9 +622,9 @@ test "corp first-play end-turn scenario matches live replay oracle" {
                 replay.snapshot.decision_side,
                 generated.decision_side,
                 if (replay.snapshot.legal_actions.len > 0) replay.snapshot.legal_actions[0].kind else .run,
-                if (replay.snapshot.legal_actions.len > 0) (replay.snapshot.legal_actions[0].prompt_type orelse "") else "",
+                if (replay.snapshot.legal_actions.len > 0) (if (replay.snapshot.legal_actions[0].prompt_type) |pt| pt.toStr() else "") else "",
                 if (generated.legal_actions.len > 0) generated.legal_actions[0].kind else .run,
-                if (generated.legal_actions.len > 0) (generated.legal_actions[0].prompt_type orelse "") else "",
+                if (generated.legal_actions.len > 0) (if (generated.legal_actions[0].prompt_type) |pt| pt.toStr() else "") else "",
             },
         );
     }
@@ -1196,11 +1224,11 @@ test "runner jailbreak successful-run effect is attached to run flow" {
         try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .end_turn, .corp));
         while (true) {
             const ps = generated.corp_prompt_state orelse break;
-            if (!std.mem.eql(u8, ps.prompt_type, "discard")) break;
+            if (ps.prompt_type != .discard) break;
             if (ps.choices.len == 0) break;
             const title = if (ps.choices[0].card) |c| c.title else null;
             if (title == null) break;
-            try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+            try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
         }
     }
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1268,11 +1296,11 @@ test "runner tread-lightly run modifier is attached to run state" {
         try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .end_turn, .corp));
         while (true) {
             const ps = generated.corp_prompt_state orelse break;
-            if (!std.mem.eql(u8, ps.prompt_type, "discard")) break;
+            if (ps.prompt_type != .discard) break;
             if (ps.choices.len == 0) break;
             const title = if (ps.choices[0].card) |c| c.title else null;
             if (title == null) break;
-            try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+            try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
         }
     }
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -1395,7 +1423,7 @@ test "manegarm skunkworks end the run parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("manegarm-tax", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("manegarm_tax", generated.runner_prompt_state.?.prompt_type.toStr());
     try std.testing.expectEqual(@as(usize, 3), generated.runner_prompt_state.?.choices.len);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "End the run"));
@@ -1431,7 +1459,7 @@ test "manegarm skunkworks spend clicks parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("manegarm-tax", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("manegarm_tax", generated.runner_prompt_state.?.prompt_type.toStr());
 
     const runner_clicks_before = generated.runner_click;
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Spend [Click][Click]"));
@@ -1439,7 +1467,7 @@ test "manegarm skunkworks spend clicks parity test" {
     try std.testing.expectEqual(@as(u8, runner_clicks_before - 2), generated.runner_click);
     // After paying tax, runner directly accesses Manegarm (trash prompt — no corp priority)
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("access_choice", generated.runner_prompt_state.?.prompt_type.toStr());
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "No action"));
 
     try std.testing.expect(generated.run == null);
@@ -1475,7 +1503,7 @@ test "manegarm skunkworks pay credits parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("manegarm-tax", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("manegarm_tax", generated.runner_prompt_state.?.prompt_type.toStr());
 
     const runner_credits_before = generated.runner_credit;
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Pay 5 [Credits]"));
@@ -1483,7 +1511,7 @@ test "manegarm skunkworks pay credits parity test" {
     try std.testing.expectEqual(@as(u16, runner_credits_before - 5), generated.runner_credit);
     // After paying tax, runner directly accesses Manegarm (trash prompt — no corp priority)
     try std.testing.expect(generated.runner_prompt_state != null);
-    try std.testing.expectEqualStrings("access-choice", generated.runner_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("access_choice", generated.runner_prompt_state.?.prompt_type.toStr());
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "No action"));
 
     try std.testing.expect(generated.run == null);
@@ -1768,7 +1796,7 @@ test "predictive planogram gain credits and draw cards when tagged parity test" 
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.system_gateway_intermediate,
-        &.{"Predictive Planogram", "Public Trail"},
+        &.{ "Predictive Planogram", "Public Trail" },
         &.{},
         200,
     ) orelse return error.NoSeedFound;
@@ -2025,100 +2053,100 @@ fn fixtureBasicAction(side: state.Side, ability_index: u8) !state.BasicAction {
 fn normalizePromptTypeForComparison(prompt_type: []const u8) []const u8 {
     // The Clojure oracle maps many custom prompt types to "other".
     // Normalize Zig's specific prompt types to match.
-    if (std.mem.eql(u8, prompt_type, "predictive-planogram-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "wildcat-strike-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "mutual-favor-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "install-destination")) return "other";
-    if (std.mem.eql(u8, prompt_type, "access-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
-    if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
-    if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
-    if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "break-sub")) return "other";
-    if (std.mem.eql(u8, prompt_type, "sprint-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "hansei-trash")) return "select";
-    if (std.mem.eql(u8, prompt_type, "ballista-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "above-the-law-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
-    if (std.mem.eql(u8, prompt_type, "longevity-serum-trash")) return "select";
-    if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
-    if (std.mem.eql(u8, prompt_type, "malapert-search")) return "select";
-    if (std.mem.eql(u8, prompt_type, "ansel-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
-    if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
-    if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
-    if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
-    if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
-    if (std.mem.eql(u8, prompt_type, "zahya-gain")) return "other";
+    if (std.mem.eql(u8, prompt_type, "predictive_planogram_choice")) return "other";
+    if (std.mem.eql(u8, prompt_type, "wildcat_strike_choice")) return "other";
+    if (std.mem.eql(u8, prompt_type, "mutual_favor_choice")) return "other";
+    if (std.mem.eql(u8, prompt_type, "install_destination")) return "other";
+    if (std.mem.eql(u8, prompt_type, "access_choice")) return "other";
+    if (std.mem.eql(u8, prompt_type, "run_target")) return "other";
+    if (std.mem.eql(u8, prompt_type, "run_central")) return "other";
+    if (std.mem.eql(u8, prompt_type, "funhouse_encounter")) return "other";
+    if (std.mem.eql(u8, prompt_type, "retribution_trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "break_sub")) return "other";
+    if (std.mem.eql(u8, prompt_type, "sprint_shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "hansei_trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "ballista_trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "above_the_law_trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "anoetic_void")) return "other";
+    if (std.mem.eql(u8, prompt_type, "longevity_serum_trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "longevity_serum_shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "precision_design_archive")) return "select";
+    if (std.mem.eql(u8, prompt_type, "malapert_search")) return "select";
+    if (std.mem.eql(u8, prompt_type, "ansel_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "tao_swap_ice")) return "select";
+    if (std.mem.eql(u8, prompt_type, "reality_plus")) return "other";
+    if (std.mem.eql(u8, prompt_type, "trojan_host")) return "select";
+    if (std.mem.eql(u8, prompt_type, "access_cleanup")) return "select";
+    if (std.mem.eql(u8, prompt_type, "mu_overflow")) return "select";
+    if (std.mem.eql(u8, prompt_type, "zahya_gain")) return "other";
     // Elevation card prompts
-    if (std.mem.eql(u8, prompt_type, "topan-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "knickknack-trash")) return "select";
-    if (std.mem.eql(u8, prompt_type, "maglectric-derez")) return "select";
-    if (std.mem.eql(u8, prompt_type, "top-down-card")) return "select";
-    if (std.mem.eql(u8, prompt_type, "top-down-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "peer-review-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "peer-review-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "kpi-choose")) return "other";
-    if (std.mem.eql(u8, prompt_type, "kpi-advance")) return "select";
-    if (std.mem.eql(u8, prompt_type, "kpi-ice-choose")) return "select";
-    if (std.mem.eql(u8, prompt_type, "kpi-ice-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "kpi-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "bigger-picture")) return "other";
-    if (std.mem.eql(u8, prompt_type, "bigger-picture-tags")) return "other";
-    if (std.mem.eql(u8, prompt_type, "ip-enforcement-tags")) return "other";
-    if (std.mem.eql(u8, prompt_type, "touch-ups-advance")) return "select";
-    if (std.mem.eql(u8, prompt_type, "lie-low")) return "other";
-    if (std.mem.eql(u8, prompt_type, "lie-low-tags")) return "other";
-    if (std.mem.eql(u8, prompt_type, "scrounge-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-discard-to-deck")) return "select";
-    if (std.mem.eql(u8, prompt_type, "barry-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "poetri-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-bonus-install-confirm")) return "other";
-    if (std.mem.eql(u8, prompt_type, "runner-bonus-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-host-mode")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-host-from-grip")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-host-confirm")) return "other";
-    if (std.mem.eql(u8, prompt_type, "runner-hosted-card")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-hosted-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "peer-review-private")) return "select";
-    if (std.mem.eql(u8, prompt_type, "peer-review-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "peer-review-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "corp-free-install-card")) return "select";
-    if (std.mem.eql(u8, prompt_type, "corp-free-install-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "pt-untaian-advance")) return "select";
-    if (std.mem.eql(u8, prompt_type, "cacophony-sabotage")) return "other";
+    if (std.mem.eql(u8, prompt_type, "topan_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "knickknack_trash")) return "select";
+    if (std.mem.eql(u8, prompt_type, "maglectric_derez")) return "select";
+    if (std.mem.eql(u8, prompt_type, "top_down_card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "top_down_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer_review_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer_review_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "kpi_choose")) return "other";
+    if (std.mem.eql(u8, prompt_type, "kpi_advance")) return "select";
+    if (std.mem.eql(u8, prompt_type, "kpi_ice_choose")) return "select";
+    if (std.mem.eql(u8, prompt_type, "kpi_ice_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "kpi_shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "bigger_picture")) return "other";
+    if (std.mem.eql(u8, prompt_type, "bigger_picture_tags")) return "other";
+    if (std.mem.eql(u8, prompt_type, "ip_enforcement_tags")) return "other";
+    if (std.mem.eql(u8, prompt_type, "touch_ups_advance")) return "select";
+    if (std.mem.eql(u8, prompt_type, "lie_low")) return "other";
+    if (std.mem.eql(u8, prompt_type, "lie_low_tags")) return "other";
+    if (std.mem.eql(u8, prompt_type, "scrounge_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner_discard_to_deck")) return "select";
+    if (std.mem.eql(u8, prompt_type, "barry_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "poetri_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner_bonus_install_confirm")) return "other";
+    if (std.mem.eql(u8, prompt_type, "runner_bonus_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner_host_mode")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner_host_from_grip")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner_host_confirm")) return "other";
+    if (std.mem.eql(u8, prompt_type, "runner_hosted_card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "runner_hosted_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer_review_private")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer_review_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peer_review_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "corp_free_install_card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "corp_free_install_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "pt_untaian_advance")) return "select";
+    if (std.mem.eql(u8, prompt_type, "cacophony_sabotage")) return "other";
     if (std.mem.eql(u8, prompt_type, "sabotage")) return "select";
-    if (std.mem.eql(u8, prompt_type, "au-co-peek")) return "other";
-    if (std.mem.eql(u8, prompt_type, "fransofia-bypass")) return "other";
-    if (std.mem.eql(u8, prompt_type, "conduit-counter")) return "other";
-    if (std.mem.eql(u8, prompt_type, "clearinghouse-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "byte-ambush")) return "other";
-    if (std.mem.eql(u8, prompt_type, "phat-net-damage")) return "other";
-    if (std.mem.eql(u8, prompt_type, "mercia-install-server")) return "other";
-    if (std.mem.eql(u8, prompt_type, "spin-doctor-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "bangun-faceup")) return "other";
-    if (std.mem.eql(u8, prompt_type, "bangun-bluff")) return "other";
-    if (std.mem.eql(u8, prompt_type, "poetri-rd-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "touch-ups-advance")) return "select";
-    if (std.mem.eql(u8, prompt_type, "touch-ups-type")) return "select";
-    if (std.mem.eql(u8, prompt_type, "touch-ups-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "lie-low")) return "other";
-    if (std.mem.eql(u8, prompt_type, "lie-low-tags")) return "other";
-    if (std.mem.eql(u8, prompt_type, "scrounge-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "humanoid-install-card")) return "select";
-    if (std.mem.eql(u8, prompt_type, "humanoid-install-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "humanoid-operation")) return "select";
-    if (std.mem.eql(u8, prompt_type, "bling-host")) return "other";
-    if (std.mem.eql(u8, prompt_type, "aggressive-trendsetting")) return "other";
-    if (std.mem.eql(u8, prompt_type, "mitra-ice-swap")) return "select";
-    if (std.mem.eql(u8, prompt_type, "plutus-transaction")) return "select";
-    if (std.mem.eql(u8, prompt_type, "plutus-rez-cost")) return "select";
-    if (std.mem.eql(u8, prompt_type, "plutus-trash-hq")) return "select";
-    if (std.mem.eql(u8, prompt_type, "poetri-server")) return "select";
-    if (std.mem.eql(u8, prompt_type, "peek-rd-trash-one")) return "select";
-    if (std.mem.eql(u8, prompt_type, "zwicky-draw")) return "other";
-    if (std.mem.eql(u8, prompt_type, "muslihat-reveal")) return "other";
+    if (std.mem.eql(u8, prompt_type, "au_co_peek")) return "other";
+    if (std.mem.eql(u8, prompt_type, "fransofia_bypass")) return "other";
+    if (std.mem.eql(u8, prompt_type, "conduit_counter")) return "other";
+    if (std.mem.eql(u8, prompt_type, "clearinghouse_trash")) return "other";
+    if (std.mem.eql(u8, prompt_type, "byte_ambush")) return "other";
+    if (std.mem.eql(u8, prompt_type, "phat_net_damage")) return "other";
+    if (std.mem.eql(u8, prompt_type, "mercia_install_server")) return "other";
+    if (std.mem.eql(u8, prompt_type, "spin_doctor_shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "bangun_faceup")) return "other";
+    if (std.mem.eql(u8, prompt_type, "bangun_bluff")) return "other";
+    if (std.mem.eql(u8, prompt_type, "poetri_rd_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "touch_ups_advance")) return "select";
+    if (std.mem.eql(u8, prompt_type, "touch_ups_type")) return "select";
+    if (std.mem.eql(u8, prompt_type, "touch_ups_shuffle")) return "select";
+    if (std.mem.eql(u8, prompt_type, "lie_low")) return "other";
+    if (std.mem.eql(u8, prompt_type, "lie_low_tags")) return "other";
+    if (std.mem.eql(u8, prompt_type, "scrounge_install")) return "select";
+    if (std.mem.eql(u8, prompt_type, "humanoid_install_card")) return "select";
+    if (std.mem.eql(u8, prompt_type, "humanoid_install_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "humanoid_operation")) return "select";
+    if (std.mem.eql(u8, prompt_type, "bling_host")) return "other";
+    if (std.mem.eql(u8, prompt_type, "aggressive_trendsetting")) return "other";
+    if (std.mem.eql(u8, prompt_type, "mitra_ice_swap")) return "select";
+    if (std.mem.eql(u8, prompt_type, "plutus_transaction")) return "select";
+    if (std.mem.eql(u8, prompt_type, "plutus_rez_cost")) return "select";
+    if (std.mem.eql(u8, prompt_type, "plutus_trash_hq")) return "select";
+    if (std.mem.eql(u8, prompt_type, "poetri_server")) return "select";
+    if (std.mem.eql(u8, prompt_type, "peek_rd_trash_one")) return "select";
+    if (std.mem.eql(u8, prompt_type, "zwicky_draw")) return "other";
+    if (std.mem.eql(u8, prompt_type, "muslihat_reveal")) return "other";
     return prompt_type;
 }
 
@@ -2145,13 +2173,13 @@ fn expectSnapshotMatches(expected: state.GameSnapshot, actual: state.GameSnapsho
     try std.testing.expectEqual(expected.state.corp.keep, actual.state.corp.keep);
     try std.testing.expectEqual(expected.state.runner.keep, actual.state.runner.keep);
     try std.testing.expectEqual(expected.state.rng_seed.?, actual.state.rng_seed.?);
-    try expectOptionalString(
-        normalizePromptType(if (expected.state.corp.prompt_state) |prompt| prompt.prompt_type else null),
-        normalizePromptType(if (actual.state.corp.prompt_state) |prompt| normalizePromptTypeForComparison(prompt.prompt_type) else null),
+    try expectOptionalPromptType(
+        if (expected.state.corp.prompt_state) |prompt| prompt.prompt_type else null,
+        if (actual.state.corp.prompt_state) |prompt| prompt.prompt_type else null,
     );
-    try expectOptionalString(
-        normalizePromptType(if (expected.state.runner.prompt_state) |prompt| prompt.prompt_type else null),
-        normalizePromptType(if (actual.state.runner.prompt_state) |prompt| normalizePromptTypeForComparison(prompt.prompt_type) else null),
+    try expectOptionalPromptType(
+        if (expected.state.runner.prompt_state) |prompt| prompt.prompt_type else null,
+        if (actual.state.runner.prompt_state) |prompt| prompt.prompt_type else null,
     );
     try expectLiveActions(expected.legal_actions, actual.legal_actions);
     try expectServers(expected.state.corp.servers, actual.state.corp.servers);
@@ -2307,7 +2335,7 @@ fn filterOracleComparableActions(
                     // Clojure select prompts use card-click, not choice lists
                     // Filter prompts that map to Clojure's select/choice model —
                     // the choice format differs between engines
-                    const normalized = normalizePromptTypeForComparison(pt);
+                    const normalized = normalizePromptTypeForComparison(pt.toStr());
                     if (std.mem.eql(u8, normalized, "select"))
                         continue;
                 }
@@ -2592,7 +2620,7 @@ fn endTurnAndDiscard(
             if (findFirstCorpInstallPlay(generated, generated.legal_actions)) |install_action| {
                 try takeAction(allocator, actions, generated, install_action);
                 if (generated.corp_prompt_state) |ps| {
-                    if (std.mem.eql(u8, ps.prompt_type, "install-destination")) {
+                    if (ps.prompt_type == .install_destination) {
                         try takeAction(allocator, actions, generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
                     }
                 }
@@ -2629,14 +2657,14 @@ fn endTurnAndDiscard(
             .runner => generated.runner_prompt_state,
         };
         const prompt = ps orelse break;
-        if (!std.mem.eql(u8, prompt.prompt_type, "discard")) break;
+        if (prompt.prompt_type != .discard) break;
         if (prompt.choices.len == 0) break;
         const title = if (prompt.choices[0].card) |c| c.title else null;
         if (title == null) break;
         try flow.applyAction(generated, .{
             .kind = .prompt_choice,
             .side = side,
-            .prompt_type = "discard",
+            .prompt_type = .discard,
             .choice = .{ .kind = .card, .text = title },
         });
     }
@@ -2996,19 +3024,21 @@ test "e2e beginner game plays to completion with oracle parity" {
                         if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
-                const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
-                const oracle_cprompt = if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_cprompt = if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
                 const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
-                    if (sa.choice) |c| { if (c.text) |t| std.debug.print(" choice={s}", .{t}); }
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
+                    if (sa.choice) |c| {
+                        if (c.text) |t| std.debug.print(" choice={s}", .{t});
+                    }
                     if (sa.server) |s| std.debug.print(" server={s}", .{s});
                     std.debug.print("\n", .{});
                 }
@@ -3041,13 +3071,13 @@ fn resolveOneDiscardPrompt(gen: *generator.Game) !bool {
             .runner => gen.runner_prompt_state,
         };
         const prompt = ps orelse continue;
-        if (!std.mem.eql(u8, prompt.prompt_type, "discard")) continue;
+        if (prompt.prompt_type != .discard) continue;
         if (prompt.choices.len == 0) continue;
         const title = if (prompt.choices[0].card) |c| c.title else continue;
         try flow.applyAction(gen, .{
             .kind = .prompt_choice,
             .side = side,
-            .prompt_type = "discard",
+            .prompt_type = .discard,
             .choice = .{ .kind = .card, .text = title },
         });
         return true;
@@ -3061,8 +3091,8 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
         std.debug.print("FATAL: 0 legal actions, side={s} turn={d} game_over={}\n", .{
             @tagName(gen.decision_side), gen.turn, gen.game_over,
         });
-        if (gen.corp_prompt_state) |ps| std.debug.print("  corp_prompt={s} choices={d}\n", .{ ps.prompt_type, ps.choices.len });
-        if (gen.runner_prompt_state) |ps| std.debug.print("  runner_prompt={s} choices={d}\n", .{ ps.prompt_type, ps.choices.len });
+        if (gen.corp_prompt_state) |ps| std.debug.print("  corp_prompt={s} choices={d}\n", .{ ps.prompt_type.toStr(), ps.choices.len });
+        if (gen.runner_prompt_state) |ps| std.debug.print("  runner_prompt={s} choices={d}\n", .{ ps.prompt_type.toStr(), ps.choices.len });
         if (gen.run) |run| {
             std.debug.print("  run: phase={s} pos={d} no_action={s} jack_out={}\n", .{
                 run.phase.toStr(),
@@ -3095,7 +3125,7 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
 
     // Tao swap-ice prompt: decline (pick "Done") to keep things simple
     if (gen.runner_prompt_state) |ps| {
-        if (std.mem.eql(u8, ps.prompt_type, "tao-swap-ice")) {
+        if (ps.prompt_type == .tao_swap_ice) {
             if (findPromptText(actions, "Done")) |a| return a;
         }
     }
@@ -3105,7 +3135,7 @@ fn pickE2eAction(gen: *generator.Game) state.LegalAction {
 
     // Install-destination: prefer "New remote" (always affordable)
     if (gen.corp_prompt_state) |ps| {
-        if (std.mem.eql(u8, ps.prompt_type, "install-destination")) {
+        if (ps.prompt_type == .install_destination) {
             if (findPromptText(actions, "New remote")) |a| return a;
         }
     }
@@ -3600,7 +3630,6 @@ test "funhouse install and rez parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-
 test "public trail runner takes tag parity test" {
     const allocator = std.testing.allocator;
     const seed = findCardInHandBySeed(matchups.system_gateway_intermediate, "Public Trail", .corp, 100) orelse return error.NoSeedFound;
@@ -3716,7 +3745,7 @@ test "retribution trashes runner program parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Retribution"));
     // Choose first program (p|0)
     try std.testing.expect(generated.corp_prompt_state != null);
-    try std.testing.expectEqualStrings("retribution-trash", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("retribution_trash", generated.corp_prompt_state.?.prompt_type.toStr());
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "p|0"));
     try std.testing.expectEqual(prog_count - 1, generated.runner_rig_program.items.len);
 
@@ -3877,7 +3906,7 @@ test "sprint draw and shuffle parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Sprint"));
     // Sprint draws 3 then presents shuffle prompt
     try std.testing.expect(generated.corp_prompt_state != null);
-    try std.testing.expectEqualStrings("sprint-shuffle", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("sprint_shuffle", generated.corp_prompt_state.?.prompt_type.toStr());
 
     // Pick first card to shuffle back (first prompt choice)
     try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
@@ -4582,7 +4611,6 @@ test "tranquilizer install parity test" {
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
 }
 
-
 test "loup trash on access trigger parity test" {
     // Loup: first trash-on-access each turn: gain 1cr, draw 1
     // Scenario: corp installs a trashable asset, runner runs and trashes it
@@ -4772,7 +4800,7 @@ test "tao salonga score trigger parity test" {
 
             // Tao should fire — runner gets swap prompt
             if (generated.runner_prompt_state) |ps| {
-                if (std.mem.eql(u8, ps.prompt_type, "tao-swap-ice")) {
+                if (ps.prompt_type == .tao_swap_ice) {
                     // Decline the swap
                     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Done"));
                     break;
@@ -4818,8 +4846,8 @@ test "e2e complete game plays to completion with oracle parity" {
                 std.debug.print("\n=== PARITY DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
                 std.debug.print("  rng: oracle={d} zig={d}\n", .{ replay.snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
                 std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d} deck={d}/{d}\n", .{
-                    replay.snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
-                    replay.snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    replay.snapshot.state.corp.credit,   gen_snapshot.state.corp.credit,
+                    replay.snapshot.state.corp.click,    gen_snapshot.state.corp.click,
                     replay.snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
                     replay.snapshot.state.corp.deck.len, gen_snapshot.state.corp.deck.len,
                 });
@@ -4830,18 +4858,18 @@ test "e2e complete game plays to completion with oracle parity" {
                         if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
-                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
-                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
                 const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
                     if (sa.choice) |c| {
                         if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     }
@@ -4896,7 +4924,7 @@ test "e2e intermediate game plays to completion with oracle parity" {
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
                     if (sa.choice) |c| {
                         if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     }
@@ -4918,18 +4946,18 @@ test "e2e intermediate game plays to completion with oracle parity" {
                         if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(replay.snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
-                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_rprompt = if (replay.snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
-                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_cprompt = if (replay.snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
                 std.debug.print("  last actions:\n", .{});
                 const start = if (actions.items.len > 60) actions.items.len - 60 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
                     if (sa.choice) |c| {
                         if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     }
@@ -4958,8 +4986,6 @@ test "e2e intermediate game plays to completion with oracle parity" {
     try std.testing.expect(generated.winner != null);
 }
 
-
-
 test "e2e fullpack game plays to completion with oracle parity" {
     const allocator = std.testing.allocator;
     const seed: u64 = 7;
@@ -4986,8 +5012,8 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 std.debug.print("\n=== FULLPACK PER-ACTION DIVERGENCE at step {d} turn {d} ({d} actions) ===\n", .{ step_counter, generated.turn, actions.items.len });
                 std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
                 std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d} deck={d}/{d}\n", .{
-                    oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
-                    oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    oracle_snapshot.state.corp.credit,   gen_snapshot.state.corp.credit,
+                    oracle_snapshot.state.corp.click,    gen_snapshot.state.corp.click,
                     oracle_snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
                     oracle_snapshot.state.corp.deck.len, gen_snapshot.state.corp.deck.len,
                 });
@@ -4998,12 +5024,12 @@ test "e2e fullpack game plays to completion with oracle parity" {
                         if (gen_snapshot.state.run) |r| r.phase.toStr() else "null",
                     });
                 std.debug.print("  oracle prompts: corp={s} runner={s}\n", .{
-                    if (oracle_snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
-                    if (oracle_snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
+                    if (oracle_snapshot.state.corp.prompt_state) |p| p.prompt_type.toStr() else "null",
+                    if (oracle_snapshot.state.runner.prompt_state) |p| p.prompt_type.toStr() else "null",
                 });
                 std.debug.print("  zig prompts: corp={s} runner={s}\n", .{
-                    if (gen_snapshot.state.corp.prompt_state) |p| p.prompt_type else "null",
-                    if (gen_snapshot.state.runner.prompt_state) |p| p.prompt_type else "null",
+                    if (gen_snapshot.state.corp.prompt_state) |p| p.prompt_type.toStr() else "null",
+                    if (gen_snapshot.state.runner.prompt_state) |p| p.prompt_type.toStr() else "null",
                 });
                 std.debug.print("  oracle actions={d} zig actions={d}\n", .{
                     oracle_snapshot.legal_actions.len,
@@ -5056,7 +5082,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
                 for (actions.items[s..], s..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
                     if (sa.choice) |c| {
                         if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     }
@@ -5086,8 +5112,8 @@ test "e2e fullpack game plays to completion with oracle parity" {
         });
         std.debug.print("  run={s} corp_prompt={s} runner_prompt={s}\n", .{
             if (generated.run) |run| run.phase.toStr() else "null",
-            if (generated.corp_prompt_state) |ps| ps.prompt_type else "null",
-            if (generated.runner_prompt_state) |ps| ps.prompt_type else "null",
+            if (generated.corp_prompt_state) |ps| ps.prompt_type.toStr() else "null",
+            if (generated.runner_prompt_state) |ps| ps.prompt_type.toStr() else "null",
         });
         std.debug.print("  corp click/credit={d}/{d} hand={d} deck={d} agenda={d}\n", .{
             generated.corp_click, generated.corp_credit, generated.corp_hand.items.len, generated.corp_deck.items.len, generated.corp_agenda_point,
@@ -5110,7 +5136,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
         for (actions.items[s..], s..) |sa, ai| {
             std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
             if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-            if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+            if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
             if (sa.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
             if (sa.server) |srv| std.debug.print(" server={s}", .{srv});
             std.debug.print("\n", .{});
@@ -5754,24 +5780,24 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
                 std.debug.print("\n=== ELEVATION NEUTRAL DIVERGENCE at turn {d} (step {d}, {d} actions) ===\n", .{ generated.turn, step, actions.items.len });
                 std.debug.print("  rng: oracle={d} zig={d}\n", .{ oracle_snapshot.state.rng_seed.?, gen_snapshot.state.rng_seed.? });
                 std.debug.print("  corp: credit={d}/{d} click={d}/{d} hand={d}/{d}\n", .{
-                    oracle_snapshot.state.corp.credit, gen_snapshot.state.corp.credit,
-                    oracle_snapshot.state.corp.click, gen_snapshot.state.corp.click,
+                    oracle_snapshot.state.corp.credit,   gen_snapshot.state.corp.credit,
+                    oracle_snapshot.state.corp.click,    gen_snapshot.state.corp.click,
                     oracle_snapshot.state.corp.hand.len, gen_snapshot.state.corp.hand.len,
                 });
                 std.debug.print("  runner: credit={d}/{d} click={d}/{d}\n", .{ oracle_snapshot.state.runner.credit, gen_snapshot.state.runner.credit, oracle_snapshot.state.runner.click, gen_snapshot.state.runner.click });
                 std.debug.print("  decision: oracle={s} zig={s}\n", .{ @tagName(oracle_snapshot.decision_side), @tagName(gen_snapshot.decision_side) });
-                const oracle_cprompt = if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_cprompt = if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_cprompt = if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  corp prompt: oracle={s} zig={s}\n", .{ oracle_cprompt, zig_cprompt });
-                const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
-                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null";
+                const oracle_rprompt = if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
+                const zig_rprompt = if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null";
                 std.debug.print("  runner prompt: oracle={s} zig={s}\n", .{ oracle_rprompt, zig_rprompt });
                 std.debug.print("  last actions:\n", .{});
                 const start = if (actions.items.len > 40) actions.items.len - 40 else 0;
                 for (actions.items[start..], start..) |sa, ai| {
                     std.debug.print("    [{d}] {s}/{s}", .{ ai, @tagName(sa.kind), @tagName(sa.side) });
                     if (sa.card_title) |t| std.debug.print(" title={s}", .{t});
-                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt});
+                    if (sa.prompt_type) |pt| std.debug.print(" prompt={s}", .{pt.toStr()});
                     if (sa.choice) |c| if (c.text) |t| std.debug.print(" choice={s}", .{t});
                     if (sa.server) |s| std.debug.print(" server={s}", .{s});
                     std.debug.print("\n", .{});
@@ -5952,20 +5978,22 @@ test "ritual parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35026) break :blk s;
             }
@@ -6033,20 +6061,22 @@ test "rent rioters install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35011 and g.runner_credit >= 2) break :blk s;
             }
@@ -6087,20 +6117,22 @@ test "open market install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35022 and g.runner_credit >= 2) break :blk s;
             }
@@ -6141,20 +6173,22 @@ test "open market auto-take credits parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35022 and g.runner_credit >= 2) break :blk s;
             }
@@ -6201,20 +6235,22 @@ test "charm offensive parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35003) break :blk s;
             }
@@ -6258,20 +6294,22 @@ test "bling install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35006 and g.runner_credit >= 2) break :blk s;
             }
@@ -6312,20 +6350,22 @@ test "hantu install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35008 and g.runner_credit >= 3) break :blk s;
             }
@@ -6366,20 +6406,22 @@ test "side hustle install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35034 and g.runner_credit >= 2) break :blk s;
             }
@@ -6445,7 +6487,7 @@ test "peer review install parity test" {
     const allocator = std.testing.allocator;
     const seed = findOpeningHandsBySeed(
         matchups.elevation_jinteki,
-        &.{"Peer Review", "Mitra Aman"},
+        &.{ "Peer Review", "Mitra Aman" },
         &.{},
         400,
     ) orelse return error.NoSeedFound;
@@ -6465,7 +6507,7 @@ test "peer review install parity test" {
     defer pre_replay.deinit();
     try expectSnapshotMatches(pre_replay.snapshot, try generated.toSnapshot());
     try std.testing.expect(generated.corp_prompt_state != null);
-    try std.testing.expectEqualStrings("peer-review-private", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("peer_review_private", generated.corp_prompt_state.?.prompt_type.toStr());
 
     const private_choice = blk: {
         for (generated.legal_actions) |action| {
@@ -6603,20 +6645,22 @@ test "rising tide install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35009 and g.runner_credit >= 1) break :blk s;
             }
@@ -6657,20 +6701,22 @@ test "principia install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35032 and g.runner_credit >= 4) break :blk s;
             }
@@ -6711,20 +6757,22 @@ test "sang kancil install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35020 and g.runner_credit >= 3) break :blk s;
             }
@@ -6765,20 +6813,22 @@ test "clean getaway parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35014 and g.runner_credit >= 3) break :blk s;
             }
@@ -7308,7 +7358,10 @@ test "plutus rez with trash-3 cost" {
             try generator.corpStartTurnFull(&g);
             var has_plutus = false;
             for (g.corp_hand.items) |c| {
-                if (c.code != null and c.code.? == 35073) { has_plutus = true; break; }
+                if (c.code != null and c.code.? == 35073) {
+                    has_plutus = true;
+                    break;
+                }
             }
             if (has_plutus and g.corp_hand.items.len >= 4) break :blk s;
         }
@@ -7321,23 +7374,23 @@ test "plutus rez with trash-3 cost" {
     try generator.corpStartTurnFull(&generated);
     // Install Plutus
     try flow.applyAction(&generated, findCardInstallByCode(&generated, generated.legal_actions, 35073) orelse return error.MissingAction);
-    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "install-destination", .choice = game.stringChoice("New remote") });
+    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .install_destination, .choice = game.stringChoice("New remote") });
     // Rez Plutus
     const rez_action = findRezNonIceAction(generated.legal_actions, "Plutus") orelse return error.MissingAction;
     try flow.applyAction(&generated, rez_action);
     // Should have plutus-rez-cost prompt
     try std.testing.expect(generated.corp_prompt_state != null);
-    try std.testing.expectEqualStrings("plutus-rez-cost", generated.corp_prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("plutus_rez_cost", generated.corp_prompt_state.?.prompt_type.toStr());
     // Choose trash 3 from HQ
     const hand_before = generated.corp_hand.items.len;
-    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-rez-cost", .choice = game.stringChoice("Trash 3 cards from HQ") });
+    try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .plutus_rez_cost, .choice = game.stringChoice("Trash 3 cards from HQ") });
     // Pick 3 cards
     var trashed: u8 = 0;
     while (trashed < 3) : (trashed += 1) {
         if (generated.corp_prompt_state == null) break;
-        if (!std.mem.eql(u8, generated.corp_prompt_state.?.prompt_type, "plutus-trash-hq")) break;
+        if (generated.corp_prompt_state.?.prompt_type != .plutus_trash_hq) break;
         const first_choice = generated.corp_prompt_state.?.choices[0];
-        try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "plutus-trash-hq", .choice = first_choice });
+        try flow.applyAction(&generated, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .plutus_trash_hq, .choice = first_choice });
     }
     // Verify 3 cards were trashed from HQ
     try std.testing.expectEqual(hand_before - 3, generated.corp_hand.items.len);
@@ -7431,20 +7484,22 @@ test "gourmand install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35007) break :blk s;
             }
@@ -7482,20 +7537,22 @@ test "cacophony install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35010 and g.runner_credit >= 3) break :blk s;
             }
@@ -7533,20 +7590,22 @@ test "detente install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35018 and g.runner_credit >= 3) break :blk s;
             }
@@ -7608,7 +7667,7 @@ test "detente successful hq run host prompt parity test" {
     var steps: u8 = 0;
     while (steps < 50 and generated.run != null) : (steps += 1) {
         if (generated.runner_prompt_state) |ps| {
-            if (std.mem.eql(u8, ps.prompt_type, "runner-host-confirm")) break;
+            if (ps.prompt_type == .runner_host_confirm) break;
         }
         if (findPromptText(generated.legal_actions, "Steal")) |a| {
             try takeAction(allocator, &actions, &generated, a);
@@ -7637,7 +7696,7 @@ test "detente successful hq run host prompt parity test" {
         break;
     }
     const runner_prompt = generated.runner_prompt_state orelse return error.MissingPromptState;
-    try std.testing.expectEqualStrings("runner-host-confirm", runner_prompt.prompt_type);
+    try std.testing.expectEqualStrings("runner_host_confirm", runner_prompt.prompt_type.toStr());
     const scenario_actions = try actions.toOwnedSlice(allocator);
     defer allocator.free(scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
@@ -7659,20 +7718,22 @@ test "maglectric rapid install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35019 and g.runner_credit >= 1) break :blk s;
             }
@@ -7710,20 +7771,22 @@ test "fransofia ward install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35021 and g.runner_credit >= 3) break :blk s;
             }
@@ -7761,20 +7824,22 @@ test "gamedragon pro install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35027 and g.runner_credit >= 2) break :blk s;
             }
@@ -7838,20 +7903,22 @@ test "madani install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35028 and g.runner_credit >= 2) break :blk s;
             }
@@ -7889,20 +7956,22 @@ test "azimat install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35029 and g.runner_credit >= 1) break :blk s;
             }
@@ -7940,20 +8009,22 @@ test "devadatta drone install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35031 and g.runner_credit >= 1) break :blk s;
             }
@@ -7991,20 +8062,22 @@ test "knickknack install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35033 and g.runner_credit >= 2) break :blk s;
             }
@@ -8042,7 +8115,10 @@ test "chromatophores install parity test" {
             // Check if corp has any ICE in hand
             var has_ice_in_hand = false;
             for (g.corp_hand.items) |h| {
-                if (h.install.kind == .corp_server_choice) { has_ice_in_hand = true; break; }
+                if (h.install.kind == .corp_server_choice) {
+                    has_ice_in_hand = true;
+                    break;
+                }
             }
             if (!has_ice_in_hand) continue;
             // Install ICE from hand
@@ -8060,20 +8136,22 @@ test "chromatophores install parity test" {
             while (c < 2) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     flow.applyAction(&g, a) catch break
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 flow.applyAction(&g, a) catch continue;
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } }) catch break;
+                    flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } }) catch break;
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 flow.applyAction(&g, a) catch continue
-            else continue;
+            else
+                continue;
             // Check runner has Chromatophores and there is ICE
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 35030 and g.runner_credit >= 1) {
@@ -8104,7 +8182,8 @@ test "chromatophores install parity test" {
     while (c < 2) : (c += 1) {
         if (findBasicAction(generated.legal_actions, .corp, .gain_credit)) |a|
             try takeAction(allocator, &actions, &generated, a)
-        else break;
+        else
+            break;
     }
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
@@ -8158,12 +8237,12 @@ test "e2e elevation runner game plays to completion with oracle parity" {
                     gen_snapshot.state.runner.credit,
                 });
                 std.debug.print("  oracle corp prompt={s} zig={s}\n", .{
-                    if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
-                    if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type else "null",
+                    if (oracle_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null",
+                    if (gen_snapshot.state.corp.prompt_state) |ps| ps.prompt_type.toStr() else "null",
                 });
                 std.debug.print("  oracle runner prompt={s} zig={s}\n", .{
-                    if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
-                    if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type else "null",
+                    if (oracle_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null",
+                    if (gen_snapshot.state.runner.prompt_state) |ps| ps.prompt_type.toStr() else "null",
                 });
                 const dbg_expected = try filterOracleComparableActions(std.testing.allocator, oracle_snapshot.legal_actions);
                 defer std.testing.allocator.free(dbg_expected);
@@ -8488,20 +8567,22 @@ test "carnivore install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 30003 and g.runner_credit >= 4) break :blk s;
             }
@@ -8542,20 +8623,22 @@ test "cleaver install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 30006 and g.runner_credit >= 3) break :blk s;
             }
@@ -8596,20 +8679,22 @@ test "carmen install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 30015 and g.runner_credit >= 5) break :blk s;
             }
@@ -8650,20 +8735,22 @@ test "red team install parity test" {
             while (c < 3) : (c += 1) {
                 if (findBasicAction(g.legal_actions, .corp, .gain_credit)) |a|
                     try flow.applyAction(&g, a)
-                else break;
+                else
+                    break;
             }
             if (findFirstKindAction(g.legal_actions, .end_turn, .corp)) |a| {
                 try flow.applyAction(&g, a);
                 while (g.corp_prompt_state != null) {
                     const ps = g.corp_prompt_state.?;
-                    if (!std.mem.eql(u8, ps.prompt_type, "discard") or ps.choices.len == 0) break;
+                    if (ps.prompt_type != .discard or ps.choices.len == 0) break;
                     const title = if (ps.choices[0].card) |cr| cr.title else break;
-                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = "discard", .choice = .{ .kind = .card, .text = title } });
+                    try flow.applyAction(&g, .{ .kind = .prompt_choice, .side = .corp, .prompt_type = .discard, .choice = .{ .kind = .card, .text = title } });
                 }
             } else continue;
             if (findFirstKindAction(g.legal_actions, .start_turn, .runner)) |a|
                 try flow.applyAction(&g, a)
-            else continue;
+            else
+                continue;
             for (g.runner_hand.items) |h| {
                 if (h.code != null and h.code.? == 30018 and g.runner_credit >= 5) break :blk s;
             }

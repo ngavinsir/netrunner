@@ -131,8 +131,8 @@ pub const TransitionExpectation = struct {
     corp_keep: state.KeepState,
     runner_keep: state.KeepState,
     rng_seed: i64,
-    corp_prompt_type: ?[]const u8,
-    runner_prompt_type: ?[]const u8,
+    corp_prompt_type: ?state.PromptType,
+    runner_prompt_type: ?state.PromptType,
     legal_actions: []const ActionExpectation,
     corp_servers: []const state.ServerSlot,
     corp_hand: []const state.CardInstance,
@@ -630,7 +630,7 @@ fn shouldSkipAction(action: state.LegalAction) bool {
     // :waiting prompt on the other side that doesn't get cleaned up by effect-completed
     // (eid mismatch in continue-ability). Sending discard as separate actions leaves orphaned state.
     if (action.kind == .prompt_choice and action.prompt_type != null) {
-        if (std.mem.eql(u8, action.prompt_type.?, "discard")) return true;
+        if (action.prompt_type.? == .discard) return true;
     }
     return false;
 }
@@ -680,7 +680,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
     // Translate prompt_choice actions for Clojure
     if (action.kind == .prompt_choice and action.prompt_type != null) {
         // Translate discard prompt_choice into a "select" action for Clojure
-        if (std.mem.eql(u8, action.prompt_type.?, "discard")) {
+        if (action.prompt_type.? == .discard) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "select", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -693,7 +693,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Translate mu-overflow prompt_choice into a "select" action for Clojure
-        if (std.mem.eql(u8, action.prompt_type.?, "mu-overflow")) {
+        if (action.prompt_type.? == .mu_overflow) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "select", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -712,7 +712,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Translate funhouse-encounter prompt_choice into Clojure's standard choice resolution
-        if (std.mem.eql(u8, action.prompt_type.?, "funhouse-encounter")) {
+        if (action.prompt_type.? == .funhouse_encounter) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "funhouse-encounter", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -725,7 +725,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Translate retribution-trash prompt_choice into a card locator for Clojure
-        if (std.mem.eql(u8, action.prompt_type.?, "retribution-trash")) {
+        if (action.prompt_type.? == .retribution_trash) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "retribution-trash", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -738,7 +738,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Sprint: corp picks a card from HQ to shuffle back — send as sprint-shuffle with card title
-        if (std.mem.eql(u8, action.prompt_type.?, "sprint-shuffle")) {
+        if (action.prompt_type.? == .sprint_shuffle) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "sprint-shuffle", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -751,7 +751,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Hansei Review: corp picks a card from HQ to trash
-        if (std.mem.eql(u8, action.prompt_type.?, "hansei-trash")) {
+        if (action.prompt_type.? == .hansei_trash) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "hansei-trash", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -764,7 +764,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Ballista: corp picks a runner program to trash during subroutine
-        if (std.mem.eql(u8, action.prompt_type.?, "ballista-trash")) {
+        if (action.prompt_type.? == .ballista_trash) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "ballista-trash", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -777,7 +777,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Above the Law: corp picks a runner resource to trash on score
-        if (std.mem.eql(u8, action.prompt_type.?, "above-the-law-trash")) {
+        if (action.prompt_type.? == .above_the_law_trash) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "above-the-law-trash", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -801,11 +801,11 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Longevity Serum: corp picks card from HQ to trash or Archives to shuffle
-        if (std.mem.eql(u8, action.prompt_type.?, "longevity-serum-trash") or
-            std.mem.eql(u8, action.prompt_type.?, "longevity-serum-shuffle"))
+        if (action.prompt_type.? == .longevity_serum_trash or
+            action.prompt_type.? == .longevity_serum_shuffle)
         {
             try writer.writeByte('{');
-            const kind_name = if (std.mem.eql(u8, action.prompt_type.?, "longevity-serum-trash"))
+            const kind_name = if (action.prompt_type.? == .longevity_serum_trash)
                 "longevity-serum-trash"
             else
                 "longevity-serum-shuffle";
@@ -820,7 +820,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Trojan host selection — send as custom kind with card choice
-        if (std.mem.eql(u8, action.prompt_type.?, "trojan-host")) {
+        if (action.prompt_type.? == .trojan_host) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "trojan-host", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -831,7 +831,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Sprint: corp picks a card from HQ to shuffle into R&D
-        if (std.mem.eql(u8, action.prompt_type.?, "sprint-shuffle")) {
+        if (action.prompt_type.? == .sprint_shuffle) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "sprint-shuffle", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -844,7 +844,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Tao Salonga: runner picks ICE to swap
-        if (std.mem.eql(u8, action.prompt_type.?, "tao-swap-ice")) {
+        if (action.prompt_type.? == .tao_swap_ice) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "tao-swap-ice", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -876,7 +876,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Malapert Data Vault: corp picks non-agenda from R&D
-        if (std.mem.eql(u8, action.prompt_type.?, "malapert-search")) {
+        if (action.prompt_type.? == .malapert_search) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "malapert-search", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -889,7 +889,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // HB: Precision Design: corp picks card from Archives to add to HQ
-        if (std.mem.eql(u8, action.prompt_type.?, "precision-design-archive")) {
+        if (action.prompt_type.? == .precision_design_archive) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "precision-design-archive", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -902,7 +902,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // NBN: Reality Plus: corp chooses gain 2cr or draw 2
-        if (std.mem.eql(u8, action.prompt_type.?, "reality-plus")) {
+        if (action.prompt_type.? == .reality_plus) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "reality-plus", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -915,7 +915,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Anoetic Void: corp chooses to use ability
-        if (std.mem.eql(u8, action.prompt_type.?, "anoetic-void")) {
+        if (action.prompt_type.? == .anoetic_void) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "anoetic-void", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -928,7 +928,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Translate manegarm-tax prompt_choice into a "manegarm-tax" action for Clojure
-        if (std.mem.eql(u8, action.prompt_type.?, "manegarm-tax")) {
+        if (action.prompt_type.? == .manegarm_tax) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "manegarm-tax", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -940,7 +940,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
-        if (std.mem.eql(u8, action.prompt_type.?, "runner-bonus-install-confirm")) {
+        if (action.prompt_type.? == .runner_bonus_install_confirm) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "runner-bonus-install-confirm", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -952,7 +952,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             try writer.writeByte('}');
             return;
         }
-        if (std.mem.eql(u8, action.prompt_type.?, "runner-bonus-install")) {
+        if (action.prompt_type.? == .runner_bonus_install) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "runner-bonus-install", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -965,7 +965,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Byte! ambush: Zig uses "No action" / "Pay 4 [Credits]...", Clojure uses "No" / "Yes"
-        if (std.mem.eql(u8, action.prompt_type.?, "byte-ambush")) {
+        if (action.prompt_type.? == .byte_ambush) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "prompt-choice", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -979,7 +979,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             return;
         }
         // Mercia B4LL4RD ICE selection: translate to Clojure "select" action for the ICE card
-        if (std.mem.eql(u8, action.prompt_type.?, "mercia-install-ice")) {
+        if (action.prompt_type.? == .mercia_install_ice) {
             if (action.choice) |choice| {
                 if (choice.text) |text| {
                     if (std.mem.eql(u8, text, "No action")) {
@@ -1007,7 +1007,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
             }
         }
         // Mercia B4LL4RD server selection: send server name as prompt-choice
-        if (std.mem.eql(u8, action.prompt_type.?, "mercia-install-server")) {
+        if (action.prompt_type.? == .mercia_install_server) {
             try writer.writeByte('{');
             try writeJsonFieldString(writer, "kind", "prompt-choice", false);
             try writeJsonFieldString(writer, "side", sideName(action.side), true);
@@ -1021,7 +1021,7 @@ fn writeActionJson(writer: anytype, action: state.LegalAction) !void {
         }
         // Access-choice: when the choice has a card reference (access ability like Gourmand),
         // send as card-based choice so the Clojure oracle can resolve it via cid matching.
-        if (std.mem.eql(u8, action.prompt_type.?, "access-choice")) {
+        if (action.prompt_type.? == .access_choice) {
             if (action.choice) |choice| {
                 if (choice.card) |card| {
                     try writer.writeByte('{');
@@ -1198,36 +1198,38 @@ fn oracleAbilityIndex(action: state.LegalAction) ?u8 {
     return null;
 }
 
-fn oraclePromptType(prompt_type: []const u8) []const u8 {
-    if (std.mem.eql(u8, prompt_type, "install-destination")) return "other";
-    if (std.mem.eql(u8, prompt_type, "access-choice")) return "other";
-    if (std.mem.eql(u8, prompt_type, "run-target")) return "other";
-    if (std.mem.eql(u8, prompt_type, "run-central")) return "other";
-    if (std.mem.eql(u8, prompt_type, "funhouse-encounter")) return "other";
-    if (std.mem.eql(u8, prompt_type, "retribution-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "break-sub")) return "other";
-    if (std.mem.eql(u8, prompt_type, "sprint-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "hansei-trash")) return "select";
-    if (std.mem.eql(u8, prompt_type, "ballista-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "above-the-law-trash")) return "other";
-    if (std.mem.eql(u8, prompt_type, "anoetic-void")) return "other";
-    if (std.mem.eql(u8, prompt_type, "longevity-serum-trash")) return "select";
-    if (std.mem.eql(u8, prompt_type, "longevity-serum-shuffle")) return "select";
-    if (std.mem.eql(u8, prompt_type, "precision-design-archive")) return "select";
-    if (std.mem.eql(u8, prompt_type, "malapert-search")) return "select";
-    if (std.mem.eql(u8, prompt_type, "ansel-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "tao-swap-ice")) return "select";
-    if (std.mem.eql(u8, prompt_type, "trojan-host")) return "select";
-    if (std.mem.eql(u8, prompt_type, "reality-plus")) return "other";
-    if (std.mem.eql(u8, prompt_type, "zahya-gain")) return "other";
-    if (std.mem.eql(u8, prompt_type, "access-cleanup")) return "select";
-    if (std.mem.eql(u8, prompt_type, "discard")) return "select";
-    if (std.mem.eql(u8, prompt_type, "mu-overflow")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-bonus-install-confirm")) return "other";
-    if (std.mem.eql(u8, prompt_type, "runner-bonus-install")) return "select";
-    if (std.mem.eql(u8, prompt_type, "runner-host-confirm")) return "other";
-    if (std.mem.eql(u8, prompt_type, "runner-hosted-card")) return "select";
-    return prompt_type;
+fn oraclePromptType(prompt_type: state.PromptType) []const u8 {
+    return switch (prompt_type) {
+        .install_destination => "other",
+        .access_choice => "other",
+        .run_target => "other",
+        .run_central => "other",
+        .funhouse_encounter => "other",
+        .retribution_trash => "other",
+        .break_sub => "other",
+        .sprint_shuffle => "select",
+        .hansei_trash => "select",
+        .ballista_trash => "other",
+        .above_the_law_trash => "other",
+        .anoetic_void => "other",
+        .longevity_serum_trash => "select",
+        .longevity_serum_shuffle => "select",
+        .precision_design_archive => "select",
+        .malapert_search => "select",
+        .ansel_install => "select",
+        .tao_swap_ice => "select",
+        .trojan_host => "select",
+        .reality_plus => "other",
+        .zahya_gain => "other",
+        .access_cleanup => "select",
+        .discard => "select",
+        .mu_overflow => "select",
+        .runner_bonus_install_confirm => "other",
+        .runner_bonus_install => "select",
+        .runner_host_confirm => "other",
+        .runner_hosted_card => "select",
+        else => prompt_type.toStr(),
+    };
 }
 
 fn writeChoiceJsonField(writer: anytype, key: []const u8, choice: state.PromptChoice, leading_comma: bool) !void {
@@ -1551,7 +1553,7 @@ fn parseOptionalPromptState(
 ) !?state.PromptState {
     const prompt_object = try getOptional(.object, object, key) orelse return null;
     return .{
-        .prompt_type = try dupeString(allocator, try getRequired(.string, prompt_object, "prompt-type")),
+        .prompt_type = state.PromptType.fromStr(try getRequired(.string, prompt_object, "prompt-type")) orelse .other,
         .choices = try parsePromptChoices(allocator, prompt_object),
         .source_card = if (try getOptional(.object, prompt_object, "source-card")) |source_card|
             try parseCard(allocator, source_card)
@@ -1633,7 +1635,7 @@ fn parseLegalAction(
     return .{
         .kind = if (kind == .use_ability and side == .runner and installed_resource_index != null and ability_index != null and ability_index.? == 0) .use_installed_ability else kind,
         .side = side,
-        .prompt_type = try dupeOptionalString(allocator, try getOptional(.string, object, "prompt-type")),
+        .prompt_type = if (try getOptional(.string, object, "prompt-type")) |s| state.PromptType.fromStr(s) else null,
         .choice = choice,
         .server = try dupeOptionalString(allocator, try getOptional(.string, object, "server")),
         .card_index = installed_resource_index orelse try parseOptionalCardIndex(object),
@@ -1876,8 +1878,8 @@ fn parseTransitionExpectation(
         .corp_keep = try parseKeepState(corp, "keep"),
         .runner_keep = try parseKeepState(runner, "keep"),
         .rng_seed = try getInteger(oracle_state, "rng-seed"),
-        .corp_prompt_type = try dupeOptionalString(allocator, try getPromptType(corp)),
-        .runner_prompt_type = try dupeOptionalString(allocator, try getPromptType(runner)),
+        .corp_prompt_type = if (try getPromptType(corp)) |s| state.PromptType.fromStr(s) else null,
+        .runner_prompt_type = if (try getPromptType(runner)) |s| state.PromptType.fromStr(s) else null,
         .legal_actions = try parseActionExpectations(allocator, legal_actions),
         .corp_servers = try parseServers(allocator, corp),
         .corp_hand = try parseCards(allocator, corp, "hand"),
@@ -2132,8 +2134,6 @@ fn freeTransitionExpectation(allocator: std.mem.Allocator, transition: *Transiti
     if (transition.run) |_| {
         // ServerPath is a value type, no allocation to free
     }
-    if (transition.corp_prompt_type) |text| allocator.free(text);
-    if (transition.runner_prompt_type) |text| allocator.free(text);
     freeActionExpectations(allocator, transition.legal_actions);
     freeServers(allocator, transition.corp_servers);
     freeCards(allocator, transition.corp_hand);
@@ -2387,8 +2387,8 @@ test "load beginner initial setup snapshot" {
 
     try std.testing.expect(snapshot.state.corp.prompt_state != null);
     try std.testing.expect(snapshot.state.runner.prompt_state != null);
-    try std.testing.expectEqualStrings("mulligan", snapshot.state.corp.prompt_state.?.prompt_type);
-    try std.testing.expectEqualStrings("waiting", snapshot.state.runner.prompt_state.?.prompt_type);
+    try std.testing.expectEqualStrings("mulligan", snapshot.state.corp.prompt_state.?.prompt_type.toStr());
+    try std.testing.expectEqualStrings("waiting", snapshot.state.runner.prompt_state.?.prompt_type.toStr());
     try std.testing.expectEqual(@as(usize, 2), snapshot.state.corp.prompt_state.?.choices.len);
 
     try std.testing.expectEqual(state.Side.corp, snapshot.decision_side);

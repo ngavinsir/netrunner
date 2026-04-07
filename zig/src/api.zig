@@ -139,19 +139,19 @@ fn format_action(game: *Game, action: state.LegalAction, buf: *[256]u8) []const 
     return switch (action.kind) {
         .prompt_choice => blk: {
             if (action.label) |label| break :blk label;
-            const pt = action.prompt_type orelse "";
-            const prefix: []const u8 = if (std.mem.eql(u8, pt, "discard"))
+            const pt = action.prompt_type;
+            const prefix: []const u8 = if (pt == .discard)
                 "Discard: "
-            else if (std.mem.eql(u8, pt, "install-destination"))
+            else if (pt == .install_destination)
                 "Install in: "
-            else if (std.mem.eql(u8, pt, "access-choice"))
+            else if (pt == .access_choice)
                 "Access: "
-            else if (std.mem.eql(u8, pt, "run-target"))
+            else if (pt == .run_target)
                 "Run: "
             else
                 "";
             // For access prompts, include the source card name
-            if (std.mem.eql(u8, pt, "access-choice")) {
+            if (pt == .access_choice) {
                 const source_title = if (game.runner_prompt_state) |ps| if (ps.source_card) |sc| sc.title else null else null;
                 if (action.choice) |c| {
                     if (c.text) |t| {
@@ -174,16 +174,16 @@ fn format_action(game: *Game, action: state.LegalAction, buf: *[256]u8) []const 
                     break :blk t;
                 }
             }
-            if (pt.len > 0) {
-                break :blk std.fmt.bufPrint(buf, "({s})", .{pt}) catch "?";
+            if (pt) |p| {
+                break :blk std.fmt.bufPrint(buf, "({s})", .{p.toStr()}) catch "?";
             }
             break :blk "?";
         },
         .@"continue" => blk: {
             // Show what we're continuing (approach ice, access, etc.)
             if (action.prompt_type) |pt| {
-                if (!std.mem.eql(u8, pt, "run")) {
-                    break :blk std.fmt.bufPrint(buf, "Continue ({s})", .{pt}) catch "Continue";
+                if (pt != .run) {
+                    break :blk std.fmt.bufPrint(buf, "Continue ({s})", .{pt.toStr()}) catch "Continue";
                 }
             }
             break :blk "Continue";
@@ -928,7 +928,7 @@ pub export fn netrunner_prompt_type(handle: ?*anyopaque, player: c_int, buf: [*c
     const game = get_game(handle) orelse return 0;
     const ps = if (player == 0) game.corp_prompt_state else game.runner_prompt_state;
     const prompt = ps orelse return 0;
-    return write_str(buf, buf_size, prompt.prompt_type);
+    return write_str(buf, buf_size, prompt.prompt_type.toStr());
 }
 
 pub export fn netrunner_prompt_source(handle: ?*anyopaque, player: c_int, buf: [*c]u8, buf_size: c_int) callconv(.c) c_int {
