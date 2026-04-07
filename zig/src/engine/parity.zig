@@ -1214,8 +1214,9 @@ test "runner jailbreak successful-run effect is attached to run flow" {
 
     try std.testing.expect(generated.run != null);
     try std.testing.expectEqual(@as(i16, 0), game.sumFloatingEffects(&generated, .rez_cost_bonus));
-    try std.testing.expectEqual(@as(i16, 1), game.sumFloatingEffects(&generated, .successful_run_draw));
     try std.testing.expectEqual(@as(i16, 1), game.sumFloatingEffects(&generated, .access_bonus));
+    // Jailbreak draw is now an event_ability on .successful_run, not a floating effect
+    try std.testing.expect(generated.run.?.source_event_abilities.len > 0);
 
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
     try flow.applyAction(&generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));

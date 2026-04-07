@@ -333,6 +333,14 @@ fn runnerRunEventPlayAbility(
                     .on_choice = &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
+                            // Capture source card's event abilities before clearing prompt
+                            const source_event_abilities = if (cg.runner_prompt_state) |ps|
+                                if (ps.source_card) |sc|
+                                    if (lookupCardSpecByCode(sc.code orelse 0)) |spec| spec.event_abilities else &.{}
+                                else
+                                    &.{}
+                            else
+                                &.{};
                             cg.runner_prompt_state = null;
                             // Add floating effects for this run event
                             if (run_credits > 0) {
@@ -348,6 +356,10 @@ fn runnerRunEventPlayAbility(
                                 try addFloatingEffect(cg, .{ .kind = .successful_run_draw, .duration = .end_of_run, .value = successful_run_draw_cards });
                             }
                             try applyRunFromAbility(cg, choice_text, null);
+                            // Attach run event card's event abilities to the run
+                            if (cg.run) |*run| {
+                                run.source_event_abilities = source_event_abilities;
+                            }
                         }
                     }.choice,
                 };
@@ -1183,7 +1195,17 @@ pub const all_cards = [_]CardSpec{
         }},
     },
     .{ .title = "Creative Commission", .side = .runner, .code = 30020, .card_type = "Event", .cost = 1, .abilities = &.{runnerGainCreditsPlayAbility(5, 0, 1)} },
-    .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .abilities = &.{runnerRunEventPlayAbility(.hq_and_rnd_only, 0, 0, 0, 1, 1)} },
+    .{ .title = "Jailbreak", .side = .runner, .code = 30028, .card_type = "Event", .cost = 0, .abilities = &.{runnerRunEventPlayAbility(.hq_and_rnd_only, 0, 0, 0, 1, 0)}, .event_abilities = &.{.{
+        .event = .successful_run,
+        .automatic_priority = state.Priority.draw_cards,
+        .handler = &struct {
+            fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                const g = gameFromEffectContext(ctx);
+                try drawCards(g, .runner, 1);
+                g.systemMsg(.runner, 30028, "Runner uses Jailbreak to draw 1 card.", .{});
+            }
+        }.handle,
+    }} },
     .{ .title = "Overclock", .side = .runner, .code = 30029, .card_type = "Event", .cost = 1, .abilities = &.{runnerRunEventPlayAbility(.any_runnable, 0, 5, 0, 0, 0)} },
     .{ .title = "Sure Gamble", .side = .runner, .code = 30030, .card_type = "Event", .cost = 5, .abilities = &.{runnerGainCreditsPlayAbility(9, 0, 0)} },
     .{ .title = "Tread Lightly", .side = .runner, .code = 30012, .card_type = "Event", .cost = 1, .abilities = &.{runnerRunEventPlayAbility(.any_runnable, 0, 0, 3, 0, 0)} },
@@ -5389,6 +5411,31 @@ pub const all_cards = [_]CardSpec{
         .subtypes = &.{"Run"},
         .cost = 0,
         .abilities = &.{runnerRunEventPlayAbility(.hq_only, 0, 0, 0, 0, 0)},
+        .event_abilities = &.{.{
+            .event = .successful_run,
+            .automatic_priority = state.Priority.drain_credits,
+            .handler = &struct {
+                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    const g = gameFromEffectContext(ctx);
+                    const run = g.run orelse return;
+                    // Only fires on HQ runs from this card
+                    if (run.server.len < 1 or !std.mem.eql(u8, run.server[0], "hq")) return;
+                    _ = try addRunnerTag(g, 1);
+                    g.systemMsg(.runner, 35017, "Runner uses Transfer of Wealth to take 1 tag.", .{});
+                    // Drain: runner loses up to 3 credits, corp gains up to 2
+                    const runner_loss = @min(g.runner_credit, 3);
+                    g.runner_credit -= runner_loss;
+                    const corp_gain = @min(runner_loss, 2);
+                    g.corp_credit += corp_gain;
+                    if (runner_loss > 0) {
+                        g.systemMsg(.runner, 35017, "Runner loses {d} [credit{s}]; Corp gains {d} [credit{s}].", .{
+                            runner_loss, if (runner_loss != 1) "s" else "",
+                            corp_gain,   if (corp_gain != 1) "s" else "",
+                        });
+                    }
+                }
+            }.handle,
+        }},
     },
     .{
         .title = "Illumination",

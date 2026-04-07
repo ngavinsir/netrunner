@@ -392,6 +392,7 @@ pub const RunState = struct {
     break_subs_max: u8 = 0,
     pending_subroutine: ?PendingSubroutine = null,
     source_instance_id: ?u32 = null,
+    source_event_abilities: []const EventAbility = &.{},
 };
 
 pub const HandSize = struct {

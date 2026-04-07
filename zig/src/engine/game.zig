@@ -22,6 +22,7 @@ pub const CardZone = enum(u8) {
     corp_server_content,
     corp_ice_hosted,
     corp_scored,
+    run_event, // Active run event card (in play area, not installed)
 };
 
 pub const EventSource = struct {
@@ -2462,6 +2463,7 @@ fn findCardByEventSource(generated: *Game, src: EventSource) ?*state.CardInstanc
             }
             return null;
         },
+        .run_event => return null, // handled separately in drainPendingEffects
     }
 }
 
@@ -2508,6 +2510,19 @@ fn drainPendingEffects(generated: *Game) anyerror!bool {
         const effect = generated.pending_effects.orderedRemove(0);
         switch (effect) {
             .event_handler => |src| {
+                if (src.zone == .run_event) {
+                    // Run event card handler — dispatch from run.source_event_abilities
+                    const run = generated.run orelse continue;
+                    if (src.ability_index >= run.source_event_abilities.len) continue;
+                    const ability = run.source_event_abilities[src.ability_index];
+                    if (ability.event != src.event) continue;
+                    const ctx = if (src.payload) |p| effectContextWithEvent(generated, p) else effectContext(generated);
+                    // Run event cards have no mutable CardInstance; use a dummy
+                    var dummy = state.CardInstance{ .title = "", .side = .runner };
+                    try ability.handler(ctx, &dummy);
+                    if (hasActivePrompt(generated)) return true;
+                    continue;
+                }
                 const card = findCardByEventSource(generated, src) orelse continue;
                 if (src.ability_index >= card.event_abilities.len) continue;
                 const ability = card.event_abilities[src.ability_index];
@@ -2672,6 +2687,23 @@ pub fn collectEventHandlers(generated: *Game, payload: state.EffectContext.Event
     if (event != .agenda_scored and event != .agenda_stolen) {
         for (generated.corp_scored.items, 0..) |card, idx| {
             try appendEventHandlersForCard(card, .corp, .corp_scored, @intCast(idx), 0, 0, event, payload, &handlers, allocator);
+        }
+    }
+
+    // Active run event card — its event_abilities participate in priority sorting
+    // (Clojure registers run event card's :events into the global event system)
+    if (generated.run) |run| {
+        for (run.source_event_abilities, 0..) |ability, ability_index| {
+            if (ability.event != event) continue;
+            try handlers.append(allocator, .{
+                .code = 0,
+                .event = event,
+                .side = .runner,
+                .zone = .run_event,
+                .ability_index = @intCast(ability_index),
+                .payload = payload,
+                .priority = ability.automatic_priority,
+            });
         }
     }
 
