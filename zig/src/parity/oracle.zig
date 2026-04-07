@@ -47,7 +47,7 @@ pub const ReplaySession = struct {
             const request_payload = try buildSessionStartRequestJson(allocator, seed, matchup);
             defer allocator.free(request_payload);
             break :blk runOracleRequest(allocator, socket_path, request_payload) catch {
-                try recoverSharedOracleServer(allocator, repo_root, socket_path);
+                try retryOracleRequest(allocator, repo_root, socket_path);
                 const retry_payload = try buildSessionStartRequestJson(allocator, seed, matchup);
                 defer allocator.free(retry_payload);
                 break :blk try runOracleRequest(allocator, socket_path, retry_payload);
@@ -55,7 +55,7 @@ pub const ReplaySession = struct {
         };
         defer allocator.free(response);
         return replaySessionInitFromResponse(allocator, socket_path, response) catch {
-            try recoverSharedOracleServer(allocator, repo_root, socket_path);
+            try retryOracleRequest(allocator, repo_root, socket_path);
             const retry_payload = try buildSessionStartRequestJson(allocator, seed, matchup);
             defer allocator.free(retry_payload);
             const retry_response = try runOracleRequest(allocator, socket_path, retry_payload);
@@ -247,6 +247,28 @@ pub fn replayActions(
     return replayActionsWithMatchup(backing_allocator, seed, actions, null);
 }
 
+fn isManagedByLauncher(allocator: std.mem.Allocator) bool {
+    if (std.process.getEnvVarOwned(allocator, shared_oracle_socket_env)) |val| {
+        allocator.free(val);
+        return true;
+    } else |_| {
+        return false;
+    }
+}
+
+fn retryOracleRequest(
+    allocator: std.mem.Allocator,
+    repo_root: []const u8,
+    socket_path: []const u8,
+) !void {
+    if (isManagedByLauncher(allocator)) {
+        // Launcher owns the oracle lifecycle — just wait for it to come back
+        try waitForUnixSocket(socket_path);
+    } else {
+        try recoverSharedOracleServer(allocator, repo_root, socket_path);
+    }
+}
+
 pub fn replayActionsWithMatchup(
     backing_allocator: std.mem.Allocator,
     seed: u64,
@@ -262,7 +284,7 @@ pub fn replayActionsWithMatchup(
         const request_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
         defer allocator.free(request_payload);
         break :blk runOracleRequest(allocator, socket_path, request_payload) catch {
-            try recoverSharedOracleServer(allocator, repo_root, socket_path);
+            try retryOracleRequest(allocator, repo_root, socket_path);
             const retry_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
             defer allocator.free(retry_payload);
             break :blk try runOracleRequest(allocator, socket_path, retry_payload);
@@ -272,7 +294,7 @@ pub fn replayActionsWithMatchup(
     return parseReplaySnapshotResponse(backing_allocator, response) catch {
         const socket_path = try ensureSharedOracleServer(allocator, repo_root);
         defer allocator.free(socket_path);
-        try recoverSharedOracleServer(allocator, repo_root, socket_path);
+        try retryOracleRequest(allocator, repo_root, socket_path);
         const retry_payload = try buildReplayRequestJson(allocator, seed, actions, matchup);
         defer allocator.free(retry_payload);
         const retry_response = try runOracleRequest(allocator, socket_path, retry_payload);
@@ -323,6 +345,13 @@ fn ensureSharedOracleServer(
     repo_root: []const u8,
 ) ![]const u8 {
     const socket_path = try oracleSocketPath(allocator);
+    // When NETRUNNER_SHARED_ORACLE_SOCKET is set, the launcher owns the oracle
+    // lifecycle. Just wait for it to be ready instead of spawning.
+    if (std.process.getEnvVarOwned(allocator, shared_oracle_socket_env)) |managed_path| {
+        defer allocator.free(managed_path);
+        try waitForUnixSocket(socket_path);
+        return socket_path;
+    } else |_| {}
     if (canConnectUnixSocket(socket_path)) return socket_path;
     try recoverSharedOracleServer(allocator, repo_root, socket_path);
     return socket_path;

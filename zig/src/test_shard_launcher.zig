@@ -1,5 +1,10 @@
 const std = @import("std");
 
+const oracle_dir_name = ".netrunner-oracle";
+const oracle_socket_name = "o.sock";
+const oracle_pid_name = "oracle.pid";
+const shared_oracle_socket_env = "NETRUNNER_SHARED_ORACLE_SOCKET";
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -22,12 +27,29 @@ pub fn main() !void {
     }
 
     const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
+    // Find repo root by looking for project.clj (Clojure project marker)
+    const repo_root = try findRepoRoot(allocator, cwd_path);
     const queue_name = try std.fmt.allocPrint(allocator, "test-sharded-{d}", .{std.time.microTimestamp()});
     const queue_dir = try std.fs.path.join(allocator, &.{ cwd_path, "zig-cache", queue_name });
     std.fs.makeDirAbsolute(queue_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
+
+    // Start a single shared oracle process for all shards
+    const socket_path = try resolveSocketPath(allocator);
+    const pid_path = try siblingPath(allocator, socket_path, oracle_pid_name);
+    var oracle_process = try spawnOracle(allocator, repo_root, socket_path, pid_path);
+    defer {
+        _ = oracle_process.kill() catch {};
+        _ = oracle_process.wait() catch {};
+        // Clean up stale socket file
+        std.fs.deleteFileAbsolute(socket_path) catch {};
+        std.fs.deleteFileAbsolute(pid_path) catch {};
+    }
+
+    // Wait for oracle to accept connections
+    try waitForSocket(socket_path);
 
     const process_env = try std.process.getEnvMap(allocator);
     const shard_total_text = try std.fmt.allocPrint(allocator, "{d}", .{shard_count});
@@ -58,6 +80,7 @@ pub fn main() !void {
         try env_map.put("NETRUNNER_TEST_TOTAL", shard_total_text);
         try env_map.put("NETRUNNER_TEST_INDEX", shard_index_text);
         try env_map.put("NETRUNNER_TEST_QUEUE_DIR", queue_dir);
+        try env_map.put(shared_oracle_socket_env, socket_path);
         children[shard_index].env_map = env_map;
 
         try children[shard_index].spawn();
@@ -66,7 +89,10 @@ pub fn main() !void {
 
     var exit_code: u8 = 0;
     for (children[0..started_count]) |*child| {
-        const term = try child.wait();
+        const term = child.wait() catch {
+            exit_code = 1;
+            continue;
+        };
         switch (term) {
             .Exited => |code| {
                 if (code != 0) exit_code = 1;
@@ -78,6 +104,67 @@ pub fn main() !void {
     if (exit_code != 0) std.process.exit(exit_code);
 }
 
+fn resolveSocketPath(allocator: std.mem.Allocator) ![]const u8 {
+    const home = try std.process.getEnvVarOwned(allocator, "HOME");
+    defer allocator.free(home);
+    const dir = try std.fs.path.join(allocator, &.{ home, oracle_dir_name });
+    defer allocator.free(dir);
+    std.fs.makeDirAbsolute(dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    return try std.fs.path.join(allocator, &.{ dir, oracle_socket_name });
+}
+
+fn siblingPath(allocator: std.mem.Allocator, socket_path: []const u8, name: []const u8) ![]const u8 {
+    const dir = std.fs.path.dirname(socket_path) orelse ".";
+    return try std.fs.path.join(allocator, &.{ dir, name });
+}
+
+fn spawnOracle(
+    allocator: std.mem.Allocator,
+    repo_root: []const u8,
+    socket_path: []const u8,
+    pid_path: []const u8,
+) !std.process.Child {
+    // Clean up any stale socket/pid files from previous runs
+    std.fs.deleteFileAbsolute(socket_path) catch {};
+    std.fs.deleteFileAbsolute(pid_path) catch {};
+
+    const argv = [_][]const u8{
+        "mise",
+        "exec",
+        "--",
+        "lein",
+        "run",
+        "-m",
+        "game.parity.oracle",
+        "--unix-server",
+        socket_path,
+    };
+    var child = std.process.Child.init(&argv, allocator);
+    child.cwd = repo_root;
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Inherit;
+    try child.spawn();
+    return child;
+}
+
+fn waitForSocket(socket_path: []const u8) !void {
+    var attempts: usize = 0;
+    while (attempts < 2400) : (attempts += 1) {
+        if (std.net.connectUnixSocket(socket_path)) |stream| {
+            stream.close();
+            return;
+        } else |_| {
+            std.Thread.sleep(50 * std.time.ns_per_ms);
+        }
+    }
+    std.debug.print("error: oracle failed to start at {s} after 120s\n", .{socket_path});
+    return error.OracleStartupFailed;
+}
+
 fn cloneEnvMap(allocator: std.mem.Allocator, src: *const std.process.EnvMap) !std.process.EnvMap {
     var cloned = std.process.EnvMap.init(allocator);
     var it = src.hash_map.iterator();
@@ -85,4 +172,33 @@ fn cloneEnvMap(allocator: std.mem.Allocator, src: *const std.process.EnvMap) !st
         try cloned.put(entry.key_ptr.*, entry.value_ptr.*);
     }
     return cloned;
+}
+
+fn findRepoRoot(allocator: std.mem.Allocator, start_path: []const u8) ![]const u8 {
+    var current = try allocator.dupe(u8, start_path);
+    while (true) {
+        // Check if project.clj exists in current directory
+        var dir = std.fs.openDirAbsolute(current, .{}) catch {
+            allocator.free(current);
+            return error.RepoRootNotFound;
+        };
+        dir.access("project.clj", .{}) catch {
+            dir.close();
+            // Try parent directory
+            const parent = std.fs.path.dirname(current) orelse {
+                allocator.free(current);
+                return error.RepoRootNotFound;
+            };
+            if (std.mem.eql(u8, parent, current)) {
+                allocator.free(current);
+                return error.RepoRootNotFound;
+            }
+            const parent_dup = try allocator.dupe(u8, parent);
+            allocator.free(current);
+            current = parent_dup;
+            continue;
+        };
+        dir.close();
+        return current;
+    }
 }
