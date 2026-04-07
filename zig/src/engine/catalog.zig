@@ -488,29 +488,33 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{.{
             .event = .agenda_scored,
             .handler = &struct {
-                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                fn handle(ctx: *state.EffectContext, pd_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     if (g.corp_discard.items.len == 0) return;
+                    g.systemMsg(.corp, 30035, "Corp uses Haas-Bioroid: Precision Design.", .{});
                     const allocator = g.ephemeralAllocator();
                     var choices: std.ArrayList(state.PromptChoice) = .empty;
                     defer choices.deinit(allocator);
-                    for (g.corp_discard.items, 0..) |card, idx| {
-                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                    for (g.corp_discard.items, 0..) |arc, idx| {
+                        try choices.append(allocator, .{ .kind = .card, .text = arc.title, .card = .{ .title = arc.title, .side = .corp, .index = @intCast(idx) } });
                     }
-                    _ = try finalizeCardChoicePrompt(g, .corp, .precision_design_archive, &choices, "Done", &struct {
+                    if (try finalizeCardChoicePrompt(g, .corp, .precision_design_archive, &choices, "Done", &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
                             cg.corp_prompt_state = null;
                             if (std.mem.eql(u8, choice_text, "Done")) return;
-                            for (cg.corp_discard.items, 0..) |card, idx| {
-                                if (std.mem.eql(u8, card.title, choice_text)) {
+                            for (cg.corp_discard.items, 0..) |arc, idx| {
+                                if (std.mem.eql(u8, arc.title, choice_text)) {
                                     const removed = cg.corp_discard.orderedRemove(idx);
+                                    cg.systemMsg(.corp, 30035, "Corp adds {s} from Archives to HQ.", .{removed.title});
                                     try cg.corp_hand.append(cg.ephemeralAllocator(), removed);
                                     break;
                                 }
                             }
                         }
-                    }.choice);
+                    }.choice)) {
+                        g.corp_prompt_state.?.source_card = pd_card.*;
+                    }
                 }
             }.handle,
         }},
@@ -545,6 +549,7 @@ pub const all_cards = [_]CardSpec{
                 fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     if (g.turn_events.runner_gain_tag_count != 1) return; // first-event? check
+                    g.systemMsg(.corp, 30051, "Corp uses NBN: Reality Plus.", .{});
                     const allocator = g.ephemeralAllocator();
                     var choices: std.ArrayList(state.PromptChoice) = .empty;
                     defer choices.deinit(allocator);
@@ -642,7 +647,7 @@ pub const all_cards = [_]CardSpec{
                     g.runner_prompt_state = .{
                         .prompt_type = .tao_swap_ice,
                         .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = null,
+                        .source_card = g.runner_identity,
                         .min_choices = min,
                         .on_choice = &swapChoice,
                     };
@@ -682,6 +687,7 @@ pub const all_cards = [_]CardSpec{
                     const ice_b = g.corp_servers.items[srv_b].ices.items[idx_b];
                     g.corp_servers.items[srv_a].ices.items[idx_a] = ice_b;
                     g.corp_servers.items[srv_b].ices.items[idx_b] = ice_a;
+                    g.systemMsg(.runner, 30019, "Runner uses T\xc4\x81o Salonga to swap {s} and {s}.", .{ ice_a.title, ice_b.title });
 
                     g.tao_first_ice = null;
                     g.runner_prompt_state = null;
@@ -696,6 +702,7 @@ pub const all_cards = [_]CardSpec{
                         ice_count += server.ices.items.len;
                     }
                     if (ice_count < 2) return;
+                    g.systemMsg(.runner, 30019, "Runner may use T\xc4\x81o Salonga.", .{});
                     try openPrompt(g, g.ephemeralAllocator(), null, 0);
                 }
             };
@@ -1942,6 +1949,7 @@ pub const all_cards = [_]CardSpec{
                     const allocator = g.ephemeralAllocator();
                     const dmg = card.advancement_counter;
                     const yes_text = try std.fmt.allocPrint(allocator, "Trash to do {d} meat damage", .{dmg});
+                    g.systemMsg(.corp, 30061, "Corp may use Clearinghouse.", .{});
                     try beginYesNoAbilityPrompt(g, .corp, .clearinghouse_trash, yes_text, card.instance_id, &struct {
                         fn yes(cg: *Game, iid: u32) anyerror!void {
                             const live = findCardPtrByInstanceId(cg, iid) orelse return;
@@ -1954,6 +1962,7 @@ pub const all_cards = [_]CardSpec{
                             }
                         }
                     }.yes);
+                    g.corp_prompt_state.?.source_card = card.*;
                 }
             }.handle,
         }},
@@ -1991,28 +2000,30 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{.{
             .event = .agenda_scored,
             .handler = &struct {
-                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                fn handle(ctx: *state.EffectContext, ls_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     // Present prompt to trash cards from HQ, then shuffle up to 3 from Archives into R&D
                     const allocator = g.ephemeralAllocator();
                     if (g.corp_hand.items.len == 0 and g.corp_discard.items.len == 0) return;
+                    g.systemMsg(.corp, 30044, "Corp uses Longevity Serum.", .{});
                     // Phase 1: Choose cards from HQ to trash (0 or more, up to hand size)
                     // For simplicity, present as "Done" + each card in hand
                     var choices: std.ArrayList(state.PromptChoice) = .empty;
                     defer choices.deinit(allocator);
-                    for (g.corp_hand.items, 0..) |card, idx| {
-                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                    for (g.corp_hand.items, 0..) |hq_card, idx| {
+                        try choices.append(allocator, .{ .kind = .card, .text = hq_card.title, .card = .{ .title = hq_card.title, .side = .corp, .index = @intCast(idx) } });
                     }
                     try choices.append(allocator, stringChoice("Done"));
                     g.corp_prompt_state = .{
                         .prompt_type = .longevity_serum_trash,
                         .choices = try choices.toOwnedSlice(allocator),
-                        .source_card = null,
+                        .source_card = ls_card.*,
                         .on_choice = &struct {
                             fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                                 const cg = gameFromEffectContext(cctx);
                                 const c_allocator = cg.ephemeralAllocator();
                                 const prompt = cg.corp_prompt_state orelse return error.MissingPrompt;
+                                const saved_source = prompt.source_card;
                                 if (prompt.prompt_type == .longevity_serum_trash) {
                                     if (std.mem.eql(u8, choice_text, "Done")) {
                                         // Move to shuffle phase: choose up to 3 cards from Archives
@@ -2024,14 +2035,14 @@ pub const all_cards = [_]CardSpec{
                                         }
                                         var c_choices: std.ArrayList(state.PromptChoice) = .empty;
                                         defer c_choices.deinit(c_allocator);
-                                        for (cg.corp_discard.items, 0..) |card, idx| {
-                                            try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                        for (cg.corp_discard.items, 0..) |arc_card, idx| {
+                                            try c_choices.append(c_allocator, .{ .kind = .card, .text = arc_card.title, .card = .{ .title = arc_card.title, .side = .corp, .index = @intCast(idx) } });
                                         }
                                         try c_choices.append(c_allocator, stringChoice("Done"));
                                         cg.corp_prompt_state = .{
                                             .prompt_type = .longevity_serum_shuffle,
                                             .choices = try c_choices.toOwnedSlice(c_allocator),
-                                            .source_card = null,
+                                            .source_card = saved_source,
                                             .min_choices = 0,
                                             .on_choice = &@This().choice,
                                         };
@@ -2039,9 +2050,10 @@ pub const all_cards = [_]CardSpec{
                                         return;
                                     }
                                     // Trash chosen card from hand
-                                    for (cg.corp_hand.items, 0..) |card, idx| {
-                                        if (std.mem.eql(u8, card.title, choice_text)) {
+                                    for (cg.corp_hand.items, 0..) |hq_card, idx| {
+                                        if (std.mem.eql(u8, hq_card.title, choice_text)) {
                                             const removed = cg.corp_hand.orderedRemove(idx);
+                                            cg.systemMsg(.corp, 30044, "Corp trashes {s} from HQ.", .{removed.title});
                                             try cg.corp_discard.append(cg.backing_allocator, removed);
                                             break;
                                         }
@@ -2049,14 +2061,14 @@ pub const all_cards = [_]CardSpec{
                                     // Rebuild trash c_choices
                                     var c_choices: std.ArrayList(state.PromptChoice) = .empty;
                                     defer c_choices.deinit(c_allocator);
-                                    for (cg.corp_hand.items, 0..) |card, idx| {
-                                        try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                    for (cg.corp_hand.items, 0..) |hq_card, idx| {
+                                        try c_choices.append(c_allocator, .{ .kind = .card, .text = hq_card.title, .card = .{ .title = hq_card.title, .side = .corp, .index = @intCast(idx) } });
                                     }
                                     try c_choices.append(c_allocator, stringChoice("Done"));
                                     cg.corp_prompt_state = .{
                                         .prompt_type = .longevity_serum_trash,
                                         .choices = try c_choices.toOwnedSlice(c_allocator),
-                                        .source_card = null,
+                                        .source_card = saved_source,
                                         .on_choice = &@This().choice,
                                     };
                                     cg.legal_actions = try promptChoiceActions(c_allocator, .corp, cg.corp_prompt_state.?);
@@ -2071,9 +2083,10 @@ pub const all_cards = [_]CardSpec{
                                         return;
                                     }
                                     // Move chosen card from Archives to R&D
-                                    for (cg.corp_discard.items, 0..) |card, idx| {
-                                        if (std.mem.eql(u8, card.title, choice_text)) {
+                                    for (cg.corp_discard.items, 0..) |arc_card, idx| {
+                                        if (std.mem.eql(u8, arc_card.title, choice_text)) {
                                             const removed = cg.corp_discard.orderedRemove(idx);
+                                            cg.systemMsg(.corp, 30044, "Corp shuffles {s} from Archives into R&D.", .{removed.title});
                                             try cg.corp_deck.append(cg.backing_allocator, removed);
                                             break;
                                         }
@@ -2097,14 +2110,14 @@ pub const all_cards = [_]CardSpec{
                                     // Rebuild shuffle c_choices
                                     var c_choices: std.ArrayList(state.PromptChoice) = .empty;
                                     defer c_choices.deinit(c_allocator);
-                                    for (cg.corp_discard.items, 0..) |card, idx| {
-                                        try c_choices.append(c_allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                                    for (cg.corp_discard.items, 0..) |arc_card, idx| {
+                                        try c_choices.append(c_allocator, .{ .kind = .card, .text = arc_card.title, .card = .{ .title = arc_card.title, .side = .corp, .index = @intCast(idx) } });
                                     }
                                     try c_choices.append(c_allocator, stringChoice("Done"));
                                     cg.corp_prompt_state = .{
                                         .prompt_type = .longevity_serum_shuffle,
                                         .choices = try c_choices.toOwnedSlice(c_allocator),
-                                        .source_card = null,
+                                        .source_card = saved_source,
                                         .min_choices = prompt.min_choices + 1,
                                         .on_choice = &@This().choice,
                                     };
@@ -2147,14 +2160,15 @@ pub const all_cards = [_]CardSpec{
                     if (!same_server) return;
                     // Search R&D for a non-agenda card
                     if (g.corp_deck.items.len == 0) return;
+                    g.systemMsg(.corp, 30066, "Corp uses Malapert Data Vault.", .{});
                     const allocator = g.ephemeralAllocator();
                     var choices: std.ArrayList(state.PromptChoice) = .empty;
                     defer choices.deinit(allocator);
-                    for (g.corp_deck.items, 0..) |card, idx| {
-                        if (card.agenda_points != null) continue;
-                        try choices.append(allocator, .{ .kind = .card, .text = card.title, .card = .{ .title = card.title, .side = .corp, .index = @intCast(idx) } });
+                    for (g.corp_deck.items, 0..) |rnd_card, idx| {
+                        if (rnd_card.agenda_points != null) continue;
+                        try choices.append(allocator, .{ .kind = .card, .text = rnd_card.title, .card = .{ .title = rnd_card.title, .side = .corp, .index = @intCast(idx) } });
                     }
-                    _ = try finalizeCardChoicePrompt(g, .corp, .malapert_search, &choices, "Done", &struct {
+                    if (try finalizeCardChoicePrompt(g, .corp, .malapert_search, &choices, "Done", &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
                             if (std.mem.eql(u8, choice_text, "Done")) {
@@ -2163,15 +2177,18 @@ pub const all_cards = [_]CardSpec{
                             }
                             try shuffleDeck(cg, .corp);
                             const c_allocator = cg.ephemeralAllocator();
-                            for (cg.corp_deck.items, 0..) |card, idx| {
-                                if (std.mem.eql(u8, card.title, choice_text)) {
+                            for (cg.corp_deck.items, 0..) |rnd_card, idx| {
+                                if (std.mem.eql(u8, rnd_card.title, choice_text)) {
                                     const removed = cg.corp_deck.orderedRemove(idx);
+                                    cg.systemMsg(.corp, 30066, "Corp adds {s} from R&D to HQ.", .{removed.title});
                                     try cg.corp_hand.append(c_allocator, removed);
                                     break;
                                 }
                             }
                         }
-                    }.choice);
+                    }.choice)) {
+                        g.corp_prompt_state.?.source_card = self_card.*;
+                    }
                 }
             }.handle,
         }},
@@ -2623,7 +2640,7 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{.{
             .event = .corp_rez_ice,
             .handler = &struct {
-                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                fn handle(ctx: *state.EffectContext, barry_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     // Build choices from runner hand: resources and hardware
                     const allocator = g.ephemeralAllocator();
@@ -2641,6 +2658,7 @@ pub const all_cards = [_]CardSpec{
                         });
                     }
                     if (choices_list.items.len == 0) return;
+                    g.systemMsg(.runner, 35012, "Runner may use Barry.", .{});
                     if (try finalizeCardChoicePrompt(g, .runner, .barry_install, &choices_list, "No action", &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
@@ -2674,6 +2692,7 @@ pub const all_cards = [_]CardSpec{
                             cg.legal_actions = try continueActionsForRunWithRez(c_allocator, .corp, cg.run, cg);
                         }
                     }.choice)) {
+                        g.runner_prompt_state.?.source_card = barry_card.*;
                         g.corp_prompt_state = .{ .prompt_type = .waiting, .choices = &.{}, .source_card = null };
                     }
                 }
@@ -3033,6 +3052,7 @@ pub const all_cards = [_]CardSpec{
                         const g = gameFromEffectContext(ctx);
                         if (g.corp_deck.items.len == 0) return;
                         // Optional: ask corp if they want to spend 2 power counters
+                        g.systemMsg(.corp, 35046, "Corp may use AU Co.", .{});
                         try beginYesNoAbilityPrompt(g, .corp, .au_co_peek, "Look at the top 3 cards of R&D", card.instance_id, &struct {
                             fn yes(cg: *Game, iid: u32) anyerror!void {
                                 const live = findCardPtrByInstanceId(cg, iid) orelse return;
@@ -3042,6 +3062,7 @@ pub const all_cards = [_]CardSpec{
                                 try beginPeekRdTopPrompt(cg, 3, iid);
                             }
                         }.yes);
+                        g.corp_prompt_state.?.source_card = card.*;
                     }
                 }.handle,
             },
@@ -3057,17 +3078,18 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{.{
             .event = .corp_end_turn,
             .handler = &struct {
-                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                fn handle(ctx: *state.EffectContext, pt_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     if (g.corp_hand.items.len > 3) return;
                     if (g.corp_credit < 1) return;
                     const allocator = g.ephemeralAllocator();
                     const adv_choices = try installedCardChoices(allocator, g.corp_servers.items);
                     if (adv_choices.len == 0) return;
+                    g.systemMsg(.corp, 35047, "Corp may use PT Untaian.", .{});
                     var choices_list: std.ArrayList(state.PromptChoice) = .empty;
                     defer choices_list.deinit(allocator);
                     for (adv_choices) |ch| try choices_list.append(allocator, ch);
-                    _ = try finalizeCardChoicePrompt(g, .corp, .pt_untaian_advance, &choices_list, "No action", &struct {
+                    if (try finalizeCardChoicePrompt(g, .corp, .pt_untaian_advance, &choices_list, "No action", &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
                             cg.corp_prompt_state = null;
@@ -3076,7 +3098,9 @@ pub const all_cards = [_]CardSpec{
                             _ = try addAdvancementCounter(cg, choice_text, 1);
                             cg.systemMsg(.corp, 35047, "Corp uses PT Untaian to place 1 advancement counter.", .{});
                         }
-                    }.choice);
+                    }.choice)) {
+                        g.corp_prompt_state.?.source_card = pt_card.*;
+                    }
                 }
             }.handle,
         }},
@@ -3250,7 +3274,7 @@ pub const all_cards = [_]CardSpec{
             .{
                 .event = .corp_install,
                 .handler = &struct {
-                    fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                    fn handle(ctx: *state.EffectContext, bangun_card: *state.CardInstance) anyerror!void {
                         const g = gameFromEffectContext(ctx);
                         const payload = ctx.event orelse return;
                         const iid = payload.target_instance_id orelse return;
@@ -3262,6 +3286,7 @@ pub const all_cards = [_]CardSpec{
                         const allocator = g.ephemeralAllocator();
                         if (std.mem.eql(u8, ct, "Agenda")) {
                             // Offer to turn agenda faceup
+                            g.systemMsg(.corp, 35068, "Corp may use BANGUN.", .{});
                             const yes_text = try std.fmt.allocPrint(allocator, "Turn {s} faceup", .{installed.title});
                             try beginYesNoAbilityPrompt(g, .corp, .bangun_faceup, yes_text, iid, &struct {
                                 fn yes(cg: *Game, yes_iid: u32) anyerror!void {
@@ -3270,6 +3295,7 @@ pub const all_cards = [_]CardSpec{
                                     cg.systemMsg(.corp, 35068, "Corp turns {s} faceup.", .{card_ptr.title});
                                 }
                             }.yes);
+                            g.corp_prompt_state.?.source_card = bangun_card.*;
                         } else {
                             // Bluff prompt for non-agendas
                             g.corp_prompt_state = .{
@@ -3277,6 +3303,7 @@ pub const all_cards = [_]CardSpec{
                                 .choices = try allocator.dupe(state.PromptChoice, &.{
                                     stringChoice("Nothing to see here"),
                                 }),
+                                .source_card = bangun_card.*,
                                 .on_choice = &struct {
                                     fn choice(cctx: *state.EffectContext, _: []const u8) anyerror!void {
                                         const cg = gameFromEffectContext(cctx);
@@ -4013,6 +4040,7 @@ pub const all_cards = [_]CardSpec{
                     if (card.advancement_counter == 0) return;
                     if (!card.rezzed) return;
                     const g = gameFromEffectContext(ctx);
+                    g.systemMsg(.corp, 35061, "Corp may use Idiosyncresis.", .{});
                     try beginYesNoAbilityPrompt(g, .corp, .idiosyncresis_trash, "Trash Idiosyncresis", card.instance_id, &struct {
                         fn yes(cg: *Game, iid: u32) anyerror!void {
                             const live_card = findCardPtrByInstanceId(cg, iid) orelse return;
@@ -4025,6 +4053,7 @@ pub const all_cards = [_]CardSpec{
                             cg.systemMsg(.corp, 35061, "Corp trashes Idiosyncresis: gains {d} [credits], runner loses {d} [credits].", .{ gain, drain });
                         }
                     }.yes);
+                    g.corp_prompt_state.?.source_card = card.*;
                 }
             }.handle,
         }},
@@ -5439,13 +5468,16 @@ pub const all_cards = [_]CardSpec{
                         const install_ctx = g.runner_install_context orelse return;
                         if (install_ctx.install_cost != 0 or g.runner_deck.items.len == 0) return;
                         // Optional: ask runner if they want to host
+                        g.systemMsg(.runner, 35006, "Runner may use Bling.", .{});
                         try beginYesNoAbilityPrompt(g, .runner, .bling_host, "Host the top card of your stack on Bling", card.instance_id, &struct {
                             fn yes(cg: *Game, iid: u32) anyerror!void {
                                 const live = findCardPtrByInstanceId(cg, iid) orelse return;
                                 if (cg.runner_deck.items.len == 0) return;
+                                cg.systemMsg(.runner, 35006, "Runner uses Bling to host top card.", .{});
                                 try hostTopRunnerDeckCard(cg, live);
                             }
                         }.yes);
+                        g.runner_prompt_state.?.source_card = card.*;
                     }
                 }.handle,
             },
@@ -5572,7 +5604,7 @@ pub const all_cards = [_]CardSpec{
         .event_abilities = &.{.{
             .event = .successful_run_ends,
             .handler = &struct {
-                fn handle(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
+                fn handle(ctx: *state.EffectContext, mag_card: *state.CardInstance) anyerror!void {
                     const g = gameFromEffectContext(ctx);
                     if (g.run == null) return;
                     if (g.run.?.server != .hq) return;
@@ -5588,7 +5620,8 @@ pub const all_cards = [_]CardSpec{
                             if (!is_agenda) try choices.append(allocator, .{ .kind = .card, .text = c.title, .card = .{ .title = c.title, .code = c.code, .side = .corp } });
                         }
                     }
-                    _ = try finalizeCardChoicePrompt(g, .runner, .maglectric_derez, &choices, "No action", &struct {
+                    g.systemMsg(.runner, 35019, "Runner may use Maglectric Rapid.", .{});
+                    if (try finalizeCardChoicePrompt(g, .runner, .maglectric_derez, &choices, "No action", &struct {
                         fn choice(cctx: *state.EffectContext, choice_text: []const u8) anyerror!void {
                             const cg = gameFromEffectContext(cctx);
                             if (std.mem.eql(u8, choice_text, "No action")) {
@@ -5622,7 +5655,9 @@ pub const all_cards = [_]CardSpec{
                             }
                             cg.runner_prompt_state = null;
                         }
-                    }.choice);
+                    }.choice)) {
+                        g.runner_prompt_state.?.source_card = mag_card.*;
+                    }
                 }
             }.handle,
         }},
@@ -6199,6 +6234,7 @@ pub const all_cards = [_]CardSpec{
                     // Check if runner has other installed cards (need at least 2 total)
                     const total_installed = g.runner_rig_resources.items.len + g.runner_rig_program.items.len + g.runner_rig_hardware.items.len;
                     if (total_installed < 2) return; // Only Knickknack itself, nothing to trash
+                    g.systemMsg(.runner, 35033, "Runner may use \"Knickknack\" O'Brian.", .{});
                     // Build choices: all other installed runner cards
                     const allocator = g.ephemeralAllocator();
                     var choices: std.ArrayList(state.PromptChoice) = .empty;
