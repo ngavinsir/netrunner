@@ -121,15 +121,48 @@ fn siblingPath(allocator: std.mem.Allocator, socket_path: []const u8, name: []co
     return try std.fs.path.join(allocator, &.{ dir, name });
 }
 
+fn killPreviousOracle(allocator: std.mem.Allocator, pid_path: []const u8) void {
+    // Read PID from file and kill the process
+    var dir = std.fs.openDirAbsolute(std.fs.path.dirname(pid_path) orelse ".", .{}) catch return;
+    defer dir.close();
+    const pid_str = dir.readFileAlloc(allocator, std.fs.path.basename(pid_path), 20) catch return;
+    defer allocator.free(pid_str);
+    const pid = std.fmt.parseInt(std.process.Child.Id, std.mem.trim(u8, pid_str, &std.ascii.whitespace), 10) catch return;
+    const c = @cImport(@cInclude("signal.h"));
+    _ = c.kill(pid, c.SIGTERM);
+    // Poll until the process is gone
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        if (c.kill(pid, 0) != 0) return; // process no longer exists
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+}
+
+fn waitForSocketGone(socket_path: []const u8) void {
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        if (std.net.connectUnixSocket(socket_path)) |stream| {
+            stream.close();
+        } else |_| {
+            return; // can't connect = gone
+        }
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+}
+
 fn spawnOracle(
     allocator: std.mem.Allocator,
     repo_root: []const u8,
     socket_path: []const u8,
     pid_path: []const u8,
 ) !std.process.Child {
-    // Clean up any stale socket/pid files from previous runs
+    // Kill any existing oracle process from a previous run
+    killPreviousOracle(allocator, pid_path);
+    // Clean up stale files
     std.fs.deleteFileAbsolute(socket_path) catch {};
     std.fs.deleteFileAbsolute(pid_path) catch {};
+    // Wait for old socket to stop accepting connections
+    waitForSocketGone(socket_path);
 
     const argv = [_][]const u8{
         "mise",

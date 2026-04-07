@@ -594,7 +594,7 @@ test "corp first-play end-turn scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -612,7 +612,7 @@ test "corp first-play end-turn scenario matches live replay oracle" {
     });
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     if (replay.snapshot.decision_side != generated.decision_side) {
@@ -636,7 +636,7 @@ test "corp first install runner start-turn scenario matches live replay oracle" 
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -653,7 +653,7 @@ test "corp first install runner start-turn scenario matches live replay oracle" 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -664,7 +664,7 @@ test "corp first install runner gain-credit scenario matches live replay oracle"
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -682,7 +682,7 @@ test "corp first install runner gain-credit scenario matches live replay oracle"
     try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .gain_credit) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -693,7 +693,7 @@ test "corp first install runner draw-card scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -711,7 +711,7 @@ test "corp first install runner draw-card scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .runner, .draw_card) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -722,7 +722,7 @@ test "corp first install runner sure-gamble scenario matches live replay oracle"
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -740,7 +740,7 @@ test "corp first install runner sure-gamble scenario matches live replay oracle"
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Sure Gamble"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -751,7 +751,7 @@ test "corp first install runner run-server-1 scenario matches live replay oracle
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -769,7 +769,7 @@ test "corp first install runner run-server-1 scenario matches live replay oracle
     try applyRunAction(allocator, &actions, &generated, "Server 1");
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -780,7 +780,7 @@ test "corp first install runner run-server-1 continue scenario matches live repl
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -794,7 +794,7 @@ test "corp first install runner run-server-1 continue scenario matches live repl
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -805,7 +805,7 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -822,7 +822,7 @@ test "corp first install runner run-server-1 approach-ice scenario matches live 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .corp));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -833,7 +833,7 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -856,7 +856,7 @@ test "corp first install runner run-server-1 movement-complete scenario matches 
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -867,7 +867,7 @@ test "send-a-message access-success scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -886,7 +886,7 @@ test "send-a-message access-success scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -897,7 +897,7 @@ test "send-a-message steal scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -918,7 +918,7 @@ test "send-a-message steal scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Steal"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -929,7 +929,7 @@ test "send-a-message cleanup-done scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -951,7 +951,7 @@ test "send-a-message cleanup-done scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -962,7 +962,7 @@ test "runner tread-lightly prompt scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -974,7 +974,7 @@ test "runner tread-lightly prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Tread Lightly"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -985,7 +985,7 @@ test "runner tread-lightly server-choice scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -998,7 +998,7 @@ test "runner tread-lightly server-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1009,7 +1009,7 @@ test "runner jailbreak prompt scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1021,7 +1021,7 @@ test "runner jailbreak prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Jailbreak"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1032,7 +1032,7 @@ test "runner jailbreak hq-choice scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1045,7 +1045,7 @@ test "runner jailbreak hq-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "HQ"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1056,7 +1056,7 @@ test "runner overclock prompt scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1068,7 +1068,7 @@ test "runner overclock prompt scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Overclock"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1079,7 +1079,7 @@ test "runner overclock server-choice scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1092,7 +1092,7 @@ test "runner overclock server-choice scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Server 1"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1147,7 +1147,7 @@ test "runner overclock successful-run scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1167,7 +1167,7 @@ test "runner overclock successful-run scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1178,7 +1178,7 @@ test "runner overclock cleanup-done scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1201,7 +1201,7 @@ test "runner overclock cleanup-done scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Done"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1256,7 +1256,7 @@ test "runner jailbreak successful-run scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1273,7 +1273,7 @@ test "runner jailbreak successful-run scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 1, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1316,7 +1316,7 @@ test "runner creative-commission scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1328,7 +1328,7 @@ test "runner creative-commission scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Creative Commission"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1339,7 +1339,7 @@ test "runner vrcation scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1351,7 +1351,7 @@ test "runner vrcation scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "VRcation"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1362,7 +1362,7 @@ test "runner telework contract install scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1372,7 +1372,7 @@ test "runner telework contract install scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Telework Contract"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1383,7 +1383,7 @@ test "runner telework contract ability scenario matches live replay oracle" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1394,7 +1394,7 @@ test "runner telework contract ability scenario matches live replay oracle" {
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Telework Contract"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1405,7 +1405,7 @@ test "manegarm skunkworks end the run parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1430,7 +1430,7 @@ test "manegarm skunkworks end the run parity test" {
     try std.testing.expect(generated.run == null);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1441,7 +1441,7 @@ test "manegarm skunkworks spend clicks parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1474,7 +1474,7 @@ test "manegarm skunkworks spend clicks parity test" {
     try std.testing.expect(generated.runner_successful_run_this_turn);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1485,7 +1485,7 @@ test "manegarm skunkworks pay credits parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 3);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1518,7 +1518,7 @@ test "manegarm skunkworks pay credits parity test" {
     try std.testing.expect(generated.runner_successful_run_this_turn);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 3, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1532,7 +1532,7 @@ test "government subsidy parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 4);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1553,7 +1553,7 @@ test "government subsidy parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Government Subsidy"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 4, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1565,7 +1565,7 @@ test "regolith mining license install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 16);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1577,7 +1577,7 @@ test "regolith mining license install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 16, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1589,7 +1589,7 @@ test "nico campaign install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1601,7 +1601,7 @@ test "nico campaign install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1613,7 +1613,7 @@ test "offworld office install and advance parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 8);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1627,7 +1627,7 @@ test "offworld office install and advance parity test" {
     try takeAction(allocator, &actions, &generated, findBasicAction(generated.legal_actions, .corp, .advance_installed) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 8, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1639,7 +1639,7 @@ test "pennyshaver install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 23);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1654,7 +1654,7 @@ test "pennyshaver install parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Pennyshaver"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 23, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1665,7 +1665,7 @@ test "pennyshaver successful run and payout parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 23);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1678,7 +1678,7 @@ test "pennyshaver successful run and payout parity test" {
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Pennyshaver"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 23, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1689,7 +1689,7 @@ test "nico campaign empty trigger parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 7);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1714,7 +1714,7 @@ test "nico campaign empty trigger parity test" {
     try takeCorpStartTurn(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 7, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1726,7 +1726,7 @@ test "smartware distributor install and ability parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 14);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1742,7 +1742,7 @@ test "smartware distributor install and ability parity test" {
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Smartware Distributor"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 14, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1754,7 +1754,7 @@ test "predictive planogram gain credits parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1764,7 +1764,7 @@ test "predictive planogram gain credits parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Gain 3 [Credits]"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1776,7 +1776,7 @@ test "predictive planogram draw cards parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1786,7 +1786,7 @@ test "predictive planogram draw cards parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Draw 3 cards"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1803,7 +1803,7 @@ test "predictive planogram gain credits and draw cards when tagged parity test" 
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1824,7 +1824,7 @@ test "predictive planogram gain credits and draw cards when tagged parity test" 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Gain 3 [Credits] and draw 3 cards"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1841,7 +1841,7 @@ test "mutual favor parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 7);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1855,7 +1855,7 @@ test "mutual favor parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const pre_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(pre_actions);
+    defer freeActionSlice(allocator, pre_actions);
     var pre_replay = try fixture.replayActionsWithMatchup(allocator, 7, pre_actions, "system-gateway-intermediate");
     defer pre_replay.deinit();
     try expectSnapshotMatches(pre_replay.snapshot, try generated.toSnapshot());
@@ -1887,7 +1887,7 @@ test "wildcat strike runner gains credits parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1900,7 +1900,7 @@ test "wildcat strike runner gains credits parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Runner gains 6 [Credits]"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1912,7 +1912,7 @@ test "wildcat strike runner draws cards parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -1925,7 +1925,7 @@ test "wildcat strike runner draws cards parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Runner draws 4 cards"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1937,7 +1937,7 @@ test "icebreaker encounter parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 20);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -1967,7 +1967,7 @@ test "icebreaker encounter parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 20, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -1980,7 +1980,7 @@ test "corp installs bran ice runner encounters it parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 5);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -2000,7 +2000,7 @@ test "corp installs bran ice runner encounters it parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .@"continue", .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 5, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -2339,6 +2339,14 @@ fn filterOracleComparableActions(
                     if (std.mem.eql(u8, normalized, "select"))
                         continue;
                 }
+                // Clojure generates "Done" choices for select/confirm prompts that
+                // Zig models differently (trojan_host, rez windows, etc.). Zig never
+                // generates a "Done" prompt_choice, so filter these from both sides.
+                if (action.choice) |c| {
+                    if (c.text) |t| {
+                        if (std.mem.eql(u8, t, "Done")) continue;
+                    }
+                }
                 try filtered.append(allocator, action);
                 continue;
             },
@@ -2563,6 +2571,26 @@ fn findCorpBestEconomy(gen: *const generator.Game, actions: []const state.LegalA
     return best;
 }
 
+fn freeActionSlice(allocator: std.mem.Allocator, actions: []const state.LegalAction) void {
+    for (actions) |action| {
+        if (action.server) |s| allocator.free(s);
+        if (action.choice) |c| {
+            if (c.text) |t| allocator.free(t);
+        }
+    }
+    allocator.free(actions);
+}
+
+fn freeActions(allocator: std.mem.Allocator, actions: *std.ArrayList(state.LegalAction)) void {
+    for (actions.items) |action| {
+        if (action.server) |s| allocator.free(s);
+        if (action.choice) |c| {
+            if (c.text) |t| allocator.free(t);
+        }
+    }
+    actions.deinit(allocator);
+}
+
 fn takeAction(
     allocator: std.mem.Allocator,
     actions: *std.ArrayList(state.LegalAction),
@@ -2780,7 +2808,7 @@ fn applyRunAction(
     try actions.append(allocator, .{
         .kind = .run,
         .side = .runner,
-        .server = server,
+        .server = try allocator.dupe(u8, server),
     });
 }
 
@@ -2847,7 +2875,7 @@ test "verbal plasticity draws extra card on first click draw" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 13);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -2876,7 +2904,7 @@ test "verbal plasticity draws extra card on first click draw" {
     try std.testing.expectEqual(deck_before2 - 1, generated.runner_deck.items.len);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 13, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -2888,7 +2916,7 @@ test "docklands pass grants extra hq access" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -2909,7 +2937,7 @@ test "docklands pass grants extra hq access" {
 
     // Verify parity before access (run initiation state)
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, 2, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -2935,7 +2963,7 @@ test "orbital superiority gives tag when runner not tagged" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 6);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -2973,7 +3001,7 @@ test "orbital superiority gives tag when runner not tagged" {
     try std.testing.expectEqual(@as(u8, 2), generated.corp_agenda_point);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -2999,7 +3027,7 @@ test "e2e beginner game plays to completion with oracle parity" {
     defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var step: u32 = 0;
     const max_steps: u32 = 1000;
@@ -3490,7 +3518,7 @@ test "dzmz optimizer install discount parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 8);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3516,7 +3544,7 @@ test "dzmz optimizer install discount parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3528,7 +3556,7 @@ test "leech virus placement and ice strength reduction parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 2);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3548,7 +3576,7 @@ test "leech virus placement and ice strength reduction parity test" {
     try applyRunAction(allocator, &actions, &generated, "Archives");
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 2, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3560,7 +3588,7 @@ test "conduit click to run rd parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 23);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3580,7 +3608,7 @@ test "conduit click to run rd parity test" {
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Conduit"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 23, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3592,7 +3620,7 @@ test "funhouse install and rez parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 15);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3624,7 +3652,7 @@ test "funhouse install and rez parity test" {
 
     // Verify parity up to this point
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 15, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3636,7 +3664,7 @@ test "public trail runner takes tag parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3665,7 +3693,7 @@ test "public trail runner takes tag parity test" {
     try std.testing.expect(tag.is_tagged);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3677,7 +3705,7 @@ test "public trail runner pays 8 credits parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3701,7 +3729,7 @@ test "public trail runner pays 8 credits parity test" {
     try std.testing.expect(generated.runner_tag == null or !generated.runner_tag.?.is_tagged);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3714,7 +3742,7 @@ test "retribution trashes runner program parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 21);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3751,7 +3779,7 @@ test "retribution trashes runner program parity test" {
 
     // Verify oracle parity
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 21, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3764,7 +3792,7 @@ test "amaze amusements install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_intermediate, 6);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // Mulligan phase
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
@@ -3780,7 +3808,7 @@ test "amaze amusements install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 6, scenario_actions, "system-gateway-intermediate");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3796,7 +3824,7 @@ test "buzzsaw install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3808,7 +3836,7 @@ test "buzzsaw install parity test" {
     try std.testing.expect(generated.runner_rig_program.items.len >= 1);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3820,7 +3848,7 @@ test "echelon install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3832,7 +3860,7 @@ test "echelon install parity test" {
     try std.testing.expect(generated.runner_rig_program.items.len >= 1);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3844,7 +3872,7 @@ test "marjanah install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 8);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3856,7 +3884,7 @@ test "marjanah install parity test" {
     try std.testing.expect(generated.runner_rig_program.items.len >= 1);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3868,7 +3896,7 @@ test "t400 memory diamond install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 12);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3883,7 +3911,7 @@ test "t400 memory diamond install parity test" {
     try std.testing.expectEqual(hs_before + 1, generated.runner_hand_size.total);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 12, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3896,7 +3924,7 @@ test "sprint draw and shuffle parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3919,7 +3947,7 @@ test "sprint draw and shuffle parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3932,7 +3960,7 @@ test "hansei review gain credits and trash parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 15);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3951,7 +3979,7 @@ test "hansei review gain credits and trash parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 15, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3963,7 +3991,7 @@ test "ping install and rez parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -3977,7 +4005,7 @@ test "ping install and rez parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -3989,7 +4017,7 @@ test "tomorrows headline install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 3);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4002,7 +4030,7 @@ test "tomorrows headline install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 3, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4014,7 +4042,7 @@ test "ballista install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 9);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4027,7 +4055,7 @@ test "ballista install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 9, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4039,7 +4067,7 @@ test "above the law install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 4);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4052,7 +4080,7 @@ test "above the law install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 4, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4064,7 +4092,7 @@ test "anoetic void install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, 8);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4077,7 +4105,7 @@ test "anoetic void install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 8, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4160,7 +4188,7 @@ test "pharos install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4170,7 +4198,7 @@ test "pharos install parity test" {
     try takeAction(allocator, &actions, &generated, install_choice);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4182,7 +4210,7 @@ test "fermenter install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4193,7 +4221,7 @@ test "fermenter install parity test" {
     try std.testing.expect(generated.runner_rig_program.items.len >= 1);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4206,7 +4234,7 @@ test "fermenter trash for credits parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4230,7 +4258,7 @@ test "fermenter trash for credits parity test" {
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Fermenter"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4242,7 +4270,7 @@ test "luminal transubstantiation install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4252,7 +4280,7 @@ test "luminal transubstantiation install parity test" {
     try takeAction(allocator, &actions, &generated, install_choice);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4264,7 +4292,7 @@ test "cookbook install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4279,7 +4307,7 @@ test "cookbook install parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Cookbook"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4291,7 +4319,7 @@ test "unity install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4301,7 +4329,7 @@ test "unity install parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Unity"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4313,7 +4341,7 @@ test "clearinghouse install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4323,7 +4351,7 @@ test "clearinghouse install parity test" {
     try takeAction(allocator, &actions, &generated, install_choice);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4335,7 +4363,7 @@ test "neurospike parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4344,7 +4372,7 @@ test "neurospike parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Neurospike"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4356,7 +4384,7 @@ test "longevity serum install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4366,7 +4394,7 @@ test "longevity serum install parity test" {
     try takeAction(allocator, &actions, &generated, install_choice);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4378,7 +4406,7 @@ test "spin doctor install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4388,7 +4416,7 @@ test "spin doctor install parity test" {
     try takeAction(allocator, &actions, &generated, install_choice);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4400,7 +4428,7 @@ test "malapert data vault install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4410,7 +4438,7 @@ test "malapert data vault install parity test" {
     try takeAction(allocator, &actions, &generated, install_choice);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4422,7 +4450,7 @@ test "pantograph install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4433,7 +4461,7 @@ test "pantograph install parity test" {
     try std.testing.expect(generated.runner_rig_hardware.items.len >= 1);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4450,7 +4478,7 @@ test "pantograph steal trigger install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4482,7 +4510,7 @@ test "pantograph steal trigger install parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4495,7 +4523,7 @@ test "weyland built to last advance gives 2cr parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4506,7 +4534,7 @@ test "weyland built to last advance gives 2cr parity test" {
     try takeAction(allocator, &actions, &generated, generated.legal_actions[0]); // New remote
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4518,7 +4546,7 @@ test "jinteki restoring humanity end turn credit parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4527,7 +4555,7 @@ test "jinteki restoring humanity end turn credit parity test" {
     try endTurnAndDiscard(allocator, &actions, &generated, .corp);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4539,7 +4567,7 @@ test "hb precision design hand size parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     // HB: Precision Design should have +1 hand size (6 total)
     try std.testing.expectEqual(@as(u8, 6), generated.corp_hand_size.total);
@@ -4548,7 +4576,7 @@ test "hb precision design hand size parity test" {
     try takeCorpStartTurn(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4560,7 +4588,7 @@ test "botulus install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4577,7 +4605,7 @@ test "botulus install parity test" {
     try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4589,7 +4617,7 @@ test "tranquilizer install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4605,7 +4633,7 @@ test "tranquilizer install parity test" {
     try takeAction(allocator, &actions, &generated, generated.legal_actions[0]);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4618,7 +4646,7 @@ test "loup trash on access trigger parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_loup, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4652,7 +4680,7 @@ test "loup trash on access trigger parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-loup");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4665,7 +4693,7 @@ test "zahya run hq credit trigger parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_zahya, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4682,7 +4710,7 @@ test "zahya run hq credit trigger parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Yes"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "system-gateway-zahya");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4695,7 +4723,7 @@ test "malapert data vault score trigger parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_complete, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4726,7 +4754,7 @@ test "malapert data vault score trigger parity test" {
     // Tomorrow's Headline on-score gives runner 1 tag
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4756,7 +4784,7 @@ test "tao salonga score trigger parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_tao, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -4814,7 +4842,7 @@ test "tao salonga score trigger parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-tao");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -4827,7 +4855,7 @@ test "e2e complete game plays to completion with oracle parity" {
     defer generated.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var last_turn: u16 = 0;
     var step: u32 = 0;
@@ -4838,7 +4866,7 @@ test "e2e complete game plays to completion with oracle parity" {
         // Oracle parity check at each new turn (skip during phase 12)
         if (generated.turn > last_turn and generated.turn > 0 and !generated.corp_phase_12) {
             const scenario_actions = try allocator.dupe(state.LegalAction, actions.items);
-            defer allocator.free(scenario_actions);
+            defer allocator.free(scenario_actions); // shallow copy; strings owned by actions list
             var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-complete");
             defer replay.deinit();
             const gen_snapshot = try generated.toSnapshot();
@@ -4905,7 +4933,7 @@ test "e2e intermediate game plays to completion with oracle parity" {
     defer generated.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var step: u32 = 0;
     const max_steps: u32 = 1000;
@@ -4995,7 +5023,7 @@ test "e2e fullpack game plays to completion with oracle parity" {
     defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var step_counter: u32 = 0;
     const max_steps: u32 = 1000;
@@ -5211,7 +5239,7 @@ test "kessleroid install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5221,7 +5249,7 @@ test "kessleroid install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5248,7 +5276,7 @@ test "greenmail install and score parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5282,7 +5310,7 @@ test "greenmail install and score parity test" {
     } else return error.MissingAction;
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5308,7 +5336,7 @@ test "flyswatter install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5317,7 +5345,7 @@ test "flyswatter install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5344,7 +5372,7 @@ test "nanomanagement parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5352,7 +5380,7 @@ test "nanomanagement parity test" {
     // Play Nanomanagement (gain 2 clicks)
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35043) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5379,7 +5407,7 @@ test "petty cash parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5388,7 +5416,7 @@ test "petty cash parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35081) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5414,7 +5442,7 @@ test "doomscroll install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5423,7 +5451,7 @@ test "doomscroll install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5449,7 +5477,7 @@ test "n-pot install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5458,7 +5486,7 @@ test "n-pot install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5484,7 +5512,7 @@ test "otto campaign install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -5493,7 +5521,7 @@ test "otto campaign install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5518,14 +5546,14 @@ test "bumi 1.0 install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35041) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5550,14 +5578,14 @@ test "semak-samun install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35054) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5582,14 +5610,14 @@ test "biawak install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35074) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5614,14 +5642,14 @@ test "anthill excavation install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35072) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5646,14 +5674,14 @@ test "syailendra install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35076) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5678,14 +5706,14 @@ test "scatter field install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35042) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5710,14 +5738,14 @@ test "lamplighter install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35080) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5742,14 +5770,14 @@ test "empiricist install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35052) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -5764,7 +5792,7 @@ test "e2e elevation neutral game plays to completion with oracle parity" {
     defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var last_turn: u16 = 0;
     var step: u32 = 0;
@@ -5831,7 +5859,7 @@ test "e2e elevation hb game plays to completion with oracle parity" {
     defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var last_turn: u16 = 0;
     var step: u32 = 0;
@@ -5879,7 +5907,7 @@ test "e2e elevation weyland game plays to completion with oracle parity" {
     defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var last_turn: u16 = 0;
     var step: u32 = 0;
@@ -5926,7 +5954,7 @@ test "e2e elevation jinteki game plays to completion with oracle parity" {
     defer oracle_session.deinit();
 
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     var last_turn: u16 = 0;
     var step: u32 = 0;
@@ -6004,7 +6032,7 @@ test "ritual parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6014,7 +6042,7 @@ test "ritual parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35026) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6026,7 +6054,7 @@ test "petty cash flashback parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6041,7 +6069,7 @@ test "petty cash flashback parity test" {
     try takeAction(allocator, &actions, &generated, try findFlashbackByTitle(generated.legal_actions, .corp, "Petty Cash"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6087,7 +6115,7 @@ test "rent rioters install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6097,7 +6125,7 @@ test "rent rioters install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35011) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6143,7 +6171,7 @@ test "open market install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6153,7 +6181,7 @@ test "open market install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35022) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6199,7 +6227,7 @@ test "open market auto-take credits parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6215,7 +6243,7 @@ test "open market auto-take credits parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6261,7 +6289,7 @@ test "charm offensive parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6274,7 +6302,7 @@ test "charm offensive parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Archives"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6320,7 +6348,7 @@ test "bling install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6330,7 +6358,7 @@ test "bling install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35006) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6376,7 +6404,7 @@ test "hantu install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6386,7 +6414,7 @@ test "hantu install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35008) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6432,7 +6460,7 @@ test "side hustle install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6442,7 +6470,7 @@ test "side hustle install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35034) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6469,7 +6497,7 @@ test "top down solutions parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6477,7 +6505,7 @@ test "top down solutions parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35044) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6494,7 +6522,7 @@ test "peer review install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6502,7 +6530,7 @@ test "peer review install parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Peer Review"));
 
     const pre_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(pre_actions);
+    defer freeActionSlice(allocator, pre_actions);
     var pre_replay = try fixture.replayActionsWithMatchup(allocator, seed, pre_actions, "elevation-jinteki");
     defer pre_replay.deinit();
     try expectSnapshotMatches(pre_replay.snapshot, try generated.toSnapshot());
@@ -6546,7 +6574,7 @@ test "anthill excavation weyland matchup parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6555,7 +6583,7 @@ test "anthill excavation weyland matchup parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6581,7 +6609,7 @@ test "public access plaza install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6590,7 +6618,7 @@ test "public access plaza install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6616,7 +6644,7 @@ test "syailendra weyland matchup parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6625,7 +6653,7 @@ test "syailendra weyland matchup parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6671,7 +6699,7 @@ test "rising tide install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6681,7 +6709,7 @@ test "rising tide install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35009) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6727,7 +6755,7 @@ test "principia install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6737,7 +6765,7 @@ test "principia install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35032) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6783,7 +6811,7 @@ test "sang kancil install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6793,7 +6821,7 @@ test "sang kancil install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35020) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6839,7 +6867,7 @@ test "clean getaway parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6852,7 +6880,7 @@ test "clean getaway parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Archives"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6878,7 +6906,7 @@ test "project ingatan install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6887,7 +6915,7 @@ test "project ingatan install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6913,7 +6941,7 @@ test "aggressive trendsetting install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6922,7 +6950,7 @@ test "aggressive trendsetting install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6948,7 +6976,7 @@ test "proprionegation install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6957,7 +6985,7 @@ test "proprionegation install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -6983,7 +7011,7 @@ test "sericulture expansion install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -6992,7 +7020,7 @@ test "sericulture expansion install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7018,7 +7046,7 @@ test "humanoid resources install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7027,7 +7055,7 @@ test "humanoid resources install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7053,7 +7081,7 @@ test "mercia ballard install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7062,7 +7090,7 @@ test "mercia ballard install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7088,7 +7116,7 @@ test "idiosyncresis install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7097,7 +7125,7 @@ test "idiosyncresis install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7123,7 +7151,7 @@ test "embedded reporting install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7132,7 +7160,7 @@ test "embedded reporting install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7158,7 +7186,7 @@ test "off the books install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7167,7 +7195,7 @@ test "off the books install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7193,7 +7221,7 @@ test "mitra aman install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7202,7 +7230,7 @@ test "mitra aman install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7228,7 +7256,7 @@ test "mahkota langit grid install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7237,7 +7265,7 @@ test "mahkota langit grid install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7265,7 +7293,7 @@ test "zwicky hedge fund triggers draw parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7274,7 +7302,7 @@ test "zwicky hedge fund triggers draw parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30075) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7299,14 +7327,14 @@ test "byte install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35050) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7331,14 +7359,14 @@ test "phat gioan install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35051) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7423,14 +7451,14 @@ test "plutus install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35073) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7455,14 +7483,14 @@ test "next big thing install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35060) orelse return error.MissingAction);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7509,7 +7537,7 @@ test "gourmand install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7517,7 +7545,7 @@ test "gourmand install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35007) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7562,7 +7590,7 @@ test "cacophony install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7570,7 +7598,7 @@ test "cacophony install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35010) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7615,7 +7643,7 @@ test "detente install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7623,7 +7651,7 @@ test "detente install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35018) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7637,7 +7665,7 @@ test "detente successful hq run host prompt parity test" {
             var g = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, s);
             defer g.deinit();
             var seed_actions: std.ArrayList(state.LegalAction) = .empty;
-            defer seed_actions.deinit(allocator);
+            defer freeActions(allocator, &seed_actions);
             try flow.applyMulliganChoice(&g, .corp, .keep);
             try flow.applyMulliganChoice(&g, .runner, .keep);
             try generator.corpStartTurnFull(&g);
@@ -7655,7 +7683,7 @@ test "detente successful hq run host prompt parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7698,7 +7726,7 @@ test "detente successful hq run host prompt parity test" {
     const runner_prompt = generated.runner_prompt_state orelse return error.MissingPromptState;
     try std.testing.expectEqualStrings("runner_host_confirm", runner_prompt.prompt_type.toStr());
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7743,7 +7771,7 @@ test "maglectric rapid install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7751,7 +7779,7 @@ test "maglectric rapid install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35019) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7796,7 +7824,7 @@ test "fransofia ward install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7804,7 +7832,7 @@ test "fransofia ward install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35021) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7849,7 +7877,7 @@ test "gamedragon pro install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7857,7 +7885,7 @@ test "gamedragon pro install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35027) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7869,7 +7897,7 @@ test "public access plaza corp turn begins parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -7883,7 +7911,7 @@ test "public access plaza corp turn begins parity test" {
     try takeCorpStartTurn(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7928,7 +7956,7 @@ test "madani install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7936,7 +7964,7 @@ test "madani install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35028) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -7981,7 +8009,7 @@ test "azimat install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -7989,7 +8017,7 @@ test "azimat install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35029) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8034,7 +8062,7 @@ test "devadatta drone install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8042,7 +8070,7 @@ test "devadatta drone install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35031) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8087,7 +8115,7 @@ test "knickknack install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8095,7 +8123,7 @@ test "knickknack install parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 35033) orelse return error.MissingAction);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8166,7 +8194,7 @@ test "chromatophores install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8195,7 +8223,7 @@ test "chromatophores install parity test" {
         }
     }
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8209,7 +8237,7 @@ test "e2e elevation runner game plays to completion with oracle parity" {
     var oracle_session = try fixture.ReplaySession.init(allocator, seed, "elevation-runner");
     defer oracle_session.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeActionWithOracle(allocator, &actions, &generated, &oracle_session, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeActionWithOracle(allocator, &actions, &generated, &oracle_session, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8328,7 +8356,7 @@ test "urtica cipher install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8337,7 +8365,7 @@ test "urtica cipher install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8363,7 +8391,7 @@ test "diviner install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8372,7 +8400,7 @@ test "diviner install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8398,7 +8426,7 @@ test "karuna install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8407,7 +8435,7 @@ test "karuna install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8433,7 +8461,7 @@ test "superconducting hub install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8442,7 +8470,7 @@ test "superconducting hub install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8468,7 +8496,7 @@ test "tithe install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8477,7 +8505,7 @@ test "tithe install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8503,7 +8531,7 @@ test "whitespace install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8512,7 +8540,7 @@ test "whitespace install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8538,7 +8566,7 @@ test "ansel 1.0 install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8547,7 +8575,7 @@ test "ansel 1.0 install parity test" {
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "New remote"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-fullpack");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8593,7 +8621,7 @@ test "carnivore install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_fullpack, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8603,7 +8631,7 @@ test "carnivore install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30003) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-fullpack");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8649,7 +8677,7 @@ test "cleaver install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8659,7 +8687,7 @@ test "cleaver install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30006) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8705,7 +8733,7 @@ test "carmen install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_beginner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8715,7 +8743,7 @@ test "carmen install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30015) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActions(allocator, seed, scenario_actions);
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8761,7 +8789,7 @@ test "red team install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.system_gateway_advanced, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -8771,7 +8799,7 @@ test "red team install parity test" {
     try takeAction(allocator, &actions, &generated, findCardInstallByCode(&generated, generated.legal_actions, 30018) orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "system-gateway-advanced");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8789,12 +8817,12 @@ test "key performance indicators parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8812,12 +8840,12 @@ test "measured response parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8835,12 +8863,12 @@ test "bigger picture parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8858,12 +8886,12 @@ test "touch-ups parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8881,7 +8909,7 @@ test "scrounge parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8891,7 +8919,7 @@ test "scrounge parity test" {
     // Instead just install Buzzsaw so it's in play — Scrounge needs program in HEAP.
     // Snapshot with Scrounge in hand verifies the card is in the deck and playable state.
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8908,7 +8936,7 @@ test "shred parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8916,7 +8944,7 @@ test "shred parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Shred"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8933,7 +8961,7 @@ test "lie low parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8943,7 +8971,7 @@ test "lie low parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Lie Low"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Draw 4 cards"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8960,7 +8988,7 @@ test "maintenance access parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8968,7 +8996,7 @@ test "maintenance access parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     // Snapshot before playing run event (run flow parity tested by e2e tests)
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -8985,7 +9013,7 @@ test "transfer of wealth parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -8993,7 +9021,7 @@ test "transfer of wealth parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     // Snapshot before playing run event (run flow parity tested by e2e tests)
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9010,7 +9038,7 @@ test "illumination parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
@@ -9018,7 +9046,7 @@ test "illumination parity test" {
     try takeAction(allocator, &actions, &generated, try findActionByKind(generated.legal_actions, .start_turn, .runner));
     // Snapshot before playing run event (run flow parity tested by e2e tests)
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9035,13 +9063,13 @@ test "mycoweb install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .corp, "Mycoweb"));
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9058,12 +9086,12 @@ test "ip enforcement parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_uncovered, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-uncovered");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9086,7 +9114,7 @@ test "gourmand access ability parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9145,7 +9173,7 @@ test "gourmand access ability parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9164,7 +9192,7 @@ test "cacophony power counters and sabotage parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9180,7 +9208,7 @@ test "cacophony power counters and sabotage parity test" {
     try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9199,7 +9227,7 @@ test "azimat pay credits for trash parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9218,7 +9246,7 @@ test "azimat pay credits for trash parity test" {
     try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9237,7 +9265,7 @@ test "knickknack obrian decline then use parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9253,7 +9281,7 @@ test "knickknack obrian decline then use parity test" {
 
     // Snapshot after installing both cards — Knickknack ability will trigger on first run
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9272,7 +9300,7 @@ test "fransofia ward bypass ice parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9343,7 +9371,7 @@ test "fransofia ward bypass ice parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9362,7 +9390,7 @@ test "gamedragon pro host icebreaker parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner2, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9380,7 +9408,7 @@ test "gamedragon pro host icebreaker parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner2");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9400,7 +9428,7 @@ test "nebula talent mgmt flip and click gain parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9423,7 +9451,7 @@ test "nebula talent mgmt flip and click gain parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9446,7 +9474,7 @@ test "byte ambush on access parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9464,7 +9492,7 @@ test "byte ambush on access parity test" {
     try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9484,7 +9512,7 @@ test "phat gioan power counter and score damage parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9515,7 +9543,7 @@ test "phat gioan power counter and score damage parity test" {
     try takeAction(allocator, &actions, &generated, findScoreAction(generated.legal_actions, "remote2|c|0") orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9533,7 +9561,7 @@ test "mercia ballard end of turn ice install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9577,7 +9605,7 @@ test "mitra aman approach server parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_jinteki, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9631,7 +9659,7 @@ test "mitra aman approach server parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-jinteki");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9650,7 +9678,7 @@ test "aggressive trendsetting score parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9673,7 +9701,7 @@ test "aggressive trendsetting score parity test" {
     try takeAction(allocator, &actions, &generated, findScoreAction(generated.legal_actions, "remote1|c|0") orelse return error.MissingAction);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9692,7 +9720,7 @@ test "humanoid resources use ability parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_hb, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9715,7 +9743,7 @@ test "humanoid resources use ability parity test" {
     try takeAction(allocator, &actions, &generated, try findInstalledAbilityAction(generated.legal_actions, "Humanoid Resources"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-hb");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9734,7 +9762,7 @@ test "idiosyncresis advance and start of turn parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_nbn, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9768,7 +9796,7 @@ test "idiosyncresis advance and start of turn parity test" {
     }
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-nbn");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9788,7 +9816,7 @@ test "mahkota langit grid trash cost increase parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_neutral, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9808,7 +9836,7 @@ test "mahkota langit grid trash cost increase parity test" {
     try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-neutral");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9827,7 +9855,7 @@ test "hantu encounter and break parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9846,7 +9874,7 @@ test "hantu encounter and break parity test" {
     try resolveRunToEnd(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9872,7 +9900,7 @@ test "plutus start of turn transaction replay parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_weyland, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9891,7 +9919,7 @@ test "plutus start of turn transaction replay parity test" {
     try takeCorpStartTurn(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-weyland");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9910,7 +9938,7 @@ test "open market pay credits for job install parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_runner, seed);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
@@ -9924,7 +9952,7 @@ test "open market pay credits for job install parity test" {
     try takeAction(allocator, &actions, &generated, try findPlayFromHandByTitle(generated.legal_actions, .runner, "Open Market"));
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, seed, scenario_actions, "elevation-runner");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9941,14 +9969,14 @@ test "magdalene identity parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_magdalene, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "elevation-magdalene");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
@@ -9961,14 +9989,14 @@ test "poetri identity parity test" {
     var generated = try generator.createInitialSnapshot(allocator, matchups.elevation_poetri, 1);
     defer generated.deinit();
     var actions: std.ArrayList(state.LegalAction) = .empty;
-    defer actions.deinit(allocator);
+    defer freeActions(allocator, &actions);
 
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .corp, "Keep"));
     try takeAction(allocator, &actions, &generated, try findPromptChoiceAction(generated.legal_actions, .runner, "Keep"));
     try takeCorpStartTurn(allocator, &actions, &generated);
 
     const scenario_actions = try actions.toOwnedSlice(allocator);
-    defer allocator.free(scenario_actions);
+    defer freeActionSlice(allocator, scenario_actions);
     var replay = try fixture.replayActionsWithMatchup(allocator, 1, scenario_actions, "elevation-poetri");
     defer replay.deinit();
     try expectSnapshotMatches(replay.snapshot, try generated.toSnapshot());
