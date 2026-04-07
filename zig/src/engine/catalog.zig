@@ -3283,10 +3283,10 @@ pub const all_cards = [_]CardSpec{
                         const installed = findCardPtrByInstanceId(g, iid) orelse return;
                         const ct = installed.card_type orelse return;
                         if (std.mem.eql(u8, ct, "ICE")) return;
+                        g.systemMsg(.corp, 35068, "Corp may use BANGUN.", .{});
                         const allocator = g.ephemeralAllocator();
                         if (std.mem.eql(u8, ct, "Agenda")) {
                             // Offer to turn agenda faceup
-                            g.systemMsg(.corp, 35068, "Corp may use BANGUN.", .{});
                             const yes_text = try std.fmt.allocPrint(allocator, "Turn {s} faceup", .{installed.title});
                             try beginYesNoAbilityPrompt(g, .corp, .bangun_faceup, yes_text, iid, &struct {
                                 fn yes(cg: *Game, yes_iid: u32) anyerror!void {
@@ -4576,6 +4576,7 @@ pub const all_cards = [_]CardSpec{
         fn play(ctx: *state.EffectContext, _: *state.CardInstance) anyerror!void {
             const g = gameFromEffectContext(ctx);
             g.corp_click += 2;
+            g.systemMsg(.corp, 35043, "Corp uses Nanomanagement to gain 2 [clicks].", .{});
         }
     }.play }} },
     .{
