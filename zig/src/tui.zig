@@ -7,6 +7,10 @@ const Cell = vaxis.Cell;
 const Segment = Cell.Segment;
 const Window = vaxis.Window;
 
+fn defaultIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 // Restore terminal on panic so it doesn't stay wonky
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
     vaxis.recover();
@@ -72,6 +76,7 @@ const log_row_no_entry: usize = std.math.maxInt(usize); // sentinel: no log entr
 var log_row_entry: [256]usize = [_]usize{log_row_no_entry} ** 256; // row -> log_entries index
 var log_row_entry_count: u16 = 0; // how many rows are mapped
 var action_replay: ?replay.Replay = null; // action history for save/load
+var app_io: std.Io = undefined;
 
 const ScreenMode = enum { menu, playing, game_over };
 var current_screen: ScreenMode = .menu;
@@ -508,7 +513,7 @@ fn try_render_card_image(win: Window, code: c_int, start_row: u16) u16 {
 }
 
 fn notify_image_ready() void {
-    event_loop.postEvent(.image_ready);
+    event_loop.postEvent(.image_ready) catch {};
 }
 
 fn vaxis_free_image(img_id: u32) void {
@@ -518,9 +523,10 @@ fn vaxis_free_image(img_id: u32) void {
 /// Called on background thread — downloads if needed, then loads PNG into vaxis.
 /// Sync load (main thread) — transmit cached PNG to terminal via file path.
 fn vaxis_sync_load(code: c_int) ?u32 {
+    const io = defaultIo();
     var path_buf: [256]u8 = undefined;
     const dest_path = std.fmt.bufPrint(&path_buf, "{s}/{d}.png", .{ cache_dir, code }) catch return null;
-    std.fs.cwd().access(dest_path, .{}) catch return null;
+    std.Io.Dir.cwd().access(io, dest_path, .{}) catch return null;
     const img = vx_ptr.transmitLocalImagePath(alloc_ptr, writer_ptr, dest_path, 0, 0, .file, .png) catch return null;
     return img.id;
 }
@@ -528,36 +534,42 @@ fn vaxis_sync_load(code: c_int) ?u32 {
 /// Async load (background thread) — download + convert only, no terminal writes.
 /// Returns a sentinel (1) on success to signal the file is ready for sync_load.
 fn vaxis_async_load(code: c_int) ?u32 {
+    const io = app_io;
     const dest_path = std.fmt.allocPrint(alloc_ptr, "{s}/{d}.png", .{ cache_dir, code }) catch return null;
     defer alloc_ptr.free(dest_path);
 
     // Download if not cached
-    std.fs.cwd().access(dest_path, .{}) catch {
+    std.Io.Dir.cwd().access(io, dest_path, .{}) catch {
         var url_buf: [256]u8 = undefined;
         const url_len = api.netrunner_card_image_url(code, &url_buf, url_buf.len);
         if (url_len <= 0) return null;
 
         const tmp_path = std.fmt.allocPrint(alloc_ptr, "{s}.webp", .{dest_path}) catch return null;
         defer alloc_ptr.free(tmp_path);
-        var dl = std.process.Child.init(
-            &.{ "curl", "-sL", "-o", tmp_path, url_buf[0..@intCast(url_len)] },
-            alloc_ptr,
-        );
-        dl.stdin_behavior = .Close;
-        dl.stdout_behavior = .Close;
-        dl.stderr_behavior = .Close;
-        const dl_term = dl.spawnAndWait() catch return null;
-        if (dl_term.Exited != 0) return null;
+        var dl = std.process.spawn(io, .{
+            .argv = &.{ "curl", "-sL", "-o", tmp_path, url_buf[0..@intCast(url_len)] },
+            .stdin = .close,
+            .stdout = .close,
+            .stderr = .close,
+        }) catch return null;
+        defer dl.kill(io);
+        const dl_term = dl.wait(io) catch return null;
+        switch (dl_term) {
+            .exited => |exit_code| if (exit_code != 0) return null,
+            else => return null,
+        }
 
-        var conv = std.process.Child.init(
-            &.{ "sips", "-s", "format", "png", tmp_path, "--out", dest_path },
-            alloc_ptr,
-        );
-        conv.stdin_behavior = .Close;
-        conv.stdout_behavior = .Close;
-        conv.stderr_behavior = .Close;
-        _ = conv.spawnAndWait() catch {};
-        std.fs.cwd().deleteFile(tmp_path) catch {};
+        var conv = std.process.spawn(io, .{
+            .argv = &.{ "sips", "-s", "format", "png", tmp_path, "--out", dest_path },
+            .stdin = .close,
+            .stdout = .close,
+            .stderr = .close,
+        }) catch null;
+        if (conv) |*child| {
+            defer child.kill(io);
+            _ = child.wait(io) catch {};
+        }
+        std.Io.Dir.cwd().deleteFile(io, tmp_path) catch {};
     };
 
     // Return sentinel — actual transmit happens in sync_load on main thread
@@ -1105,7 +1117,7 @@ fn handle_menu_key(key: vaxis.Key) bool {
 }
 
 fn start_game() void {
-    start_game_with(@intCast(menu_selection), @bitCast(std.time.milliTimestamp()));
+    start_game_with(@intCast(menu_selection), @bitCast(std.Io.Clock.real.now(app_io).toMilliseconds()));
 }
 
 fn start_game_with(matchup: c_int, seed: u64) void {
@@ -1194,7 +1206,7 @@ var save_status_buf: [256]u8 = undefined;
 
 fn save_game() void {
     if (action_replay) |*r| {
-        const ts: u64 = @bitCast(std.time.milliTimestamp());
+        const ts: u64 = @bitCast(std.Io.Clock.real.now(app_io).toMilliseconds());
         var path_buf: [256]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buf, "{s}/{d}.txt", .{ save_dir, ts }) catch {
             status_msg = "Save failed";
@@ -1209,12 +1221,13 @@ fn save_game() void {
 }
 
 fn find_latest_save() ?[]const u8 {
-    var dir = std.fs.cwd().openDir(save_dir, .{ .iterate = true }) catch return null;
-    defer dir.close();
+    const io = defaultIo();
+    var dir = std.Io.Dir.cwd().openDir(io, save_dir, .{ .iterate = true }) catch return null;
+    defer dir.close(io);
     var latest_name: ?[]const u8 = null;
     var latest_buf: [256]u8 = undefined;
     var iter = dir.iterate();
-    while (iter.next() catch null) |entry| {
+    while (iter.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".txt")) continue;
         // Only match timestamp filenames (digits + .txt)
@@ -1313,11 +1326,13 @@ fn apply_selected_action(h: ?*anyopaque) void {
 // Main
 // ============================================================
 
-pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+pub fn main(init: std.process.Init) !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     alloc_ptr = allocator;
+    const io = init.io;
+    app_io = io;
 
     frame_arena = std.heap.ArenaAllocator.init(allocator);
     defer frame_arena.deinit();
@@ -1326,34 +1341,37 @@ pub fn main() !void {
     defer log_alloc.deinit();
 
     // Setup directories
-    const home = std.posix.getenv("HOME") orelse "/tmp";
+    const home = init.minimal.environ.getAlloc(allocator, "HOME") catch |err| switch (err) {
+        error.EnvironmentVariableMissing => try allocator.dupe(u8, "/tmp"),
+        else => return err,
+    };
+    defer allocator.free(home);
     cache_dir = std.fmt.allocPrint(allocator, "{s}/.cache/netrunner-tui/images", .{home}) catch "/tmp/netrunner-tui";
     defer allocator.free(cache_dir);
-    std.fs.cwd().makePath(cache_dir) catch {};
+    std.Io.Dir.cwd().createDirPath(io, cache_dir) catch {};
     save_dir = std.fmt.allocPrint(allocator, "{s}/.netrunner-saves", .{home}) catch "/tmp";
     defer allocator.free(save_dir);
-    std.fs.cwd().makePath(save_dir) catch {};
+    std.Io.Dir.cwd().createDirPath(io, save_dir) catch {};
 
     var tty_buf: [4096]u8 = undefined;
-    var tty: vaxis.Tty = try .init(&tty_buf);
+    var tty: vaxis.Tty = try .init(io, &tty_buf);
     defer tty.deinit();
 
-    var vx: vaxis.Vaxis = try .init(allocator, .{});
+    var vx: vaxis.Vaxis = try .init(io, allocator, init.environ_map, .{});
     defer vx.deinit(allocator, tty.writer());
     vx_ptr = &vx;
 
     const writer = tty.writer();
     writer_ptr = writer;
 
-    var loop: vaxis.Loop(Event) = .{ .vaxis = &vx, .tty = &tty };
-    try loop.init();
+    var loop: vaxis.Loop(Event) = .init(io, &tty, &vx);
     try loop.start();
     defer loop.stop();
     event_loop = &loop;
 
     try vx.enterAltScreen(writer);
     try vx.setMouseMode(writer, true);
-    try vx.queryTerminal(writer, 1 * std.time.ns_per_s);
+    try vx.queryTerminal(writer, .fromSeconds(1));
 
     // Initialize image loader:
     // - load_fn (main thread): transmit cached PNG path to terminal (fast)
@@ -1367,7 +1385,7 @@ pub fn main() !void {
 
     while (true) {
         // Always block — background thread posts image_ready event when done
-        const event = loop.nextEvent();
+        const event = try loop.nextEvent();
         if (handle_event(event, allocator, &vx, writer)) break;
 
         _ = frame_arena.reset(.retain_capacity);

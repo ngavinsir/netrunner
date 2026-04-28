@@ -9,6 +9,8 @@ These rules apply to the Zig engine migration work in this repository.
 - Use the latest stable Zig release pinned in [`.mise.toml`](/Users/ngavinsir/project/ngavinsir/netrunner/.mise.toml).
 - Do not depend on Zig `master` for core engine work unless there is a concrete blocker in stable.
 - Treat Zig upgrades as explicit maintenance work, not incidental drift.
+- To check whether Zig code compiles, run `zig build check` from the repository root.
+- To run the full Zig test suite, run `zig build test-sharded` from the [`zig/`](/Users/ngavinsir/project/ngavinsir/netrunner/zig) directory.
 
 ### Type Selection
 

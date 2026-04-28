@@ -6,16 +6,21 @@ pub const std_options: std.Options = .{
     .logFn = log,
 };
 
+fn defaultIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 var log_err_count: usize = 0;
 const queue_file_name = "next-index";
 const queue_lock_name = "next-index.lock";
 
-pub fn main() void {
+pub fn main(init: std.process.Init.Minimal) void {
     @disableInstrumentation();
 
-    const args = std.process.argsAlloc(std.heap.page_allocator) catch
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const args = collectArgs(arena.allocator(), init.args) catch
         @panic("unable to parse command line args");
-    defer std.process.argsFree(std.heap.page_allocator, args);
 
     for (args[1..]) |arg| {
         if (std.mem.startsWith(u8, arg, "--seed=")) {
@@ -28,15 +33,26 @@ pub fn main() void {
         }
     }
 
-    mainTerminal();
+    mainTerminal(init.environ);
 }
 
-fn mainTerminal() void {
+fn collectArgs(allocator: std.mem.Allocator, args: std.process.Args) ![]const []const u8 {
+    var iter = try std.process.Args.Iterator.initAllocator(args, allocator);
+    defer iter.deinit();
+
+    var result: std.ArrayListUnmanaged([]const u8) = .empty;
+    while (iter.next()) |arg| {
+        try result.append(allocator, try allocator.dupe(u8, arg));
+    }
+    return try result.toOwnedSlice(allocator);
+}
+
+fn mainTerminal(environ: std.process.Environ) void {
     @disableInstrumentation();
 
-    const shard_total = readShardEnv("NETRUNNER_TEST_TOTAL") orelse 1;
-    const shard_index = readShardEnv("NETRUNNER_TEST_INDEX") orelse 0;
-    const queue_dir = readShardPathEnv("NETRUNNER_TEST_QUEUE_DIR");
+    const shard_total = readShardEnv(environ, "NETRUNNER_TEST_TOTAL") orelse 1;
+    const shard_index = readShardEnv(environ, "NETRUNNER_TEST_INDEX") orelse 0;
+    const queue_dir = readShardPathEnv(environ, "NETRUNNER_TEST_QUEUE_DIR");
     if (shard_total == 0) @panic("NETRUNNER_TEST_TOTAL must be greater than zero");
     if (shard_index >= shard_total) @panic("NETRUNNER_TEST_INDEX must be less than NETRUNNER_TEST_TOTAL");
 
@@ -46,7 +62,7 @@ fn mainTerminal() void {
     defer std.heap.page_allocator.free(ordered_indices);
     const striped_count = initialStripedCount(ordered_indices.len, shard_total);
     var striped_cursor = shard_index;
-    const shard_start_ns = std.time.nanoTimestamp();
+    const shard_start = std.Io.Clock.Timestamp.now(defaultIo(), .awake);
 
     var ok_count: usize = 0;
     var skip_count: usize = 0;
@@ -55,7 +71,7 @@ fn mainTerminal() void {
     var leaks: usize = 0;
     var total_log_err_count: usize = 0;
     var processed_count: usize = 0;
-    const have_tty = std.fs.File.stderr().isTty();
+    const have_tty = std.Io.File.stderr().isTty(defaultIo()) catch false;
 
     while (claimScheduledIndex(queue_dir, shard_total, &striped_cursor, striped_count, ordered_indices.len)) |ordered_index| {
         const global_index = ordered_indices[ordered_index];
@@ -100,7 +116,7 @@ fn mainTerminal() void {
                     std.debug.print("FAIL ({s})\n", .{@errorName(err)});
                 }
                 if (@errorReturnTrace()) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
+                    std.debug.dumpErrorReturnTrace(trace);
                 }
             },
         }
@@ -112,7 +128,7 @@ fn mainTerminal() void {
         fuzz_count += @intFromBool(is_fuzz_test);
     }
 
-    const elapsed_ms = @divFloor(std.time.nanoTimestamp() - shard_start_ns, std.time.ns_per_ms);
+    const elapsed_ms = shard_start.untilNow(defaultIo()).raw.toMilliseconds();
     if (ok_count == processed_count) {
         std.debug.print(
             "[shard {d}/{d}] All {d} claimed tests passed in {d}ms.\n",
@@ -145,9 +161,9 @@ fn mainTerminal() void {
     }
 }
 
-fn readShardEnv(name: []const u8) ?usize {
-    const value = std.process.getEnvVarOwned(std.heap.page_allocator, name) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => return null,
+fn readShardEnv(environ: std.process.Environ, name: []const u8) ?usize {
+    const value = environ.getAlloc(std.heap.page_allocator, name) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => return null,
         else => @panic("unable to read shard environment variable"),
     };
     defer std.heap.page_allocator.free(value);
@@ -156,9 +172,9 @@ fn readShardEnv(name: []const u8) ?usize {
         @panic("unable to parse shard environment variable");
 }
 
-fn readShardPathEnv(name: []const u8) ?[]u8 {
-    return std.process.getEnvVarOwned(std.heap.page_allocator, name) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
+fn readShardPathEnv(environ: std.process.Environ, name: []const u8) ?[]u8 {
+    return environ.getAlloc(std.heap.page_allocator, name) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => null,
         else => @panic("unable to read shard path environment variable"),
     };
 }
@@ -188,9 +204,9 @@ fn claimQueuedIndex(queue_dir: ?[]const u8, start_index: usize, total_tests: usi
     ensureQueueDir(dir_path) catch @panic("unable to create test queue directory");
 
     const lock_file = openQueueLockFile(dir_path) catch @panic("unable to open test queue lock");
-    defer lock_file.close();
-    lock_file.lock(.exclusive) catch @panic("unable to lock test queue");
-    defer lock_file.unlock();
+    defer lock_file.close(defaultIo());
+    lock_file.lock(defaultIo(), .exclusive) catch @panic("unable to lock test queue");
+    defer lock_file.unlock(defaultIo());
 
     const next_index = readNextIndex(dir_path, start_index) catch @panic("unable to read test queue");
     if (next_index >= total_tests) return null;
@@ -235,30 +251,32 @@ fn initialStripedCount(total_tests: usize, shard_total: usize) usize {
 }
 
 fn ensureQueueDir(dir_path: []const u8) !void {
+    const io = defaultIo();
     if (std.fs.path.isAbsolute(dir_path)) {
-        std.fs.makeDirAbsolute(dir_path) catch |err| switch (err) {
+        std.Io.Dir.createDirAbsolute(io, dir_path, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
         return;
     }
-    try std.fs.cwd().makePath(dir_path);
+    try std.Io.Dir.cwd().createDirPath(io, dir_path);
 }
 
-fn openQueueLockFile(dir_path: []const u8) !std.fs.File {
+fn openQueueLockFile(dir_path: []const u8) !std.Io.File {
+    const io = defaultIo();
     if (std.fs.path.isAbsolute(dir_path)) {
         const lock_path = try std.fs.path.join(std.heap.page_allocator, &.{ dir_path, queue_lock_name });
         defer std.heap.page_allocator.free(lock_path);
-        return try std.fs.createFileAbsolute(lock_path, .{
+        return try std.Io.Dir.createFileAbsolute(io, lock_path, .{
             .read = true,
             .exclusive = false,
             .truncate = false,
         });
     }
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
-    return try dir.createFile(queue_lock_name, .{
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
+    return try dir.createFile(io, queue_lock_name, .{
         .read = true,
         .exclusive = false,
         .truncate = false,
@@ -266,25 +284,28 @@ fn openQueueLockFile(dir_path: []const u8) !std.fs.File {
 }
 
 fn readNextIndex(dir_path: []const u8, default_index: usize) !usize {
+    const io = defaultIo();
     if (std.fs.path.isAbsolute(dir_path)) {
         const file_path = try std.fs.path.join(std.heap.page_allocator, &.{ dir_path, queue_file_name });
         defer std.heap.page_allocator.free(file_path);
 
-        const file = std.fs.openFileAbsolute(file_path, .{}) catch |err| switch (err) {
+        const file = std.Io.Dir.openFileAbsolute(io, file_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return default_index,
             else => return err,
         };
-        defer file.close();
+        defer file.close(io);
 
-        const bytes = try file.readToEndAlloc(std.heap.page_allocator, 64);
+        var buffer: [64]u8 = undefined;
+        var reader = file.reader(io, &buffer);
+        const bytes = try reader.interface.allocRemaining(std.heap.page_allocator, .limited(64));
         defer std.heap.page_allocator.free(bytes);
         return std.fmt.parseUnsigned(usize, std.mem.trim(u8, bytes, " \t\r\n"), 10) catch default_index;
     }
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
 
-    const bytes = dir.readFileAlloc(std.heap.page_allocator, queue_file_name, 64) catch |err| switch (err) {
+    const bytes = dir.readFileAlloc(io, queue_file_name, std.heap.page_allocator, .limited(64)) catch |err| switch (err) {
         error.FileNotFound => return default_index,
         else => return err,
     };
@@ -294,6 +315,7 @@ fn readNextIndex(dir_path: []const u8, default_index: usize) !usize {
 }
 
 fn writeNextIndex(dir_path: []const u8, next_index: usize) !void {
+    const io = defaultIo();
     var buf: [32]u8 = undefined;
     const text = try std.fmt.bufPrint(&buf, "{d}\n", .{next_index});
 
@@ -301,17 +323,17 @@ fn writeNextIndex(dir_path: []const u8, next_index: usize) !void {
         const file_path = try std.fs.path.join(std.heap.page_allocator, &.{ dir_path, queue_file_name });
         defer std.heap.page_allocator.free(file_path);
 
-        const file = try std.fs.createFileAbsolute(file_path, .{
+        const file = try std.Io.Dir.createFileAbsolute(io, file_path, .{
             .truncate = true,
         });
-        defer file.close();
-        try file.writeAll(text);
+        defer file.close(io);
+        try file.writeStreamingAll(io, text);
         return;
     }
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
-    try dir.writeFile(.{
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
+    try dir.writeFile(io, .{
         .sub_path = queue_file_name,
         .data = text,
     });
@@ -319,7 +341,7 @@ fn writeNextIndex(dir_path: []const u8, next_index: usize) !void {
 
 pub fn log(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
+    comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {

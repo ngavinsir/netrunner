@@ -7,6 +7,14 @@ const shared_oracle_socket_env = "NETRUNNER_SHARED_ORACLE_SOCKET";
 const oracle_lock_name = "oracle.lock";
 const oracle_pid_name = "oracle.pid";
 
+fn defaultIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
+fn readFixtureAlloc(allocator: std.mem.Allocator, fixture_path: []const u8) ![]u8 {
+    return try std.Io.Dir.cwd().readFileAlloc(defaultIo(), fixture_path, allocator, .limited(64 << 20));
+}
+
 pub const BeginnerInitialSnapshot = struct {
     arena: std.heap.ArenaAllocator,
     snapshot: state.GameSnapshot,
@@ -197,7 +205,7 @@ pub fn loadBeginnerInitialSnapshot(
     errdefer result.arena.deinit();
 
     const allocator = result.arena.allocator();
-    const source = try std.fs.cwd().readFileAlloc(allocator, fixture_path, 64 << 20);
+    const source = try readFixtureAlloc(allocator, fixture_path);
     const root_value = try std.json.parseFromSliceLeaky(std.json.Value, allocator, source, .{});
 
     const root = root_value.object;
@@ -217,7 +225,7 @@ pub fn loadSummary(
     allocator: std.mem.Allocator,
     fixture_path: []const u8,
 ) !FixtureSummary {
-    const source = try std.fs.cwd().readFileAlloc(allocator, fixture_path, 64 << 20);
+    const source = try readFixtureAlloc(allocator, fixture_path);
     defer allocator.free(source);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, source, .{});
@@ -1378,7 +1386,7 @@ pub fn loadTransitionOracle(
     allocator: std.mem.Allocator,
     fixture_path: []const u8,
 ) !TransitionOracle {
-    const source = try std.fs.cwd().readFileAlloc(allocator, fixture_path, 64 << 20);
+    const source = try readFixtureAlloc(allocator, fixture_path);
     defer allocator.free(source);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, source, .{});

@@ -1,6 +1,10 @@
 const std = @import("std");
 const api = @import("api.zig");
 
+fn defaultIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// Action replay save/load.
 /// Format: line-based text — matchup_id, seed, then one action index per line.
 /// Deterministic: same matchup + seed + actions = same game state.
@@ -27,24 +31,28 @@ pub const Replay = struct {
     }
 
     pub fn save(self: *const Replay, path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
+        const io = defaultIo();
+        const file = try std.Io.Dir.cwd().createFile(io, path, .{});
+        defer file.close(io);
         // Write matchup_id and seed
         var hdr_buf: [64]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hdr_buf, "{d}\n{d}\n", .{ self.matchup_id, self.seed }) catch return error.InvalidFormat;
-        try file.writeAll(hdr);
+        try file.writeStreamingAll(io, hdr);
         // Write each action index
         for (self.actions.items) |idx| {
             var line_buf: [32]u8 = undefined;
             const line = std.fmt.bufPrint(&line_buf, "{d}\n", .{idx}) catch continue;
-            try file.writeAll(line);
+            try file.writeStreamingAll(io, line);
         }
     }
 
     pub fn load(allocator: std.mem.Allocator, path: []const u8) !Replay {
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-        const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
+        const io = defaultIo();
+        const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+        defer file.close(io);
+        var buffer: [4096]u8 = undefined;
+        var reader = file.reader(io, &buffer);
+        const content = try reader.interface.allocRemaining(allocator, .limited(10 * 1024 * 1024));
         defer allocator.free(content);
         return parse(allocator, content);
     }

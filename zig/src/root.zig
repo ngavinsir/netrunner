@@ -10,5 +10,5 @@ pub const oracle = @import("parity/oracle.zig");
 pub const replay = @import("replay.zig");
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
